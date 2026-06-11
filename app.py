@@ -231,56 +231,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OCC Estimator Backend is running!")
 
-    def do_POST(self):
+def do_POST(self):
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8")
-            data = urllib.parse.parse_qs(body)
-print(f"RAW WUFOO DATA: {body[:2000]}")
-            def get(key):
-                return data.get(key, [""])[0]
-
-            first = get("Field1")
-            last = get("Field2")
-            client_name = f"{first} {last}".strip()
-            client_phone = get("Field3")
-            client_email = get("Field4")
-            street = get("Field6")
-            city = get("Field6_3")
-            state = get("Field6_4")
-            zip_code = get("Field6_5")
-            address = f"{street}, {city}, {state} {zip_code}".strip(", ")
-            notes = get("Field10")
-            insp_url = get("Field12")
-            add_url = get("Field13")
-
-            print(f"New submission: {client_name} - {address}")
-            print(f"Inspection URL: {insp_url}")
-            print(f"Addendum URL: {add_url}")
-
-            insp_pdf = download_pdf(insp_url)
-            add_pdf = download_pdf(add_url)
-            print(f"Downloaded PDFs: {len(insp_pdf)} bytes, {len(add_pdf)} bytes")
-
-            insp_b64 = base64.b64encode(insp_pdf).decode("utf-8")
-            add_b64 = base64.b64encode(add_pdf).decode("utf-8")
-
-            estimate = call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes)
-            print(f"Estimate generated: total={estimate.get('total', 0)}")
-
-            html = build_email_html(estimate)
-            subject = f"Closing Repairs Estimate - {address} - {fmt(estimate.get('total', 0))}"
-            send_email(NOTIFY_EMAIL, subject, html, address)
-            print(f"Email sent to {NOTIFY_EMAIL}")
-
+            print("=== FULL WUFOO PAYLOAD ===")
+            print(body)
+            print("=== END PAYLOAD ===")
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
-
         except Exception as e:
-            print(f"Error processing submission: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error: {e}")
             self.send_response(500)
             self.end_headers()
             self.wfile.write(str(e).encode())
