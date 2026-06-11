@@ -83,10 +83,10 @@ def download_pdf(url):
     for _ in range(5):
         parts = urllib.parse.urlparse(url)
         conn = http.client.HTTPSConnection(parts.netloc, timeout=60)
-        conn.request("GET", parts.path + ("?" + parts.query if parts.query else ""), headers={
-            "User-Agent": "Mozilla/5.0",
-            "Authorization": f"Basic {auth}"
-        })
+        headers = {"User-Agent": "Mozilla/5.0"}
+        if "wufoo.com" in parts.netloc:
+            headers["Authorization"] = f"Basic {auth}"
+        conn.request("GET", parts.path + ("?" + parts.query if parts.query else ""), headers=headers)
         resp = conn.getresponse()
         if resp.status in (301, 302, 303, 307, 308):
             url = resp.getheader("Location")
