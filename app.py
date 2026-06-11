@@ -101,20 +101,16 @@ def download_pdf(url):
 
 def extract_text(pdf_bytes):
     try:
-        import zipfile
-        import xml.etree.ElementTree as ET
-        # Try basic text extraction by looking for text in PDF
+        import pypdf
+        import io
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
         text = ""
-        content = pdf_bytes.decode("latin-1", errors="ignore")
-        import re
-        # Extract text between BT and ET markers (PDF text objects)
-        matches = re.findall(r"\(([^)]{1,500})\)", content)
-        text = " ".join(m for m in matches if len(m) > 2 and m.isprintable())
-        if len(text) > 500:
-            return text[:60000]
-    except:
-        pass
-    return ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text[:60000]
+    except Exception as e:
+        print(f"PDF extraction error: {e}")
+        return ""
 
 def call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes=""):
     # Decode and extract text to avoid size limits
