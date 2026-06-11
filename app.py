@@ -4,6 +4,7 @@ import base64
 import re
 import urllib.request
 import urllib.parse
+import io
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -98,8 +99,31 @@ def download_pdf(url):
         raise Exception(f"HTTP {resp.status} downloading {url}")
     raise Exception("Too many redirects")
 
+def extract_text(pdf_bytes):
+    try:
+        import zipfile
+        import xml.etree.ElementTree as ET
+        # Try basic text extraction by looking for text in PDF
+        text = ""
+        content = pdf_bytes.decode("latin-1", errors="ignore")
+        import re
+        # Extract text between BT and ET markers (PDF text objects)
+        matches = re.findall(r"\(([^)]{1,500})\)", content)
+        text = " ".join(m for m in matches if len(m) > 2 and m.isprintable())
+        if len(text) > 500:
+            return text[:60000]
+    except:
+        pass
+    return ""
+
 def call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes=""):
-    user_text = f"""Using the attached home inspection report and repair addendum, generate a closing repairs estimate for Owners Choice Construction.
+    # Decode and extract text to avoid size limits
+    insp_bytes = base64.b64decode(insp_b64)
+    add_bytes = base64.b64decode(add_b64)
+    insp_text = extract_text(insp_bytes)
+    add_text = extract_text(add_bytes)
+
+    user_text = f"""Below is text extracted from the home inspection report and repair addendum. Generate a closing repairs estimate for Owners Choice Construction.
 
 Client name: {client_name}
 Client phone: {client_phone}
@@ -109,6 +133,12 @@ Property address: {address}
 
 Only include items within a general contractor scope. Cross-reference the addendum with the inspection report to write accurate scope descriptions.
 
+=== HOME INSPECTION REPORT ===
+{insp_text[:50000]}
+
+=== REPAIR ADDENDUM ===
+{add_text[:10000]}
+
 Respond with ONLY the raw JSON object. No markdown, no explanation."""
 
     payload = json.dumps({
@@ -117,11 +147,7 @@ Respond with ONLY the raw JSON object. No markdown, no explanation."""
         "system": SYSTEM_PROMPT,
         "messages": [{
             "role": "user",
-            "content": [
-                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": insp_b64}},
-                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": add_b64}},
-                {"type": "text", "text": user_text}
-            ]
+            "content": user_text
         }]
     }).encode("utf-8")
 
