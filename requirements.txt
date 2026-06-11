@@ -1,1 +1,1 @@
-# No external dependencies needed - uses Python stdlib only
+pypdf==4.3.1
