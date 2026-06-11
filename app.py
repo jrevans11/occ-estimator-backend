@@ -236,7 +236,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8")
             data = urllib.parse.parse_qs(body)
-
+print(f"RAW WUFOO DATA: {body[:2000]}")
             def get(key):
                 return data.get(key, [""])[0]
 
