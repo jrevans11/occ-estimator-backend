@@ -4,16 +4,10 @@ import base64
 import re
 import urllib.request
 import urllib.parse
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASS = os.environ.get("SMTP_PASS", "")
+SENDGRID_KEY = os.environ.get("SENDGRID_API_KEY", "")
 NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "jason@ownerschoiceconstruction.com")
 WUFOO_API_KEY = os.environ.get("WUFOO_API_KEY", "")
 
@@ -149,12 +143,15 @@ def build_email_html(estimate):
 
     rows = ""
     for item in estimate.get("line_items", []):
-        bullets = ""
         desc = item.get("description", "") or ""
+        bullets = ""
         for line in desc.split("\n"):
             if line.startswith("-"):
                 bullets += f"<li style='margin:2px 0;color:#555;font-size:12px'>{line[1:].strip()}</li>"
-        desc_html = f"<p style='margin:4px 0 0;color:#555;font-size:12px'>{desc}</p>" if item["title"] == "Disclaimer" else f"<ul style='margin:4px 0 0 16px;padding:0'>{bullets}</ul>"
+        if item["title"] == "Disclaimer":
+            desc_html = f"<p style='margin:4px 0 0;color:#555;font-size:12px'>{desc}</p>"
+        else:
+            desc_html = f"<ul style='margin:4px 0 0 16px;padding:0'>{bullets}</ul>"
         note_html = f"<p style='margin:5px 0 0;font-size:11.5px;color:#666;font-style:italic'>{item['notes']}</p>" if item.get("notes") else ""
         rows += f"""<tr>
             <td style='padding:10px 0;border-bottom:0.5px solid #ddd;vertical-align:top'>
@@ -171,13 +168,18 @@ def build_email_html(estimate):
 </head><body>
 <div style='display:flex;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid #bbb;margin-bottom:14px'>
     <div style='font-size:20px;font-weight:700'>Closing Repairs Estimate</div>
-    <div style='text-align:right;font-size:12px;color:#555'><div>Issue Date {issue}</div><div>Expires {expires}</div></div>
+    <div style='text-align:right;font-size:12px;color:#555'>
+        <div>Issue Date {issue}</div>
+        <div>Expires {expires}</div>
+    </div>
 </div>
 <div style='display:grid;grid-template-columns:1fr 1fr;gap:20px;padding-bottom:14px;border-bottom:1px solid #bbb;margin-bottom:14px'>
     <div>
         <div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px'>Prepared By</div>
-        <strong>Jason Evans</strong><div>Owners Choice Construction</div>
-        <div>(864) 252-4999</div><div>jason@ownerschoiceconstruction.com</div>
+        <strong>Jason Evans</strong>
+        <div>Owners Choice Construction</div>
+        <div>(864) 252-4999</div>
+        <div>jason@ownerschoiceconstruction.com</div>
         <div>3122 Wade Hampton Blvd, Taylors, SC 29687</div>
     </div>
     <div>
@@ -203,16 +205,25 @@ def build_email_html(estimate):
 </table>
 </body></html>"""
 
-def send_email(to_addr, subject, html_body):
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SMTP_USER
-    msg["To"] = to_addr
-    msg.attach(MIMEText(html_body, "html"))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.sendmail(SMTP_USER, to_addr, msg.as_string())
+def send_email(to_addr, subject, html_body, address):
+    payload = json.dumps({
+        "personalizations": [{"to": [{"email": to_addr}]}],
+        "from": {"email": "jason@ownerschoiceconstruction.com", "name": "OCC Estimator"},
+        "subject": subject,
+        "content": [{"type": "text/html", "value": html_body}]
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.sendgrid.com/v3/mail/send",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {SENDGRID_KEY}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.status
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -255,11 +266,11 @@ class Handler(BaseHTTPRequestHandler):
             add_b64 = base64.b64encode(add_pdf).decode("utf-8")
 
             estimate = call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes)
-            print(f"Estimate generated: {estimate.get('total', 0)}")
+            print(f"Estimate generated: total={estimate.get('total', 0)}")
 
             html = build_email_html(estimate)
             subject = f"Closing Repairs Estimate - {address} - {fmt(estimate.get('total', 0))}"
-            send_email(NOTIFY_EMAIL, subject, html)
+            send_email(NOTIFY_EMAIL, subject, html, address)
             print(f"Email sent to {NOTIFY_EMAIL}")
 
             self.send_response(200)
@@ -267,7 +278,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"OK")
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error processing submission: {e}")
+            import traceback
+            traceback.print_exc()
             self.send_response(500)
             self.end_headers()
             self.wfile.write(str(e).encode())
