@@ -77,12 +77,26 @@ OUTPUT: Respond with ONLY valid JSON, no markdown:
 
 def download_pdf(url):
     auth = base64.b64encode(f"{WUFOO_API_KEY}:footastic".encode()).decode("utf-8")
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0",
-        "Authorization": f"Basic {auth}"
-    })
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read()
+    # Follow redirects manually to preserve auth header
+    import http.client
+    import urllib.parse
+    for _ in range(5):
+        parts = urllib.parse.urlparse(url)
+        conn = http.client.HTTPSConnection(parts.netloc, timeout=60)
+        conn.request("GET", parts.path + ("?" + parts.query if parts.query else ""), headers={
+            "User-Agent": "Mozilla/5.0",
+            "Authorization": f"Basic {auth}"
+        })
+        resp = conn.getresponse()
+        if resp.status in (301, 302, 303, 307, 308):
+            url = resp.getheader("Location")
+            if not url.startswith("http"):
+                url = f"https://{parts.netloc}{url}"
+            continue
+        if resp.status == 200:
+            return resp.read()
+        raise Exception(f"HTTP {resp.status} downloading {url}")
+    raise Exception("Too many redirects")
 
 def call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes=""):
     user_text = f"""Using the attached home inspection report and repair addendum, generate a closing repairs estimate for Owners Choice Construction.
