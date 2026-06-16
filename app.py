@@ -76,11 +76,23 @@ OUTPUT: Respond with ONLY valid JSON, no markdown:
   "skipped_items": ["item - reason"]
 }"""
 
-def download_pdf(url):
-    auth = base64.b64encode(f"{WUFOO_API_KEY}:footastic".encode()).decode("utf-8")
-    # Follow redirects manually to preserve auth header
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+}
+
+
+def download_file(url):
+    """Download a file from Wufoo, following redirects with auth."""
     import http.client
-    import urllib.parse
+    auth = base64.b64encode(f"{WUFOO_API_KEY}:footastic".encode()).decode("utf-8")
     for _ in range(5):
         parts = urllib.parse.urlparse(url)
         conn = http.client.HTTPSConnection(parts.netloc, timeout=60)
@@ -99,56 +111,112 @@ def download_pdf(url):
         raise Exception(f"HTTP {resp.status} downloading {url}")
     raise Exception("Too many redirects")
 
-def extract_text(pdf_bytes):
+
+def get_file_extension(url, filename=""):
+    """Determine file extension from URL or filename."""
+    for src in [filename, url]:
+        if src:
+            ext = os.path.splitext(src.split("?")[0].lower())[1]
+            if ext:
+                return ext
+    return ".pdf"
+
+
+def extract_pdf_text(pdf_bytes):
+    """Extract text from PDF bytes using pypdf."""
     try:
-        import zipfile
-        import xml.etree.ElementTree as ET
-        # Try basic text extraction by looking for text in PDF
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
         text = ""
-        content = pdf_bytes.decode("latin-1", errors="ignore")
-        import re
-        # Extract text between BT and ET markers (PDF text objects)
-        matches = re.findall(r"\(([^)]{1,500})\)", content)
-        text = " ".join(m for m in matches if len(m) > 2 and m.isprintable())
-        if len(text) > 500:
-            return text[:60000]
-    except:
-        pass
-    return ""
+        for page in reader.pages:
+            text += (page.extract_text() or "") + "\n"
+        return text[:60000]
+    except Exception as e:
+        print(f"  pypdf extraction failed: {e}")
+        return ""
 
-def call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes=""):
-    # Decode and extract text to avoid size limits
-    insp_bytes = base64.b64decode(insp_b64)
-    add_bytes = base64.b64decode(add_b64)
-    insp_text = extract_text(insp_bytes)
-    add_text = extract_text(add_bytes)
 
-    user_text = f"""Below is text extracted from the home inspection report and repair addendum. Generate a closing repairs estimate for Owners Choice Construction.
+def is_image(ext):
+    return ext.lower() in IMAGE_EXTENSIONS
+
+
+def build_claude_content(files_data, client_name, client_phone, client_email, address, notes):
+    """
+    Build the Claude API message content list.
+    files_data: list of {"bytes": ..., "ext": ..., "label": ...}
+    Returns a list of content blocks (text and/or image).
+    """
+    content = []
+
+    intro = f"""Generate a closing repairs estimate for Owners Choice Construction.
 
 Client name: {client_name}
 Client phone: {client_phone}
 Client email: {client_email}
 Property address: {address}
-{f"Additional notes: {notes}" if notes else ""}
+{f"Additional notes from form: {notes}" if notes else ""}
 
 Only include items within a general contractor scope. Cross-reference the addendum with the inspection report to write accurate scope descriptions.
+"""
+    content.append({"type": "text", "text": intro})
 
-=== HOME INSPECTION REPORT ===
-{insp_text[:50000]}
+    for fd in files_data:
+        ext = fd["ext"].lower()
+        label = fd["label"]
+        file_bytes = fd["bytes"]
 
-=== REPAIR ADDENDUM ===
-{add_text[:10000]}
+        if is_image(ext):
+            media_type = IMAGE_MEDIA_TYPES.get(ext, "image/jpeg")
+            b64 = base64.b64encode(file_bytes).decode("utf-8")
+            content.append({"type": "text", "text": f"\n=== {label} (image) ==="})
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": b64
+                }
+            })
+        else:
+            # Treat as PDF
+            text = extract_pdf_text(file_bytes)
+            if text.strip():
+                content.append({"type": "text", "text": f"\n=== {label} ===\n{text}"})
+            else:
+                # PDF text extraction failed — try sending as base64 document
+                b64 = base64.b64encode(file_bytes).decode("utf-8")
+                content.append({"type": "text", "text": f"\n=== {label} (PDF document) ==="})
+                content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": b64
+                    }
+                })
 
-Respond with ONLY the raw JSON object. No markdown, no explanation."""
+    content.append({
+        "type": "text",
+        "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."
+    })
 
+    return content
+
+
+def has_enough_info(files_data, notes):
+    """Check if we have enough content to attempt an estimate."""
+    has_file_content = any(fd["bytes"] and len(fd["bytes"]) > 100 for fd in files_data)
+    has_notes = bool(notes and notes.strip() and notes.strip().lower() not in ["nope!", "no", "n/a", "none"])
+    return has_file_content or has_notes
+
+
+def call_claude(content_blocks):
+    """Call Claude API with content blocks."""
     payload = json.dumps({
-        "model": "claude-sonnet-4-5",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 4000,
         "system": SYSTEM_PROMPT,
-        "messages": [{
-            "role": "user",
-            "content": user_text
-        }]
+        "messages": [{"role": "user", "content": content_blocks}]
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -157,7 +225,8 @@ Respond with ONLY the raw JSON object. No markdown, no explanation."""
         headers={
             "Content-Type": "application/json",
             "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01"
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "pdfs-2024-09-25"
         },
         method="POST"
     )
@@ -167,15 +236,17 @@ Respond with ONLY the raw JSON object. No markdown, no explanation."""
     raw = "".join(block.get("text", "") for block in result.get("content", []))
     match = re.search(r"\{[\s\S]*\}", raw)
     if not match:
-        raise Exception(f"No JSON in response: {raw[:500]}")
+        raise Exception(f"No JSON in Claude response: {raw[:500]}")
     return json.loads(match.group(0))
+
 
 def fmt(price):
     if price == 0:
         return "$0.00"
     return "$" + f"{float(price):,.2f}"
 
-def build_email_html(estimate):
+
+def build_estimate_email_html(estimate):
     from datetime import datetime, timedelta
     today = datetime.now()
     issue = today.strftime("%B %d, %Y")
@@ -239,6 +310,34 @@ def build_email_html(estimate):
 </table>
 </body></html>"""
 
+
+def build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason):
+    """Email to Jason when we can't generate a full estimate."""
+    file_list = "".join(
+        f"<li>{fd['label']}: {fd['ext']} ({len(fd['bytes'])} bytes)</li>"
+        for fd in files_data
+    )
+    return f"""<!DOCTYPE html><html><body style='font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;padding:30px;max-width:700px'>
+<h2 style='color:#c0392b'>⚠️ Manual Review Required — OCC Estimator</h2>
+<p>A new submission came in but the system could not generate a full estimate automatically. Please review and follow up manually.</p>
+<hr>
+<h3>Submission Details</h3>
+<table style='border-collapse:collapse;width:100%'>
+<tr><td style='padding:6px;font-weight:bold;width:150px'>Name</td><td style='padding:6px'>{client_name}</td></tr>
+<tr><td style='padding:6px;font-weight:bold'>Phone</td><td style='padding:6px'>{client_phone}</td></tr>
+<tr><td style='padding:6px;font-weight:bold'>Email</td><td style='padding:6px'>{client_email}</td></tr>
+<tr><td style='padding:6px;font-weight:bold'>Address</td><td style='padding:6px'>{address}</td></tr>
+<tr><td style='padding:6px;font-weight:bold'>Notes</td><td style='padding:6px'>{notes or "None"}</td></tr>
+</table>
+<h3>Files Submitted</h3>
+<ul>{file_list}</ul>
+<h3>Reason Auto-Estimate Failed</h3>
+<p style='color:#c0392b'>{reason}</p>
+<hr>
+<p style='color:#888;font-size:11px'>Sent by OCC Estimator Backend</p>
+</body></html>"""
+
+
 def send_email(subject, html_body):
     payload = json.dumps({
         "personalizations": [{"to": [{"email": NOTIFY_EMAIL}]}],
@@ -258,6 +357,7 @@ def send_email(subject, html_body):
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.status
 
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -265,6 +365,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"OCC Estimator Backend is running!")
 
     def do_POST(self):
+        client_name = ""
+        client_phone = ""
+        client_email = ""
+        address = ""
+        notes = ""
+        files_data = []
+
         try:
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length).decode("utf-8")
@@ -284,27 +391,48 @@ class Handler(BaseHTTPRequestHandler):
             zip_code = get("Field9")
             address = f"{street}, {city}, {state} {zip_code}".strip(", ")
             notes = get("Field121")
-            insp_url = get("Field12-url")
-            add_url = get("Field13-url")
+            extra_notes = get("Field424")
+            if extra_notes:
+                notes = f"{notes}\n{extra_notes}".strip()
 
             print(f"New submission: {client_name} - {address}")
-            print(f"Inspection URL: {insp_url}")
-            print(f"Addendum URL: {add_url}")
 
-            insp_pdf = download_pdf(insp_url)
-            add_pdf = download_pdf(add_url)
-            print(f"Downloaded: {len(insp_pdf)} bytes insp, {len(add_pdf)} bytes add")
+            # Collect all uploaded files
+            for field_id, label in [("Field12", "Inspection Report"), ("Field13", "Repair Addendum"), ("Field426", "Additional File")]:
+                url = get(f"{field_id}-url")
+                filename = get(field_id)
+                if not url:
+                    continue
+                ext = get_file_extension(url, filename)
+                print(f"  Downloading {label}: {filename} ({ext})")
+                try:
+                    file_bytes = download_file(url)
+                    print(f"  Downloaded {len(file_bytes)} bytes")
+                    files_data.append({"bytes": file_bytes, "ext": ext, "label": label, "filename": filename})
+                except Exception as e:
+                    print(f"  Failed to download {label}: {e}")
+                    files_data.append({"bytes": b"", "ext": ext, "label": label, "filename": filename})
 
-            insp_b64 = base64.b64encode(insp_pdf).decode("utf-8")
-            add_b64 = base64.b64encode(add_pdf).decode("utf-8")
+            # Check if we have enough to work with
+            if not has_enough_info(files_data, notes):
+                reason = "No usable files were downloaded and no repair notes were provided in the form."
+                print(f"Insufficient info — sending review email")
+                html = build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason)
+                send_email(f"⚠️ Manual Review Needed - {address}", html)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"OK - review email sent")
+                return
 
-            estimate = call_claude(insp_b64, add_b64, client_name, client_phone, client_email, address, notes)
+            # Build Claude content and generate estimate
+            content = build_claude_content(files_data, client_name, client_phone, client_email, address, notes)
+            estimate = call_claude(content)
             print(f"Estimate total: {estimate.get('total', 0)}")
 
-            html = build_email_html(estimate)
+            html = build_estimate_email_html(estimate)
             subject = f"Closing Repairs Estimate - {address} - {fmt(estimate.get('total', 0))}"
             send_email(subject, html)
-            print(f"Email sent to {NOTIFY_EMAIL}")
+            print(f"Estimate email sent to {NOTIFY_EMAIL}")
 
             self.send_response(200)
             self.end_headers()
@@ -314,12 +442,23 @@ class Handler(BaseHTTPRequestHandler):
             print(f"Error: {e}")
             import traceback
             traceback.print_exc()
-            self.send_response(500)
+
+            # Try to send a fallback review email so Jason knows something came in
+            try:
+                reason = f"System error: {str(e)}"
+                html = build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason)
+                send_email(f"⚠️ Manual Review Needed - {address or 'Unknown Address'}", html)
+                print("Fallback review email sent")
+            except Exception as e2:
+                print(f"Failed to send fallback email: {e2}")
+
+            self.send_response(200)
             self.end_headers()
-            self.wfile.write(str(e).encode())
+            self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
         print(f"{self.address_string()} - {format % args}")
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
