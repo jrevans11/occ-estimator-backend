@@ -125,6 +125,7 @@ def get_file_extension(url, filename=""):
 def extract_pdf_text(pdf_bytes):
     """Extract text from PDF bytes using pypdf."""
     try:
+<<<<<<< HEAD
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(pdf_bytes))
         text = ""
@@ -133,6 +134,17 @@ def extract_pdf_text(pdf_bytes):
         return text[:60000]
     except Exception as e:
         print(f"  pypdf extraction failed: {e}")
+=======
+        import pypdf
+        import io
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text[:60000]
+    except Exception as e:
+        print(f"PDF extraction error: {e}")
+>>>>>>> b25d00e092a114d4a94fde62a599d206ae71c592
         return ""
 
 
