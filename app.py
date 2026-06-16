@@ -365,6 +365,26 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"OCC Estimator Backend is running!")
 
     def do_POST(self):
+        # Read body first
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode("utf-8")
+
+        # Respond to Wufoo immediately before doing any work
+        # Wufoo has a short timeout and will close the connection if we wait
+        try:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+        except BrokenPipeError:
+            pass
+
+        # Process in background thread so Wufoo connection is already closed
+        import threading
+        t = threading.Thread(target=self._process_submission, args=(body,))
+        t.daemon = True
+        t.start()
+
+    def _process_submission(self, body):
         client_name = ""
         client_phone = ""
         client_email = ""
@@ -373,8 +393,8 @@ class Handler(BaseHTTPRequestHandler):
         files_data = []
 
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode("utf-8")
+            pass  # placeholder to maintain try block
+            data = urllib.parse.parse_qs(body)
             data = urllib.parse.parse_qs(body)
 
             def get(key):
@@ -419,9 +439,6 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"Insufficient info — sending review email")
                 html = build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason)
                 send_email(f"⚠️ Manual Review Needed - {address}", html)
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"OK - review email sent")
                 return
 
             # Build Claude content and generate estimate
@@ -433,10 +450,6 @@ class Handler(BaseHTTPRequestHandler):
             subject = f"Closing Repairs Estimate - {address} - {fmt(estimate.get('total', 0))}"
             send_email(subject, html)
             print(f"Estimate email sent to {NOTIFY_EMAIL}")
-
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
 
         except Exception as e:
             print(f"Error: {e}")
@@ -451,10 +464,6 @@ class Handler(BaseHTTPRequestHandler):
                 print("Fallback review email sent")
             except Exception as e2:
                 print(f"Failed to send fallback email: {e2}")
-
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
         print(f"{self.address_string()} - {format % args}")
