@@ -21,35 +21,204 @@ COMPANY INFO:
 - jason@ownerschoiceconstruction.com
 - 3122 Wade Hampton Blvd, Taylors, SC 29687
 
-PRICING RULES (client-facing prices after markup):
+PRICING RULES:
 - In-house labor: $89/hr billed (min 1 hr = $89, 1.5 hrs = $133.50, 2 hrs = $178)
-- Subcontractor work: 45% markup over their cost
-- Simple fixes (secure, tighten, adjust): $133 to $222
-- Seal/caulk/minor exterior: $178 to $290
-- Electrical minor (outlets, screws, bulbs): $60 to $217
-- Smoke/CO detectors: $273 to $362
-- GFCI outlet install: $178 to $217
-- Window glass single pane: around $368
-- Window glass double pane: around $762
-- Plumbing minor (drain, shower head, valve adjust): $133 to $357
-- Expansion tank install: $571 to $645
-- Crawlspace insulation (sub): $1200 to $1740
-- Foundation vent screen: $178 to $218
-- Roofing evaluation plus selective repair (sub): $725 to $3300
-- Vinyl siding repairs: $1200 to $2000
-- Masonry/retaining wall (sub): $650 to $1500
-- HVAC evaluation (sub): $285 to $357
-- Garbage disposal replacement: $500 to $634
-- Chimney cap measure/fab/install: around $1214
-- Exterior door jamb/rot repair: $500 to $750
-- Downspout extension/repair: $178 to $260
-- Attic pulldown stair adjustment: $133 to $178
-- Dryer vent cap replacement: $218 to $260
-- Active leak evaluation: $133 to $178
-- Panel screw replacement: $45 to $65
-- Gas bonding: around $652
-- Water heater relocation (sub): $3500 to $5300
-- Subfloor evaluation: $133 to $178
+- Material markup: cost + 65%
+- Subcontractor markup: cost + 45%
+
+REPAIR PRICING REFERENCE (36 real OCC estimates + 197 inspection reports)
+Adjust for actual scope/site conditions. Apply $89/hr labor + 65% material markup for in-house work.
+
+EXTERIOR:
+  - Secure/repair/replace damaged siding: ~$897
+  - Repair/seal cracks in driveway: ~$152
+  - Secure/install handrail or railing: ~$428
+  - Seal exterior penetrations, gaps, and holes: ~$319
+  - Repair/seal cracks in patio or walkway: ~$226
+  - Repair/replace fascia and soffit: ~$981
+  - Repoint or seal mortar joints: ~$204
+  - Install/extend downspouts and splash blocks: ~$282
+  - Repair/replace deck boards: ~$640
+  - Repair/replace fence boards or sections: ~$534
+  - Paint or repaint exterior wood trim/fascia/siding: ~$356
+  - Repair/treat wood rot at exterior trim or framing: ~$888
+  - Replace or repair window/door screens: ~$160
+  - Repair/replace exterior stairs or walkway settlement: ~$610
+  - Clean gutters and adjust for proper drainage: ~$379
+  - Replace damaged weatherstripping on exterior doors: ~$261
+  - Repair or install deck stair riser boards: ~$610
+  - Install missing deck joist hangers or ledger strips: ~$2,162
+
+PLUMBING:
+  - Secure loose toilet to floor / replace wax ring: ~$218
+  - Install expansion tank on water heater: ~$121
+  - Repair or replace sink stopper / pop-up assembly: $221-$299
+  - Seal gap at bathtub/shower surround, floor, or wall: ~$100
+  - Repair or replace leaking showerhead / secure showerhead arm: ~$278
+  - Adjust water heater temperature to safe level (120°F): ~$134
+  - Repair/replace leaking exterior hose bib or faucet: ~$224
+  - Secure/repair loose hose bib to exterior wall: ~$283
+  - Install or adjust pressure regulating valve (PRV): ~$134
+  - Repair active leak at drain line or plumbing fixture: ~$240
+  - Clear slow-draining sink, tub, or drain: ~$89
+  - Seal gaps around supply/drain line wall penetrations and countertops: ~$164
+  - Water heater maintenance / ancillary repairs: ~$434
+  - Secure loose sink faucet at base: ~$136
+  - Install dishwasher drain high loop or air gap: ~$44
+  - Repair or replace kitchen faucet / sprayer: ~$242
+  - Repair shower diverter: ~$347
+  - Scrape and paint rusted gas lines to prevent corrosion: ~$173
+  - Locate/identify main water shut-off valve or meter: ~$890
+  - Bond/ground CSST gas piping: ~$280
+  - Repair reversed hot/cold water connections: ~$178
+  - Replace washing machine supply hoses with stainless braided hoses: ~$109
+  - Repair toilet functional issues (flush, leak at base): ~$143
+  - Install missing sediment trap on gas supply line: ~$534
+  - Evaluate/repair rusted or deteriorating drain lines: ~$178
+
+WINDOWS/DOORS:
+  - Replace/install missing or damaged window screens: ~$160
+  - Adjust or trim sticking/binding door for proper operation: ~$194
+  - Repair/adjust door latch, strike plate, or catch plate: ~$186
+  - Repair/replace failed insulated glass seal (foggy/condensation between panes): ~$722
+  - Free/repair inoperable or stuck windows (egress concern): ~$208
+  - Repair/replace window latches, tilt latches, or crank hardware: ~$69
+  - Seal gaps around window frames (air, water, insect infiltration): ~$466
+  - Repair/replace window balances or counterbalance mechanism: ~$1,505
+  - Repair/replace wood rot on exterior door casings or trim: ~$949
+  - Repair/replace cracked or broken window glass: ~$648
+  - Secure or replace loose/missing door knobs and locksets: ~$222
+  - Repair/replace damaged garage door panels, trim, or opener: ~$239
+  - Repair/replace storm door closer or screen door: ~$277
+  - Caulk/seal around exterior door frames to prevent moisture intrusion: ~$315
+  - Refinish, paint, or replace missing hardware on exterior doors: ~$222
+  - Repair/replace damaged door frame or jamb: ~$4,512
+  - Replace/repair door sweep: ~$261
+  - Repair/replace door threshold or toeboard: ~$1,141
+  - Install fire-rated door between garage and living space: ~$2,770
+
+INTERIOR:
+  - Repair cracks in walls and ceilings (settling, minor, moderate): ~$1,042
+  - Patch/repair drywall seam tape, nail pops, and holes: ~$750
+  - Repair or replace damaged flooring (hardwood, laminate, vinyl, general): ~$155
+  - Paint and finish walls and ceilings (touch-up, water stains, patches): $160-$216
+  - Seal/caulk countertop gaps, backsplash, and bathroom fixtures: ~$128
+  - Replace or repair cracked/damaged floor tiles: $97-$186
+  - Repair or replace damaged cabinets and cabinet components: ~$272
+  - Adjust, secure, or replace cabinet doors, hinges, and hardware: ~$285
+  - Install or secure handrail at interior stairway: ~$336
+  - Repair or replace water-damaged walls, ceilings, and flooring: ~$1,447
+  - Repair or replace interior trim, molding, and baseboards: ~$616
+  - Repair/seal tile grout and caulk in shower/tub surround: ~$92
+  - Repair or replace attic pull-down stairs: ~$227
+  - Evaluate and repair unlevel, sagging, or soft subfloor/floor framing: ~$2,733
+  - Secure loose railings, fixtures, and bars to wall: ~$357
+  - Repair or replace damaged/missing countertop: ~$183
+  - Repair fireplace/flue components and clean firebox: ~$144
+  - Evaluate and remediate mold/fungal growth on interior surfaces: ~$2,342
+  - Install or replace doorstop and repair wall damage from doorknob: ~$53
+  - Secure subfloor to eliminate squeaking floors: $97-$186
+  - Repair or replace closet shelving: $122-$211
+  - Secure loose transition strip: ~$30
+
+HVAC:
+  - Repair/replace refrigerant lineset insulation: ~$203
+  - Replace dirty air filter(s): ~$138
+  - Repair/replace condensate drain line (routing, sealing, reconnecting): ~$192
+  - Clean and service HVAC unit: ~$267
+  - Repair/replace or clean ductwork: ~$405
+  - Evaluate and repair non-functioning or underperforming HVAC system: ~$343
+  - Repair/replace ductwork insulation: ~$446
+  - Level AC condensing unit pad: ~$198
+  - Repair/replace or clean supply and return vent covers/registers: ~$267
+  - Repair/seal flue vent connections and pipes: ~$334
+  - Reroute bathroom exhaust fan to exterior: ~$375
+  - Repair or install missing ductwork and duct connections: ~$267
+  - Insulate condensate drain pipe: ~$654
+  - Clean/inspect chimney flue and fireplace: ~$325
+  - Install sediment trap at furnace gas line: ~$534
+
+ROOFING:
+  - Clean gutters and downspouts: ~$355
+  - Repair or replace damaged/missing shingles: ~$320
+  - Seal exposed nail heads on roof surface: ~$283
+  - Install/extend downspout extensions or splash blocks: ~$254
+  - Repair or replace vent pipe boots/flashing boots: ~$315
+  - Repair or replace gutters and downspouts: ~$465
+  - Evaluate and repair roof leaks or water intrusion: ~$178
+  - Repair or seal chimney crown/mortar/masonry: ~$520
+  - Install kick-out flashing at wall-to-roof junctions: ~$282
+  - Repair or replace chimney flashing: ~$201
+  - Repair loose or lifted flashing (non-chimney): ~$409
+  - Install chimney cap or rain cap: ~$1,184
+  - Repair or replace damaged roof decking/sheathing: $586-$792
+  - Install or repair drip edge or valley flashing: ~$409
+
+APPLIANCES:
+  - Install dishwasher drain high loop or air gap: ~$44
+  - Repair/replace garbage disposal: $169-$229
+  - Repair or replace dryer vent duct and routing: ~$406
+  - Repair/replace garage door opener or sensors: ~$301
+  - Repair/replace damaged laundry appliance controls or components: ~$109
+  - Clean lint buildup from dryer vent system: ~$267
+
+OTHER:
+  - Repair/service gas fireplace logs or pilot light: ~$89
+  - Repair firebox masonry, mortar, or refractory panels: $335-$453
+  - Clean dryer vent duct / replace with rigid metal duct: ~$405
+  - Miscellaneous safety and property items: ~$233
+  - Repair chimney crown, wash, or exterior masonry: ~$562
+  - Pool fence/gate safety repair (self-closing, self-latching): ~$122
+  - Install/replace smoke detectors or CO detectors: ~$293
+  - Crawlspace cleaning, vapor barrier, or vent repair: ~$1,841
+  - Install/relocate gas fireplace shutoff valve or damper clamp: ~$96
+  - Garage door safety sensor, auto-reverse, or opener repair: ~$301
+  - Repair/replace chimney cap, spark arrestor, or rain cap: ~$1,184
+  - Garage door opener minor repairs (light cover, chain, wall switch): ~$44
+  - Repair/replace attic pull-down stairs: ~$200
+  - Surface fungi/mold treatment and moisture control: ~$6,218
+  - Repair/replace bathroom exhaust fan: ~$398
+
+GARAGE:
+  - Seal/repair cracks in garage concrete slab: ~$152
+  - Repair/replace garage door weather stripping: ~$261
+  - Repair/replace garage door opener (unit or components): ~$239
+  - Seal gaps/drywall for fire separation: ~$3,050
+  - Upgrade/repair garage firewall to fire separation standards: ~$2,848
+  - Patch holes in garage ceiling/walls for fire rating: ~$534
+  - Repair garage door mounting/header system: ~$89
+  - Repair/replace damaged garage wall paneling: ~$1,942
+  - Investigate water staining on garage ceiling: ~$178
+
+ELECTRICAL — Sub: Redland Electric (864) 909-4441, apply 45% markup:
+  - GFCI outlet install: $178-217
+  - Smoke/CO detector replacement: $273-362
+  - Light fixture swap: $200-250
+  - Ceiling fan replacement: $200-300
+  - Panel repair (minor): $175-350
+  - Ground rod/gas bond upgrade: $500-652
+  - Recessed lighting (per fixture): $175-330
+  - Breaker/wiring repair: quote required
+
+CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup:
+  - Crawlspace clean-out: $300-350
+  - Vapor barrier install (10 mil): $984-2,227 depending on sqft
+  - Dehumidifier install (Santa Fe Compact70): $1,895-2,095
+  - Seal/secure foundation vents: $105-483
+  - Crawlspace electrical outlet for dehumidifier: $550-700
+  - Fungal/mold treatment: $750-2,112 depending on severity
+  - R-19 floor insulation (remove + install): $3.15-7.86/sqft
+  - Sump pump install (1/3 HP): $895
+  - Pier/girder repair: $315-975 per location
+  - Well vent install/repair: $210-315 each
+  - Sill plate replacement: quote required (highly variable)
+
+INSULATION — mostly sub work:
+  - Attic insulation (add/replace): quote per sqft
+  - Bathroom exhaust fan (install/repair): $178-290
+  - Dryer vent cap replacement: $218-260
+  - Pipe insulation: $89-178
+
 
 SCOPE RULES:
 1. Only include items in a general contractor scope.
