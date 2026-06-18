@@ -476,10 +476,11 @@ def create_jobtread_job(estimate, notes_text, file_urls):
     contact_fields = {
         "accountId": account_id,
         "name": client_name,
-        "customFieldValues": {}
+        "customFieldValues": {
+            "Email": client_email or "",
+            "Address": address or ""
+        }
     }
-    if client_email:
-        contact_fields["customFieldValues"]["Email"] = client_email
     if client_phone:
         contact_fields["customFieldValues"]["Phone"] = client_phone
 
@@ -513,7 +514,11 @@ def create_jobtread_job(estimate, notes_text, file_urls):
                 "locationId": location_id,
                 "name": job_name,
                 "priceType": "fixed",
-                "description": notes_text or ""
+                "description": notes_text or "",
+                "customFieldValues": {
+                    "Job Type": "Closing Repair",
+                    "Closing Repairs Status": "Estimating"
+                }
             },
             "createdJob": {"id": {}}
         }
@@ -546,7 +551,8 @@ def create_jobtread_job(estimate, notes_text, file_urls):
                     "name": full_name,
                     "quantity": 1,
                     "unitCost": price,
-                    "unitPrice": price
+                    "unitPrice": price,
+                    "costCodeId": "22P9ppJUAHXn"
                 },
                 "createdCostItem": {"id": {}}
             }
