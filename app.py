@@ -2,16 +2,22 @@ import os
 import json
 import base64
 import re
+import io
 import urllib.request
 import urllib.parse
-import io
+import http.client
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-SENDGRID_KEY = os.environ.get("SENDGRID_API_KEY", "")
-NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL", "jason@ownerschoiceconstruction.com")
-WUFOO_API_KEY = os.environ.get("WUFOO_API_KEY", "")
+# ── Environment ───────────────────────────────────────────────────────────────
+ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
+WUFOO_API_KEY    = os.environ.get("WUFOO_API_KEY", "")
+JOBTREAD_KEY     = os.environ.get("JOBTREAD_API_KEY", "")
+JOBTREAD_ORG     = os.environ.get("JOBTREAD_ORG_ID", "22P9ppHePJKP")
+RENDER_API_KEY   = os.environ.get("RENDER_API_KEY", "")
+RENDER_SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "")
 
+# ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert estimator for Owners Choice Construction LLC, a residential repair contractor in Greenville/Upstate SC. You create closing repair estimates from home inspection reports and repair addendums.
 
 COMPANY INFO:
@@ -162,34 +168,6 @@ APPLIANCES:
   - Repair/replace damaged laundry appliance controls or components: ~$109
   - Clean lint buildup from dryer vent system: ~$267
 
-OTHER:
-  - Repair/service gas fireplace logs or pilot light: ~$89
-  - Repair firebox masonry, mortar, or refractory panels: $335-$453
-  - Clean dryer vent duct / replace with rigid metal duct: ~$405
-  - Miscellaneous safety and property items: ~$233
-  - Repair chimney crown, wash, or exterior masonry: ~$562
-  - Pool fence/gate safety repair (self-closing, self-latching): ~$122
-  - Install/replace smoke detectors or CO detectors: ~$293
-  - Crawlspace cleaning, vapor barrier, or vent repair: ~$1,841
-  - Install/relocate gas fireplace shutoff valve or damper clamp: ~$96
-  - Garage door safety sensor, auto-reverse, or opener repair: ~$301
-  - Repair/replace chimney cap, spark arrestor, or rain cap: ~$1,184
-  - Garage door opener minor repairs (light cover, chain, wall switch): ~$44
-  - Repair/replace attic pull-down stairs: ~$200
-  - Surface fungi/mold treatment and moisture control: ~$6,218
-  - Repair/replace bathroom exhaust fan: ~$398
-
-GARAGE:
-  - Seal/repair cracks in garage concrete slab: ~$152
-  - Repair/replace garage door weather stripping: ~$261
-  - Repair/replace garage door opener (unit or components): ~$239
-  - Seal gaps/drywall for fire separation: ~$3,050
-  - Upgrade/repair garage firewall to fire separation standards: ~$2,848
-  - Patch holes in garage ceiling/walls for fire rating: ~$534
-  - Repair garage door mounting/header system: ~$89
-  - Repair/replace damaged garage wall paneling: ~$1,942
-  - Investigate water staining on garage ceiling: ~$178
-
 ELECTRICAL — Sub: Redland Electric (864) 909-4441, apply 45% markup:
   - GFCI outlet install: $178-217
   - Smoke/CO detector replacement: $273-362
@@ -219,12 +197,45 @@ INSULATION — mostly sub work:
   - Dryer vent cap replacement: $218-260
   - Pipe insulation: $89-178
 
+OTHER:
+  - Repair/service gas fireplace logs or pilot light: ~$89
+  - Repair firebox masonry, mortar, or refractory panels: $335-$453
+  - Clean dryer vent duct / replace with rigid metal duct: ~$405
+  - Miscellaneous safety and property items: ~$233
+  - Repair chimney crown, wash, or exterior masonry: ~$562
+  - Pool fence/gate safety repair (self-closing, self-latching): ~$122
+  - Install/replace smoke detectors or CO detectors: ~$293
+  - Crawlspace cleaning, vapor barrier, or vent repair: ~$1,841
+  - Install/relocate gas fireplace shutoff valve or damper clamp: ~$96
+  - Garage door safety sensor, auto-reverse, or opener repair: ~$301
+  - Repair/replace chimney cap, spark arrestor, or rain cap: ~$1,184
+  - Garage door opener minor repairs (light cover, chain, wall switch): ~$44
+  - Repair/replace attic pull-down stairs: ~$200
+  - Surface fungi/mold treatment and moisture control: ~$6,218
+  - Repair/replace bathroom exhaust fan: ~$398
+
+GARAGE:
+  - Seal/repair cracks in garage concrete slab: ~$152
+  - Repair/replace garage door weather stripping: ~$261
+  - Repair/replace garage door opener (unit or components): ~$239
+  - Seal gaps/drywall for fire separation: ~$3,050
+  - Upgrade/repair garage firewall to fire separation standards: ~$2,848
+  - Patch holes in garage ceiling/walls for fire rating: ~$534
+  - Repair garage door mounting/header system: ~$89
+  - Repair/replace damaged garage wall paneling: ~$1,942
+  - Investigate water staining on garage ceiling: ~$178
+
+CUSTOMER-FACING OUTPUT RULES — CRITICAL:
+- Do NOT include subcontractor names, company names, or phone numbers anywhere in the estimate output.
+- Do NOT include base costs, markup percentages, or any internal pricing details.
+- Generic trade references are acceptable (e.g. "work to be performed by a licensed electrician").
+- Line items should contain only: a clean scope description and relevant field notes.
 
 SCOPE RULES:
 1. Only include items in a general contractor scope.
 2. Do NOT include: septic/sewer, termite, cosmetic items like carpet stains or paint.
 3. Group related items when it makes sense.
-4. Use inspection report section numbers as line item title prefix.
+4. Use inspection report section numbers as line item title prefix when available.
 5. Write scope descriptions using bullet points starting with a dash.
 6. Add NOTE: callouts where there are important caveats.
 
@@ -245,22 +256,93 @@ OUTPUT: Respond with ONLY valid JSON, no markdown:
   "skipped_items": ["item - reason"]
 }"""
 
+# ── Dynamic pricing ───────────────────────────────────────────────────────────
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
-IMAGE_MEDIA_TYPES = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".tiff": "image/tiff",
-}
+def get_system_prompt():
+    """Build the full system prompt, injecting live pricing reference if available."""
+    pricing = os.environ.get("PRICING_REFERENCE", "")
+    if not pricing:
+        return SYSTEM_PROMPT
+    marker = "REPAIR PRICING REFERENCE"
+    end_marker = "CUSTOMER-FACING OUTPUT RULES"
+    if marker in SYSTEM_PROMPT and end_marker in SYSTEM_PROMPT:
+        base = SYSTEM_PROMPT[:SYSTEM_PROMPT.index(marker)]
+        tail = SYSTEM_PROMPT[SYSTEM_PROMPT.index(end_marker):]
+        return base + pricing + "\n\n" + tail
+    return SYSTEM_PROMPT
 
+
+
+
+# ── PDF helpers ───────────────────────────────────────────────────────────────
+
+def extract_pdf_text(pdf_bytes):
+    """Extract all text from a PDF."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pages = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append((i, text))
+        return pages  # list of (page_index, text)
+    except Exception as e:
+        print(f"  PDF text extraction failed: {e}")
+        return []
+
+
+def extract_item_numbers(text):
+    """Extract inspection item numbers like 1.1, 2.3.4, Item 5, #12 etc."""
+    patterns = [
+        r'\b\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\b',  # 1.1, 2.3, 3.4.1
+        r'(?:Item|#)\s*(\d+)',                     # Item 5, #12
+        r'\b([A-Z]\d+)\b',                         # A1, B2
+    ]
+    numbers = set()
+    for pattern in patterns:
+        numbers.update(re.findall(pattern, text))
+    return numbers
+
+
+def smart_extract_inspection_content(addendum_text, inspection_pages):
+    """
+    Use item numbers from the addendum to pull only relevant pages
+    from the inspection report. Falls back to full text if no item
+    numbers are found.
+    Returns a string of targeted inspection content.
+    """
+    item_numbers = extract_item_numbers(addendum_text)
+    print(f"  Found item numbers in addendum: {item_numbers}")
+
+    if not item_numbers:
+        # Fallback: return all inspection text (truncated)
+        print("  No item numbers found — using full inspection text")
+        all_text = "\n".join(text for _, text in inspection_pages)
+        return all_text[:40000]
+
+    # Match pages that contain any of the item numbers
+    matched_pages = []
+    for page_idx, page_text in inspection_pages:
+        for num in item_numbers:
+            if re.search(r'\b' + re.escape(str(num)) + r'\b', page_text):
+                matched_pages.append((page_idx, page_text))
+                break
+
+    if not matched_pages:
+        print("  Item numbers not matched in report — using full text fallback")
+        all_text = "\n".join(text for _, text in inspection_pages)
+        return all_text[:40000]
+
+    print(f"  Matched {len(matched_pages)} of {len(inspection_pages)} inspection pages")
+    combined = "\n\n".join(f"[Page {i+1}]\n{text}" for i, text in matched_pages)
+    return combined[:40000]
+
+
+# ── File download ─────────────────────────────────────────────────────────────
 
 def download_file(url):
-    """Download a file from Wufoo, following redirects with auth."""
-    import http.client
+    """Download a file from Wufoo with auth, following redirects."""
     auth = base64.b64encode(f"{WUFOO_API_KEY}:footastic".encode()).decode("utf-8")
     for _ in range(5):
         parts = urllib.parse.urlparse(url)
@@ -281,40 +363,10 @@ def download_file(url):
     raise Exception("Too many redirects")
 
 
-def get_file_extension(url, filename=""):
-    """Determine file extension from URL or filename."""
-    for src in [filename, url]:
-        if src:
-            ext = os.path.splitext(src.split("?")[0].lower())[1]
-            if ext:
-                return ext
-    return ".pdf"
+# ── Claude ────────────────────────────────────────────────────────────────────
 
-
-def extract_pdf_text(pdf_bytes):
-    """Extract text from PDF bytes using pypdf."""
-    try:
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        text = ""
-        for page in reader.pages:
-            text += (page.extract_text() or "") + "\n"
-        return text[:60000]
-    except Exception as e:
-        print(f"  pypdf extraction failed: {e}")
-        return ""
-
-
-def is_image(ext):
-    return ext.lower() in IMAGE_EXTENSIONS
-
-
-def build_claude_content(files_data, client_name, client_phone, client_email, address, notes):
-    """
-    Build the Claude API message content list.
-    files_data: list of {"bytes": ..., "ext": ..., "label": ...}
-    Returns a list of content blocks (text and/or image).
-    """
+def call_claude(addendum_text, inspection_content, client_name, client_phone, client_email, address, notes):
+    """Build Claude content and call API. Returns parsed estimate dict."""
     content = []
 
     intro = f"""Generate a closing repairs estimate for Owners Choice Construction.
@@ -323,69 +375,25 @@ Client name: {client_name}
 Client phone: {client_phone}
 Client email: {client_email}
 Property address: {address}
-{f"Additional notes from form: {notes}" if notes else ""}
+{f"Realtor notes: {notes}" if notes else ""}
 
-Only include items within a general contractor scope. Cross-reference the addendum with the inspection report to write accurate scope descriptions.
+Process the repair addendum first to identify all requested items, then cross-reference with the inspection report content to write accurate scope descriptions and calibrate pricing based on described severity.
 """
     content.append({"type": "text", "text": intro})
 
-    for fd in files_data:
-        ext = fd["ext"].lower()
-        label = fd["label"]
-        file_bytes = fd["bytes"]
+    if addendum_text:
+        content.append({"type": "text", "text": f"\n=== REPAIR ADDENDUM ===\n{addendum_text[:20000]}"})
 
-        if is_image(ext):
-            media_type = IMAGE_MEDIA_TYPES.get(ext, "image/jpeg")
-            b64 = base64.b64encode(file_bytes).decode("utf-8")
-            content.append({"type": "text", "text": f"\n=== {label} (image) ==="})
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": b64
-                }
-            })
-        else:
-            # Treat as PDF
-            text = extract_pdf_text(file_bytes)
-            if text.strip():
-                content.append({"type": "text", "text": f"\n=== {label} ===\n{text}"})
-            else:
-                # PDF text extraction failed — try sending as base64 document
-                b64 = base64.b64encode(file_bytes).decode("utf-8")
-                content.append({"type": "text", "text": f"\n=== {label} (PDF document) ==="})
-                content.append({
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": b64
-                    }
-                })
+    if inspection_content:
+        content.append({"type": "text", "text": f"\n=== INSPECTION REPORT (targeted sections) ===\n{inspection_content}"})
 
-    content.append({
-        "type": "text",
-        "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."
-    })
+    content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
 
-    return content
-
-
-def has_enough_info(files_data, notes):
-    """Check if we have enough content to attempt an estimate."""
-    has_file_content = any(fd["bytes"] and len(fd["bytes"]) > 100 for fd in files_data)
-    has_notes = bool(notes and notes.strip() and notes.strip().lower() not in ["nope!", "no", "n/a", "none"])
-    return has_file_content or has_notes
-
-
-def call_claude(content_blocks):
-    """Call Claude API with content blocks."""
     payload = json.dumps({
         "model": "claude-sonnet-4-6",
         "max_tokens": 4000,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": content_blocks}]
+        "system": get_system_prompt(),
+        "messages": [{"role": "user", "content": content}]
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -409,137 +417,394 @@ def call_claude(content_blocks):
     return json.loads(match.group(0))
 
 
-def fmt(price):
-    if price == 0:
-        return "$0.00"
-    return "$" + f"{float(price):,.2f}"
+# ── JobTread ──────────────────────────────────────────────────────────────────
 
-
-def build_estimate_email_html(estimate):
-    from datetime import datetime, timedelta
-    today = datetime.now()
-    issue = today.strftime("%B %d, %Y")
-    expires = (today + timedelta(days=14)).strftime("%B %d, %Y")
-    rows = ""
-    for item in estimate.get("line_items", []):
-        desc = item.get("description", "") or ""
-        bullets = ""
-        for line in desc.split("\n"):
-            if line.startswith("-"):
-                bullets += f"<li style='margin:2px 0;color:#555;font-size:12px'>{line[1:].strip()}</li>"
-        if item["title"] == "Disclaimer":
-            desc_html = f"<p style='margin:4px 0 0;color:#555;font-size:12px'>{desc}</p>"
-        else:
-            desc_html = f"<ul style='margin:4px 0 0 16px;padding:0'>{bullets}</ul>"
-        note_html = f"<p style='margin:5px 0 0;font-size:11.5px;color:#666;font-style:italic'>{item['notes']}</p>" if item.get("notes") else ""
-        rows += f"""<tr>
-            <td style='padding:10px 0;border-bottom:0.5px solid #ddd;vertical-align:top'>
-                <strong style='font-size:13px'>{item["title"]}</strong>
-                {desc_html}{note_html}
-            </td>
-            <td style='padding:10px 0 10px 16px;border-bottom:0.5px solid #ddd;vertical-align:top;text-align:right;white-space:nowrap;font-weight:600;font-size:13px'>
-                {fmt(item["price"])}
-            </td>
-        </tr>"""
-
-    return f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
-<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;line-height:1.5;padding:40px;max-width:820px;margin:0 auto}}</style>
-</head><body>
-<div style='display:flex;justify-content:space-between;padding-bottom:14px;border-bottom:1px solid #bbb;margin-bottom:14px'>
-    <div style='font-size:20px;font-weight:700'>Closing Repairs Estimate</div>
-    <div style='text-align:right;font-size:12px;color:#555'><div>Issue Date {issue}</div><div>Expires {expires}</div></div>
-</div>
-<div style='display:grid;grid-template-columns:1fr 1fr;gap:20px;padding-bottom:14px;border-bottom:1px solid #bbb;margin-bottom:14px'>
-    <div>
-        <div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px'>Prepared By</div>
-        <strong>Jason Evans</strong><div>Owners Choice Construction</div>
-        <div>(864) 252-4999</div><div>jason@ownerschoiceconstruction.com</div>
-        <div>3122 Wade Hampton Blvd, Taylors, SC 29687</div>
-    </div>
-    <div>
-        <div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px'>Prepared For</div>
-        <strong>{estimate.get("client_name","")}</strong>
-        <div>{estimate.get("property_address","")}</div>
-        <div>{estimate.get("client_phone","")}</div>
-        <div>{estimate.get("client_email","")}</div>
-    </div>
-</div>
-<div style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px'>Closing Repairs Estimate Details</div>
-<div style='font-size:15px;font-weight:700;margin:2px 0 14px'>{estimate.get("property_address","")}</div>
-<table style='width:100%;border-collapse:collapse'>
-    <thead><tr>
-        <th style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:5px 0;border-bottom:1.5px solid #999;text-align:left'>Description</th>
-        <th style='font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:5px 0;border-bottom:1.5px solid #999;text-align:right'>Total</th>
-    </tr></thead>
-    <tbody>{rows}</tbody>
-    <tfoot><tr>
-        <td style='padding:12px 0;border-top:1.5px solid #999;font-weight:700;font-size:14px'>TOTAL</td>
-        <td style='padding:12px 0;border-top:1.5px solid #999;font-weight:700;font-size:14px;text-align:right'>{fmt(estimate.get("total",0))}</td>
-    </tr></tfoot>
-</table>
-</body></html>"""
-
-
-def build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason):
-    """Email to Jason when we can't generate a full estimate."""
-    file_list = "".join(
-        f"<li>{fd['label']}: {fd['ext']} ({len(fd['bytes'])} bytes)</li>"
-        for fd in files_data
-    )
-    return f"""<!DOCTYPE html><html><body style='font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;padding:30px;max-width:700px'>
-<h2 style='color:#c0392b'>⚠️ Manual Review Required — OCC Estimator</h2>
-<p>A new submission came in but the system could not generate a full estimate automatically. Please review and follow up manually.</p>
-<hr>
-<h3>Submission Details</h3>
-<table style='border-collapse:collapse;width:100%'>
-<tr><td style='padding:6px;font-weight:bold;width:150px'>Name</td><td style='padding:6px'>{client_name}</td></tr>
-<tr><td style='padding:6px;font-weight:bold'>Phone</td><td style='padding:6px'>{client_phone}</td></tr>
-<tr><td style='padding:6px;font-weight:bold'>Email</td><td style='padding:6px'>{client_email}</td></tr>
-<tr><td style='padding:6px;font-weight:bold'>Address</td><td style='padding:6px'>{address}</td></tr>
-<tr><td style='padding:6px;font-weight:bold'>Notes</td><td style='padding:6px'>{notes or "None"}</td></tr>
-</table>
-<h3>Files Submitted</h3>
-<ul>{file_list}</ul>
-<h3>Reason Auto-Estimate Failed</h3>
-<p style='color:#c0392b'>{reason}</p>
-<hr>
-<p style='color:#888;font-size:11px'>Sent by OCC Estimator Backend</p>
-</body></html>"""
-
-
-def send_email(subject, html_body):
+def jobtread_query(query):
+    """Execute a JobTread Pave API query."""
     payload = json.dumps({
-        "personalizations": [{"to": [{"email": NOTIFY_EMAIL}]}],
-        "from": {"email": "jason@ownerschoiceconstruction.com", "name": "OCC Estimator"},
-        "subject": subject,
-        "content": [{"type": "text/html", "value": html_body}]
+        "query": {
+            "$": {"grantKey": JOBTREAD_KEY},
+            **query
+        }
     }).encode("utf-8")
     req = urllib.request.Request(
-        "https://api.sendgrid.com/v3/mail/send",
+        "https://api.jobtread.com/pave",
         data=payload,
-        headers={
-            "Authorization": f"Bearer {SENDGRID_KEY}",
-            "Content-Type": "application/json"
-        },
+        headers={"Content-Type": "application/json"},
         method="POST"
     )
     with urllib.request.urlopen(req, timeout=30) as r:
-        return r.status
+        return json.loads(r.read().decode("utf-8"))
+
+
+def create_jobtread_job(estimate, notes_text, file_urls):
+    """
+    Full JobTread job creation flow:
+    1. Create account (customer)
+    2. Create contact
+    3. Create location
+    4. Create job
+    5. Create cost items (estimate line items)
+    6. Attach files from Wufoo URLs
+    """
+    client_name  = estimate.get("client_name", "Unknown")
+    client_email = estimate.get("client_email", "")
+    client_phone = estimate.get("client_phone", "")
+    address      = estimate.get("property_address", "")
+
+    # 1. Create account
+    print("  Creating JobTread account...")
+    resp = jobtread_query({
+        "createAccount": {
+            "$": {
+                "organizationId": JOBTREAD_ORG,
+                "type": "customer",
+                "name": client_name
+            },
+            "createdAccount": {"id": {}}
+        }
+    })
+    account_id = resp["createAccount"]["createdAccount"]["id"]
+    print(f"  Account created: {account_id}")
+
+    # 2. Create contact
+    print("  Creating contact...")
+    contact_fields = {
+        "accountId": account_id,
+        "name": client_name,
+        "customFieldValues": {}
+    }
+    if client_email:
+        contact_fields["customFieldValues"]["Email Address"] = client_email
+    if client_phone:
+        contact_fields["customFieldValues"]["Phone Number"] = client_phone
+
+    jobtread_query({
+        "createContact": {
+            "$": contact_fields,
+            "createdContact": {"id": {}}
+        }
+    })
+
+    # 3. Create location
+    print("  Creating location...")
+    resp = jobtread_query({
+        "createLocation": {
+            "$": {
+                "accountId": account_id,
+                "address": address
+            },
+            "createdLocation": {"id": {}}
+        }
+    })
+    location_id = resp["createLocation"]["createdLocation"]["id"]
+    print(f"  Location created: {location_id}")
+
+    # 4. Create job
+    print("  Creating job...")
+    job_name = f"Closing Repairs — {address}"
+    resp = jobtread_query({
+        "createJob": {
+            "$": {
+                "locationId": location_id,
+                "name": job_name,
+                "priceType": "fixed",
+                "description": notes_text or ""
+            },
+            "createdJob": {"id": {}}
+        }
+    })
+    job_id = resp["createJob"]["createdJob"]["id"]
+    print(f"  Job created: {job_id}")
+
+    # 5. Create cost items from estimate line items
+    print("  Adding cost items...")
+    for item in estimate.get("line_items", []):
+        title = item.get("title", "")
+        price = float(item.get("price", 0))
+        description = item.get("description", "") or ""
+        notes = item.get("notes", "") or ""
+
+        # Combine description and notes into a single name string
+        full_name = title
+        if description or notes:
+            detail = []
+            if description:
+                detail.append(description.replace("\n", " ").strip())
+            if notes:
+                detail.append(f"NOTE: {notes}")
+            full_name = f"{title} — {' | '.join(detail)}"[:500]
+
+        jobtread_query({
+            "createCostItem": {
+                "$": {
+                    "jobId": job_id,
+                    "name": full_name,
+                    "quantity": 1,
+                    "unitCost": price,
+                    "unitPrice": price
+                },
+                "createdCostItem": {"id": {}}
+            }
+        })
+
+    print(f"  {len(estimate.get('line_items', []))} cost items added")
+
+    # 6. Attach files from Wufoo using URL-based upload
+    for label, url in file_urls:
+        if not url:
+            continue
+        try:
+            print(f"  Attaching file: {label}")
+            # Create upload request using the public Wufoo URL
+            resp = jobtread_query({
+                "createUploadRequest": {
+                    "$": {
+                        "organizationId": JOBTREAD_ORG,
+                        "url": url
+                    },
+                    "createdUploadRequest": {"id": {}}
+                }
+            })
+            upload_id = resp["createUploadRequest"]["createdUploadRequest"]["id"]
+
+            # Attach to job
+            jobtread_query({
+                "createFile": {
+                    "$": {
+                        "targetType": "job",
+                        "targetId": job_id,
+                        "name": label,
+                        "uploadRequestId": upload_id
+                    },
+                    "createdFile": {"id": {}}
+                }
+            })
+            print(f"  File attached: {label}")
+        except Exception as e:
+            print(f"  File attach failed for {label}: {e}")
+
+    return job_id
+
+
+def format_date(raw):
+    """Convert Wufoo date format YYYYMMDD to MM/DD/YYYY."""
+    if raw and len(raw) == 8:
+        return f"{raw[4:6]}/{raw[6:8]}/{raw[0:4]}"
+    return raw
+
+
+def build_notes(due_diligence, closing_date, site_visit, non_neg_notes, extra_notes, inquiring_party):
+    """Assemble the JobTread job notes field from all relevant Wufoo fields."""
+    parts = []
+    if inquiring_party:
+        parts.append(f"Inquiring Party: {inquiring_party}")
+    if site_visit:
+        parts.append(f"Site Visit Requested: {site_visit}")
+    if due_diligence:
+        parts.append(f"Due Diligence Deadline: {format_date(due_diligence)}")
+    if closing_date:
+        parts.append(f"Anticipated Closing Date: {format_date(closing_date)}")
+    if non_neg_notes and non_neg_notes.strip().lower() not in ["no", "n/a", "none", "nope!", ""]:
+        parts.append(f"Non-Negotiable Repairs: {non_neg_notes.strip()}")
+    if extra_notes and extra_notes.strip():
+        parts.append(f"Additional Notes: {extra_notes.strip()}")
+    return "\n".join(parts)
+
+
+# ── HTTP handler ──────────────────────────────────────────────────────────────
+
+# ── Pricing refresh ───────────────────────────────────────────────────────────
+
+def build_pricing_reference():
+    """
+    Pull all Closing Repairs estimate documents from JobTread, aggregate
+    cost group names + totals, and return a formatted pricing reference string.
+    """
+    from collections import defaultdict
+
+    all_groups = defaultdict(list)
+    page = None
+    doc_count = 0
+
+    while True:
+        query = {
+            "organization": {
+                "$": {"id": JOBTREAD_ORG},
+                "documents": {
+                    "$": {
+                        "size": 20,
+                        "where": ["name", "like", "%Closing Repairs%"],
+                        **( {"page": page} if page else {} )
+                    },
+                    "nextPage": {},
+                    "nodes": {
+                        "costGroups": {
+                            "$": {"size": 25},
+                            "nodes": {
+                                "descendentCostItems": {"sum": {"$": "unitPrice"}},
+                                "name": {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        resp = jobtread_query(query)
+        docs = resp.get("organization", {}).get("documents", {})
+        nodes = docs.get("nodes", [])
+        page = docs.get("nextPage")
+
+        for doc in nodes:
+            doc_count += 1
+            for group in doc.get("costGroups", {}).get("nodes", []):
+                name = group.get("name", "").strip()
+                total = group.get("descendentCostItems", {}).get("sum")
+                if name and total and total > 0:
+                    # Normalize name: strip leading inspection numbers for grouping
+                    clean = re.sub(r'^[\d\.\,\s&]+[-–:]?\s*', '', name).strip()
+                    clean = re.sub(r'^[A-Z]\d+[-–:]?\s*', '', clean).strip()
+                    if len(clean) > 5:
+                        all_groups[clean].append(round(total, 2))
+
+        print(f"  Fetched {doc_count} documents so far...")
+        if not page:
+            break
+
+    print(f"  Total documents processed: {doc_count}")
+    print(f"  Unique repair types found: {len(all_groups)}")
+
+    # Build formatted output
+    lines = [
+        f"REPAIR PRICING REFERENCE — Built from {doc_count} real OCC JobTread closing repair documents",
+        "Ranges reflect actual billed prices. Use scope/photos to calibrate within range.",
+        "Apply $89/hr labor + 65% material markup for in-house work.",
+        ""
+    ]
+
+    # Sort by category keywords then alphabetically
+    def category_key(name):
+        n = name.lower()
+        if any(x in n for x in ["crawl", "vapor", "dehumid", "sump", "shoring", "girder", "joist", "sill", "foundation drain"]):
+            return "1_CRAWLSPACE"
+        if any(x in n for x in ["electrical", "gfci", "breaker", "panel", "junction", "outlet", "smoke", "co detector", "conduit", "disconnect", "rewire"]):
+            return "2_ELECTRICAL"
+        if any(x in n for x in ["hvac", "condensate", "refrigerant", "duct", "furnace", "air handler", "vent fan"]):
+            return "3_HVAC"
+        if any(x in n for x in ["plumb", "toilet", "drain", "spigot", "water heater", "expansion tank", "tpr", "gas bond", "gas line", "shower faucet", "bathtub", "sink drain", "supply line", "exhaust fan", "dryer vent", "copper pipe", "cast iron"]):
+            return "4_PLUMBING"
+        if any(x in n for x in ["roof", "shingle", "flashing", "gutter", "chimney", "soffit", "fascia", "siding", "deck", "porch", "door", "window", "wood rot", "railing", "handrail", "mortar", "brick", "weatherstrip", "downspout", "exterior"]):
+            return "5_EXTERIOR"
+        return "6_INTERIOR"
+
+    sorted_groups = sorted(all_groups.items(), key=lambda x: (category_key(x[0]), x[0].lower()))
+    current_cat = None
+
+    cat_labels = {
+        "1_CRAWLSPACE": "CRAWLSPACE/STRUCTURAL:",
+        "2_ELECTRICAL": "ELECTRICAL:",
+        "3_HVAC": "HVAC:",
+        "4_PLUMBING": "PLUMBING:",
+        "5_EXTERIOR": "EXTERIOR:",
+        "6_INTERIOR": "INTERIOR:",
+    }
+
+    for name, prices in sorted_groups:
+        cat = category_key(name)
+        if cat != current_cat:
+            if current_cat is not None:
+                lines.append("")
+            lines.append(cat_labels.get(cat, "OTHER:"))
+            current_cat = cat
+
+        n = len(prices)
+        if n == 1:
+            lines.append(f"  - {name}: ~${prices[0]:,.0f} ({n} job)")
+        else:
+            lo, hi, avg = min(prices), max(prices), sum(prices) / n
+            if lo == hi:
+                lines.append(f"  - {name}: ~${lo:,.0f} ({n} jobs, very consistent)")
+            else:
+                lines.append(f"  - {name}: ${lo:,.0f}–${hi:,.0f} (avg ${avg:,.0f}, {n} jobs)")
+
+    return "\n".join(lines)
+
+
+def update_render_env(key, value):
+    """Update an environment variable on Render via the API."""
+    if not RENDER_API_KEY or not RENDER_SERVICE_ID:
+        print("  RENDER_API_KEY or RENDER_SERVICE_ID not set — skipping Render update")
+        return
+
+    # Get current env vars first
+    req = urllib.request.Request(
+        f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/env-vars",
+        headers={
+            "Authorization": f"Bearer {RENDER_API_KEY}",
+            "Accept": "application/json"
+        }
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        current = json.loads(r.read().decode("utf-8"))
+
+    # Build updated list — replace existing key or add new
+    env_vars = [{"key": e["envVar"]["key"], "value": e["envVar"]["value"]}
+                for e in current if e["envVar"]["key"] != key]
+    env_vars.append({"key": key, "value": value})
+
+    # PUT updated list
+    payload = json.dumps(env_vars).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/env-vars",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {RENDER_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        method="PUT"
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        print(f"  Render env update response: {r.status}")
 
 
 class Handler(BaseHTTPRequestHandler):
+
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OCC Estimator Backend is running!")
+        path = self.path.split("?")[0]
+        if path == "/refresh-pricing":
+            self._handle_refresh()
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OCC Estimator Backend is running!")
+
+    def _handle_refresh(self):
+        """Pull all closing repair cost groups from JobTread and update pricing."""
+        try:
+            print("Starting pricing refresh...")
+            pricing_text = build_pricing_reference()
+            update_render_env("PRICING_REFERENCE", pricing_text)
+            # Also update in-process so current instance uses it immediately
+            os.environ["PRICING_REFERENCE"] = pricing_text
+            msg = f"Pricing reference updated successfully. {pricing_text.count(chr(10))} lines generated."
+            print(msg)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(msg.encode("utf-8"))
+        except Exception as e:
+            import traceback
+            err = f"Refresh failed: {e}\n{traceback.format_exc()}"
+            print(err)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(err.encode("utf-8"))
 
     def do_POST(self):
-        # Read body first
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8")
 
-        # Respond to Wufoo immediately before doing any work
-        # Wufoo has a short timeout and will close the connection if we wait
+        # Respond to Wufoo immediately — it has a short timeout
         try:
             self.send_response(200)
             self.end_headers()
@@ -547,92 +812,108 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
-        # Process in background thread so Wufoo connection is already closed
-        import threading
-        t = threading.Thread(target=self._process_submission, args=(body,))
+        # Process in background thread
+        t = threading.Thread(target=self._process, args=(body,))
         t.daemon = True
         t.start()
 
-    def _process_submission(self, body):
-        client_name = ""
-        client_phone = ""
-        client_email = ""
-        address = ""
-        notes = ""
-        files_data = []
-
+    def _process(self, body):
         try:
-            pass  # placeholder to maintain try block
-            data = urllib.parse.parse_qs(body)
             data = urllib.parse.parse_qs(body)
 
             def get(key):
                 return data.get(key, [""])[0]
 
-            first = get("Field1")
-            last = get("Field2")
-            client_name = f"{first} {last}".strip()
-            client_phone = get("Field3")
-            client_email = get("Field4")
-            street = get("Field5")
-            city = get("Field7")
-            state = get("Field8")
-            zip_code = get("Field9")
-            address = f"{street}, {city}, {state} {zip_code}".strip(", ")
-            notes = get("Field121")
-            extra_notes = get("Field424")
-            if extra_notes:
-                notes = f"{notes}\n{extra_notes}".strip()
+            # Parse all Wufoo fields
+            first          = get("Field1")
+            last           = get("Field2")
+            client_name    = f"{first} {last}".strip()
+            client_phone   = get("Field3")
+            client_email   = get("Field4")
+            inquiring_party = get("Field122")
+            street         = get("Field5")
+            city           = get("Field7")
+            state          = get("Field8")
+            zip_code       = get("Field9")
+            address        = f"{street}, {city}, {state} {zip_code}".strip(", ")
+            inspection_url = get("Field12-url")
+            addendum_url   = get("Field13-url")
+            extra_file_url = get("Field426-url")
+            extra_file_name = get("Field426") or "Additional File"
+            non_neg_notes  = get("Field121")
+            site_visit_yes = get("Field324")
+            site_visit_no  = get("Field325")
+            closing_date   = get("Field428")
+            due_diligence  = get("Field532")
+            extra_notes    = get("Field424")
 
-            print(f"New submission: {client_name} - {address}")
+            site_visit = "Yes" if site_visit_yes else ("No" if site_visit_no else "")
 
-            # Collect all uploaded files
-            for field_id, label in [("Field12", "Inspection Report"), ("Field13", "Repair Addendum"), ("Field426", "Additional File")]:
-                url = get(f"{field_id}-url")
-                filename = get(field_id)
-                if not url:
-                    continue
-                ext = get_file_extension(url, filename)
-                print(f"  Downloading {label}: {filename} ({ext})")
+            print(f"New submission: {client_name} — {address}")
+
+            # Build notes for JobTread
+            notes_text = build_notes(
+                due_diligence, closing_date, site_visit,
+                non_neg_notes, extra_notes, inquiring_party
+            )
+
+            # Download PDFs
+            addendum_text     = ""
+            inspection_pages  = []
+
+            if addendum_url:
+                print("  Downloading repair addendum...")
                 try:
-                    file_bytes = download_file(url)
-                    print(f"  Downloaded {len(file_bytes)} bytes")
-                    files_data.append({"bytes": file_bytes, "ext": ext, "label": label, "filename": filename})
+                    addendum_bytes = download_file(addendum_url)
+                    pages = extract_pdf_text(addendum_bytes)
+                    addendum_text = "\n".join(text for _, text in pages)
+                    print(f"  Addendum: {len(addendum_text)} chars extracted")
                 except Exception as e:
-                    print(f"  Failed to download {label}: {e}")
-                    files_data.append({"bytes": b"", "ext": ext, "label": label, "filename": filename})
+                    print(f"  Addendum download failed: {e}")
 
-            # Check if we have enough to work with
-            if not has_enough_info(files_data, notes):
-                reason = "No usable files were downloaded and no repair notes were provided in the form."
-                print(f"Insufficient info — sending review email")
-                html = build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason)
-                send_email(f"⚠️ Manual Review Needed - {address}", html)
+            if inspection_url:
+                print("  Downloading inspection report...")
+                try:
+                    inspection_bytes = download_file(inspection_url)
+                    inspection_pages = extract_pdf_text(inspection_bytes)
+                    print(f"  Inspection: {len(inspection_pages)} pages extracted")
+                except Exception as e:
+                    print(f"  Inspection download failed: {e}")
+
+            if not addendum_text and not inspection_pages:
+                print("  No usable content — aborting")
                 return
 
-            # Build Claude content and generate estimate
-            content = build_claude_content(files_data, client_name, client_phone, client_email, address, notes)
-            estimate = call_claude(content)
-            print(f"Estimate total: {estimate.get('total', 0)}")
+            # Smart extraction: use addendum item numbers to target inspection pages
+            inspection_content = smart_extract_inspection_content(addendum_text, inspection_pages)
 
-            html = build_estimate_email_html(estimate)
-            subject = f"Closing Repairs Estimate - {address} - {fmt(estimate.get('total', 0))}"
-            send_email(subject, html)
-            print(f"Estimate email sent to {NOTIFY_EMAIL}")
+            # Call Claude
+            print("  Calling Claude...")
+            estimate = call_claude(
+                addendum_text, inspection_content,
+                client_name, client_phone, client_email, address, notes_text
+            )
+            total = estimate.get("total", 0)
+            print(f"  Estimate total: ${total:,.2f}")
+
+            # Build file list for JobTread attachment
+            # Use Wufoo file URLs directly — JobTread fetches them
+            file_urls = [
+                ("Inspection Report", inspection_url),
+                ("Repair Addendum",   addendum_url),
+            ]
+            if extra_file_url:
+                file_urls.append((extra_file_name or "Additional File", extra_file_url))
+
+            # Create job in JobTread
+            print("  Creating JobTread job...")
+            job_id = create_jobtread_job(estimate, notes_text, file_urls)
+            print(f"  Done. JobTread job ID: {job_id}")
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error processing submission: {e}")
             import traceback
             traceback.print_exc()
-
-            # Try to send a fallback review email so Jason knows something came in
-            try:
-                reason = f"System error: {str(e)}"
-                html = build_review_email_html(client_name, client_phone, client_email, address, notes, files_data, reason)
-                send_email(f"⚠️ Manual Review Needed - {address or 'Unknown Address'}", html)
-                print("Fallback review email sent")
-            except Exception as e2:
-                print(f"Failed to send fallback email: {e2}")
 
     def log_message(self, format, *args):
         print(f"{self.address_string()} - {format % args}")
@@ -640,6 +921,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"Starting on port {port}")
+    print(f"Starting OCC Estimator on port {port}")
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
