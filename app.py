@@ -459,7 +459,8 @@ def create_jobtread_job(estimate, notes_text, file_urls):
             "$": {
                 "organizationId": JOBTREAD_ORG,
                 "type": "customer",
-                "name": client_name,
+                "name": address,
+                "suffixIfNecessary": True,
                 "customFieldValues": {
                     "Type": "Closing Repair",
                     "Lead Source": "Realtor"
@@ -507,7 +508,9 @@ def create_jobtread_job(estimate, notes_text, file_urls):
 
     # 4. Create job
     print("  Creating job...")
-    job_name = f"Closing Repairs — {address}"
+    # JobTread job name limit is 30 characters — use street portion only
+    street = address.split(",")[0].strip() if "," in address else address
+    job_name = street[:30]
     resp = jobtread_query({
         "createJob": {
             "$": {
@@ -552,7 +555,8 @@ def create_jobtread_job(estimate, notes_text, file_urls):
                     "quantity": 1,
                     "unitCost": price,
                     "unitPrice": price,
-                    "costCodeId": "22P9ppJUAHXn"
+                    "costCodeId": "22P9ppJUAHXn",
+                    "costTypeId": "22P9ppJUAHYR"
                 },
                 "createdCostItem": {"id": {}}
             }
