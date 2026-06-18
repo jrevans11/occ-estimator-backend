@@ -459,7 +459,11 @@ def create_jobtread_job(estimate, notes_text, file_urls):
             "$": {
                 "organizationId": JOBTREAD_ORG,
                 "type": "customer",
-                "name": client_name
+                "name": client_name,
+                "customFieldValues": {
+                    "Type": "Closing Repair",
+                    "Lead Source": "Realtor"
+                }
             },
             "createdAccount": {"id": {}}
         }
