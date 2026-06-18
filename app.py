@@ -475,9 +475,9 @@ def create_jobtread_job(estimate, notes_text, file_urls):
         "customFieldValues": {}
     }
     if client_email:
-        contact_fields["customFieldValues"]["Email Address"] = client_email
+        contact_fields["customFieldValues"]["Email"] = client_email
     if client_phone:
-        contact_fields["customFieldValues"]["Phone Number"] = client_phone
+        contact_fields["customFieldValues"]["Phone"] = client_phone
 
     jobtread_query({
         "createContact": {
@@ -644,7 +644,16 @@ def build_pricing_reference():
             }
         }
         resp = jobtread_query(query)
+        if not resp:
+            print(f"  WARNING: Empty response from JobTread")
+            break
+        if "error" in resp:
+            print(f"  ERROR from JobTread: {resp}")
+            break
         docs = resp.get("organization", {}).get("documents", {})
+        if not docs:
+            print(f"  WARNING: No documents in response: {list(resp.keys())}")
+            break
         for node in docs.get("nodes", []):
             doc_ids.append(node["id"])
         page = docs.get("nextPage")
