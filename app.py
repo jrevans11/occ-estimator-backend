@@ -531,38 +531,46 @@ def create_jobtread_job(estimate, notes_text, file_urls):
 
     # 5. Create cost items from estimate line items
     print("  Adding cost items...")
+    added = 0
     for item in estimate.get("line_items", []):
-        title = item.get("title", "")
+        title = (item.get("title", "") or "").strip()
         price = float(item.get("price", 0))
-        description = item.get("description", "") or ""
-        notes = item.get("notes", "") or ""
+        description = (item.get("description", "") or "").replace("\n", " ").strip()
+        notes = (item.get("notes", "") or "").strip()
 
-        # Combine description and notes into a single name string
-        full_name = title
-        if description or notes:
-            detail = []
-            if description:
-                detail.append(description.replace("\n", " ").strip())
-            if notes:
-                detail.append(f"NOTE: {notes}")
-            full_name = f"{title} — {' | '.join(detail)}"[:500]
+        # Build name — JobTread has a character limit, keep it clean
+        if description:
+            full_name = f"{title}: {description}"
+        else:
+            full_name = title
+        if notes:
+            full_name += f" | NOTE: {notes}"
+        # Truncate to safe length and strip any problematic characters
+        full_name = full_name[:250].strip()
+        if not full_name:
+            full_name = "Repair Item"
 
-        jobtread_query({
-            "createCostItem": {
-                "$": {
-                    "jobId": job_id,
-                    "name": full_name,
-                    "quantity": 1,
-                    "unitCost": price,
-                    "unitPrice": price,
-                    "costCodeId": "22P9ppJUAHXn",
-                    "costTypeId": "22P9ppJUAHYR"
-                },
-                "createdCostItem": {"id": {}}
-            }
-        })
+        try:
+            jobtread_query({
+                "createCostItem": {
+                    "$": {
+                        "jobId": job_id,
+                        "name": full_name,
+                        "quantity": 1,
+                        "unitCost": price,
+                        "unitPrice": price,
+                        "costCodeId": "22P9ppJUAHXn",
+                        "costTypeId": "22P9ppJUAHYR"
+                    },
+                    "createdCostItem": {"id": {}}
+                }
+            })
+            added += 1
+        except Exception as e:
+            print(f"  Skipping cost item '{title[:50]}': {e}")
+            continue
 
-    print(f"  {len(estimate.get('line_items', []))} cost items added")
+    print(f"  {added}/{len(estimate.get('line_items', []))} cost items added")
 
     # 6. Attach files from Wufoo using URL-based upload
     for label, url in file_urls:
