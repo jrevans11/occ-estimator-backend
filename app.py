@@ -618,71 +618,87 @@ def build_notes(due_diligence, closing_date, site_visit, non_neg_notes, extra_no
 
 def build_pricing_reference():
     """
-    Pull all Closing Repairs estimate documents from JobTread, aggregate
-    cost group names + totals, and return a formatted pricing reference string.
+    Pull all Closing Repairs documents from JobTread in two passes:
+    Pass 1 — collect all doc IDs (IDs only, small payload)
+    Pass 2 — fetch cost groups for each doc individually
+    Aggregate into a formatted pricing reference string.
     """
     from collections import defaultdict
 
-    all_groups = defaultdict(list)
+    # ── Pass 1: collect all document IDs ─────────────────────────────────────
+    doc_ids = []
     page = None
-    doc_count = 0
-
     while True:
         query = {
             "organization": {
                 "$": {"id": JOBTREAD_ORG},
                 "documents": {
                     "$": {
-                        "size": 20,
+                        "size": 50,
                         "where": ["name", "like", "%Closing Repairs%"],
                         **( {"page": page} if page else {} )
                     },
                     "nextPage": {},
-                    "nodes": {
-                        "costGroups": {
-                            "$": {"size": 25},
-                            "nodes": {
-                                "descendentCostItems": {"sum": {"$": "unitPrice"}},
-                                "name": {}
-                            }
-                        }
-                    }
+                    "nodes": {"id": {}}
                 }
             }
         }
         resp = jobtread_query(query)
         docs = resp.get("organization", {}).get("documents", {})
-        nodes = docs.get("nodes", [])
+        for node in docs.get("nodes", []):
+            doc_ids.append(node["id"])
         page = docs.get("nextPage")
-
-        for doc in nodes:
-            doc_count += 1
-            for group in doc.get("costGroups", {}).get("nodes", []):
-                name = group.get("name", "").strip()
-                total = group.get("descendentCostItems", {}).get("sum")
-                if name and total and total > 0:
-                    # Normalize name: strip leading inspection numbers for grouping
-                    clean = re.sub(r'^[\d\.\,\s&]+[-–:]?\s*', '', name).strip()
-                    clean = re.sub(r'^[A-Z]\d+[-–:]?\s*', '', clean).strip()
-                    if len(clean) > 5:
-                        all_groups[clean].append(round(total, 2))
-
-        print(f"  Fetched {doc_count} documents so far...")
+        print(f"  Collected {len(doc_ids)} doc IDs so far...")
         if not page:
             break
 
-    print(f"  Total documents processed: {doc_count}")
+    print(f"  Total documents found: {len(doc_ids)}")
+
+    # ── Pass 2: fetch cost groups per document ────────────────────────────────
+    all_groups = defaultdict(list)
+
+    for i, doc_id in enumerate(doc_ids):
+        try:
+            query = {
+                "document": {
+                    "$": {"id": doc_id},
+                    "costGroups": {
+                        "$": {"size": 30},
+                        "nodes": {
+                            "name": {},
+                            "descendentCostItems": {"sum": {"$": "unitPrice"}}
+                        }
+                    }
+                }
+            }
+            resp = jobtread_query(query)
+            groups = resp.get("document", {}).get("costGroups", {}).get("nodes", [])
+            for group in groups:
+                name = (group.get("name") or "").strip()
+                total = group.get("descendentCostItems", {}).get("sum")
+                if name and total and total > 0:
+                    # Normalize: strip leading inspection item numbers
+                    clean = re.sub(r'^[\d\.\,\s&/]+[-\u2013:]?\s*', '', name).strip()
+                    clean = re.sub(r'^[A-Z]\d+[-\u2013:]?\s*', '', clean).strip()
+                    if len(clean) > 5:
+                        all_groups[clean].append(round(total, 2))
+        except Exception as e:
+            print(f"  Skipping doc {doc_id}: {e}")
+            continue
+
+        if (i + 1) % 10 == 0:
+            print(f"  Processed {i+1}/{len(doc_ids)} documents...")
+
     print(f"  Unique repair types found: {len(all_groups)}")
 
-    # Build formatted output
+    # ── Build formatted output ────────────────────────────────────────────────
     lines = [
-        f"REPAIR PRICING REFERENCE — Built from {doc_count} real OCC JobTread closing repair documents",
+        f"REPAIR PRICING REFERENCE — Built from {len(doc_ids)} real OCC JobTread closing repair documents",
         "Ranges reflect actual billed prices. Use scope/photos to calibrate within range.",
         "Apply $89/hr labor + 65% material markup for in-house work.",
         ""
     ]
 
-    # Sort by category keywords then alphabetically
     def category_key(name):
         n = name.lower()
         if any(x in n for x in ["crawl", "vapor", "dehumid", "sump", "shoring", "girder", "joist", "sill", "foundation drain"]):
@@ -699,7 +715,6 @@ def build_pricing_reference():
 
     sorted_groups = sorted(all_groups.items(), key=lambda x: (category_key(x[0]), x[0].lower()))
     current_cat = None
-
     cat_labels = {
         "1_CRAWLSPACE": "CRAWLSPACE/STRUCTURAL:",
         "2_ELECTRICAL": "ELECTRICAL:",
@@ -716,7 +731,6 @@ def build_pricing_reference():
                 lines.append("")
             lines.append(cat_labels.get(cat, "OTHER:"))
             current_cat = cat
-
         n = len(prices)
         if n == 1:
             lines.append(f"  - {name}: ~${prices[0]:,.0f} ({n} job)")
@@ -725,7 +739,7 @@ def build_pricing_reference():
             if lo == hi:
                 lines.append(f"  - {name}: ~${lo:,.0f} ({n} jobs, very consistent)")
             else:
-                lines.append(f"  - {name}: ${lo:,.0f}–${hi:,.0f} (avg ${avg:,.0f}, {n} jobs)")
+                lines.append(f"  - {name}: ${lo:,.0f}\u2013${hi:,.0f} (avg ${avg:,.0f}, {n} jobs)")
 
     return "\n".join(lines)
 
