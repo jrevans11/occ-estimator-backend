@@ -235,12 +235,19 @@ SCOPE RULES:
 1. Only include items in a general contractor scope.
 2. Do NOT include: septic/sewer, termite, cosmetic items like carpet stains or paint.
 3. Group related items when it makes sense.
-4. Use inspection report section numbers as line item title prefix when available.
-5. Write scope descriptions using bullet points starting with a dash.
-6. Add NOTE: callouts where there are important caveats.
+4. Use inspection report section numbers as cost group title prefix when available.
+5. Do NOT include a disclaimer — it is already built into the estimate template.
 
-Always start with Disclaimer line item at $0.00:
-This estimate has been prepared based on information provided in the inspection report and limited available details. Actual costs may vary depending on site conditions, accessibility, extent of damage, and any additional work required that was not visible or documented in the report. Any necessary adjustments to scope or pricing will be communicated and approved prior to proceeding with the work.
+DESCRIPTION FORMATTING RULES:
+- Write each bullet point as a complete, professional sentence. Not fragments.
+- Be specific about what is being done — include the material, location, and action.
+- Good example: "- Remove and replace deteriorated wood casing at the front entry door, including treatment of any affected framing behind."
+- Bad example: "- Fix wood rot"
+- Each bullet should stand alone and read clearly to a homeowner.
+- Aim for 2-4 bullets per group depending on scope complexity.
+- Add a NOTE: line (not a bullet) at the end when there are important caveats or conditions.
+- For any repair that involves painting or finishing to match existing surfaces, always include this note at the end of the description:
+  "NOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation."
 
 OUTPUT: Respond with ONLY valid JSON, no markdown:
 {
@@ -248,9 +255,13 @@ OUTPUT: Respond with ONLY valid JSON, no markdown:
   "client_name": "name",
   "client_phone": "phone",
   "client_email": "email",
-  "line_items": [
-    {"title": "Disclaimer", "description": "This estimate has been prepared...", "price": 0, "notes": null},
-    {"title": "X.X.X - Title", "description": "- bullet one\n- bullet two", "price": 285.61, "notes": null}
+  "cost_groups": [
+    {
+      "title": "3.2 - Wood Rot at Front Door",
+      "description": "- Remove and replace deteriorated wood casing at the front entry door, including treatment of any affected framing behind.\n- Apply primer and finish coat to all repaired surfaces.\n\nNOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation.",
+      "price": 450.00,
+      "notes": null
+    }
   ],
   "total": 0.00,
   "skipped_items": ["item - reason"]
@@ -529,48 +540,76 @@ def create_jobtread_job(estimate, notes_text, file_urls):
     job_id = resp["createJob"]["createdJob"]["id"]
     print(f"  Job created: {job_id}")
 
-    # 5. Create cost items from estimate line items
-    print("  Adding cost items...")
+    # 5. Create cost groups with cost items from estimate
+    print("  Adding cost groups...")
     added = 0
-    for item in estimate.get("line_items", []):
-        title = (item.get("title", "") or "").strip()
-        price = float(item.get("price", 0))
-        description = (item.get("description", "") or "").replace("\n", " ").strip()
-        notes = (item.get("notes", "") or "").strip()
+    cost_groups = estimate.get("cost_groups", estimate.get("line_items", []))
 
-        # Build name — JobTread has a character limit, keep it clean
-        if description:
-            full_name = f"{title}: {description}"
-        else:
-            full_name = title
+    for group in cost_groups:
+        title       = (group.get("title", "") or "").strip()
+        client_price = float(group.get("price", 0))
+        description = (group.get("description", "") or "").strip()
+        notes       = (group.get("notes", "") or "").strip()
+
+        if not title:
+            title = "Repair Item"
+
+        # Full scope description goes on the cost group
+        group_description = description
         if notes:
-            full_name += f" | NOTE: {notes}"
-        # Truncate to safe length and strip any problematic characters
-        full_name = full_name[:250].strip()
-        if not full_name:
-            full_name = "Repair Item"
+            group_description += f"\n\nNOTE: {notes}" if group_description else f"NOTE: {notes}"
+
+        # Reverse-engineer cost from client price using 55% blended markup
+        # client_price = cost * 1.55 → cost = client_price / 1.55
+        cost = round(client_price / 1.55, 2) if client_price > 0 else 0.0
+
+        # Determine cost item name — short descriptor from title
+        # Strip leading inspection number prefix for the item name
+        import re as _re
+        item_name = _re.sub(r'^[\d\.\s]+[-\u2013]?\s*', '', title).strip()
+        if not item_name:
+            item_name = title
+        item_name = item_name[:100]
+
+        # Determine cost type — subcontractor vs other
+        sub_keywords = ["electric", "crawlspace", "flooring", "foundation drain", "vapor barrier", "dehumidif"]
+        cost_type_id = "22P9ppJUAHYQ" if any(k in title.lower() or k in description.lower() for k in sub_keywords) else "22P9ppJUAHYR"
 
         try:
+            # Create cost group
+            resp = jobtread_query({
+                "createCostGroup": {
+                    "$": {
+                        "jobId": job_id,
+                        "name": title[:100],
+                        "description": group_description or None
+                    },
+                    "createdCostGroup": {"id": {}}
+                }
+            })
+            group_id = resp["createCostGroup"]["createdCostGroup"]["id"]
+
+            # Create one cost item under the group
             jobtread_query({
                 "createCostItem": {
                     "$": {
-                        "jobId": job_id,
-                        "name": full_name,
+                        "costGroupId": group_id,
+                        "name": item_name,
                         "quantity": 1,
-                        "unitCost": price,
-                        "unitPrice": price,
+                        "unitCost": cost,
+                        "unitPrice": client_price,
                         "costCodeId": "22P9ppJUAHXn",
-                        "costTypeId": "22P9ppJUAHYR"
+                        "costTypeId": cost_type_id
                     },
                     "createdCostItem": {"id": {}}
                 }
             })
             added += 1
         except Exception as e:
-            print(f"  Skipping cost item '{title[:50]}': {e}")
+            print(f"  Skipping group '{title[:50]}': {e}")
             continue
 
-    print(f"  {added}/{len(estimate.get('line_items', []))} cost items added")
+    print(f"  {added}/{len(cost_groups)} cost groups added")
 
     # 6. Attach files from Wufoo using URL-based upload
     for label, url in file_urls:
