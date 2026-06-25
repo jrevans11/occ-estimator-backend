@@ -32,6 +32,16 @@ PRICING RULES:
 - Material markup: cost + 65%
 - Subcontractor markup: cost + 45%
 
+LABOR CLASSIFICATION (who performs the work — drives which markup applies):
+- SUBCONTRACTOR work (apply 45% markup): all electrical work; MAJOR HVAC repairs (system replacement, compressor, refrigerant, major ductwork); MAJOR plumbing (re-pipe, sewer/drain line, water heater replacement, slab leaks); crawlspace moisture remediation and clean-out (vapor barrier, dehumidifier, fungal/mold treatment, sump pump).
+- IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else — drywall, paint, carpentry, trim, doors, windows, flooring, general repairs, minor plumbing fixture work, minor HVAC service, exterior/roofing repairs, etc.
+- Minor/routine HVAC and plumbing (filter swaps, fixture seals, leak repairs, condensate lines, toilet/faucet work) are IN-HOUSE, not sub.
+
+NEVER ESTIMATE — OUT OF SCOPE (OCC does not offer these):
+- Radon remediation/mitigation
+- Landscaping, grading, or regrading work
+If the requested work includes any out-of-scope item, exclude it from the estimate and list it under "skipped_items" with the reason "not offered by OCC", but still estimate everything else that is in scope.
+
 REPAIR PRICING REFERENCE (36 real OCC estimates + 197 inspection reports)
 Adjust for actual scope/site conditions. Apply $89/hr labor + 65% material markup for in-house work.
 
@@ -238,6 +248,11 @@ SCOPE RULES:
 4. Use inspection report section numbers as cost group title prefix when available.
 5. Do NOT include a disclaimer — it is already built into the estimate template.
 
+BEST-EFFORT GATING (for home repair / remodel / GVL / general inquiries without a formal inspection report):
+- Only produce cost_groups when the description and/or photos give you enough concrete, itemizable detail to write a defensible scope and price.
+- If the information is too vague to estimate responsibly (e.g. "need some work done", a remodel described only at a high level, no specifics on quantity/condition/location), return an EMPTY "cost_groups" array, set "needs_consult" to true, and put a short reason in "consult_reason". Do NOT guess or fabricate scope just to produce a number.
+- A partial estimate is fine: estimate the items you CAN scope, and note the rest for the consult.
+
 DESCRIPTION FORMATTING RULES:
 - Write each bullet point as a complete, professional sentence. Not fragments.
 - Be specific about what is being done — include the material, location, and action.
@@ -248,6 +263,8 @@ DESCRIPTION FORMATTING RULES:
 - Add a NOTE: line (not a bullet) at the end when there are important caveats or conditions.
 - For any repair that involves painting or finishing to match existing surfaces, always include this note at the end of the description:
   "NOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation."
+
+LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out) or "in_house" for everything else.
 
 OUTPUT: Respond with ONLY valid JSON, no markdown:
 {
@@ -260,11 +277,14 @@ OUTPUT: Respond with ONLY valid JSON, no markdown:
       "title": "3.2 - Wood Rot at Front Door",
       "description": "- Remove and replace deteriorated wood casing at the front entry door, including treatment of any affected framing behind.\n- Apply primer and finish coat to all repaired surfaces.\n\nNOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation.",
       "price": 450.00,
+      "labor": "in_house",
       "notes": null
     }
   ],
   "total": 0.00,
-  "skipped_items": ["item - reason"]
+  "skipped_items": ["item - reason"],
+  "needs_consult": false,
+  "consult_reason": ""
 }"""
 
 # ── Dynamic pricing ───────────────────────────────────────────────────────────
@@ -448,158 +468,253 @@ def jobtread_query(query):
         return json.loads(r.read().decode("utf-8"))
 
 
-def create_jobtread_job(estimate, notes_text, file_urls):
-    """
-    Full JobTread job creation flow:
-    1. Create account (customer)
-    2. Create contact
-    3. Create location
-    4. Create job
-    5. Create cost items (estimate line items)
-    6. Attach files from Wufoo URLs
-    """
-    client_name  = estimate.get("client_name", "Unknown")
-    client_email = estimate.get("client_email", "")
-    client_phone = estimate.get("client_phone", "")
-    address      = estimate.get("property_address", "")
+# JobTread cost item constants
+COST_CODE_UNCATEGORIZED = "22P9ppJUAHXn"
+COST_TYPE_SUB           = "22P9ppJUAHYQ"  # Subcontractor
+COST_TYPE_OTHER         = "22P9ppJUAHYR"  # Other (in-house)
 
-    # 1. Create account
+# Fallback keywords if the model doesn't tag a group's labor type.
+# Per OCC rules: sub = all electrical, MAJOR hvac/plumbing, crawlspace moisture work.
+_SUB_FALLBACK_KEYWORDS = [
+    "electric", "gfci", "breaker", "panel", "rewire", "outlet",
+    "crawlspace", "crawl space", "vapor barrier", "dehumidif", "sump",
+    "fungal", "mold", "moisture remediation", "encapsulat",
+    "re-pipe", "repipe", "sewer line", "main drain line", "slab leak",
+    "water heater replace", "hvac replace", "system replace", "compressor",
+    "condenser replace", "ductwork replace",
+]
+
+
+def _contact_cfv(contact):
+    """Return a {field_name: value} dict from a contact node's customFieldValues."""
+    out = {}
+    for n in (contact.get("customFieldValues", {}) or {}).get("nodes", []):
+        name = (n.get("customField", {}) or {}).get("name", "")
+        if name:
+            out[name] = n.get("value", "")
+    return out
+
+
+def find_account_by_name(name):
+    """Find an existing customer account whose name matches (case-insensitive). Returns node or None."""
+    if not name or not name.strip():
+        return None
+    try:
+        resp = jobtread_query({
+            "organization": {
+                "$": {"id": JOBTREAD_ORG},
+                "accounts": {
+                    "$": {"size": 20, "where": {"and": [["type", "customer"], ["name", "like", name.strip()]]}},
+                    "nodes": {
+                        "id": {}, "name": {},
+                        "primaryContact": {"id": {}, "name": {}},
+                        "contacts": {"$": {"size": 25}, "nodes": {
+                            "id": {}, "name": {},
+                            "customFieldValues": {"$": {"size": 10}, "nodes": {
+                                "customField": {"name": {}}, "value": {}
+                            }}
+                        }}
+                    }
+                }
+            }
+        })
+        nodes = resp.get("organization", {}).get("accounts", {}).get("nodes", [])
+    except Exception as e:
+        print(f"  Account lookup failed (treating as new): {e}")
+        return None
+    target = name.strip().lower()
+    for n in nodes:
+        if (n.get("name") or "").strip().lower() == target:
+            return n
+    return None
+
+
+def find_matching_contact(account_node, email, contact_name):
+    """Within an account, find a contact matching by email (preferred) or name. Returns contact node or None."""
+    email = (email or "").strip().lower()
+    cname = (contact_name or "").strip().lower()
+    for c in (account_node.get("contacts", {}) or {}).get("nodes", []):
+        cfv = _contact_cfv(c)
+        c_email = (cfv.get("Email") or "").strip().lower()
+        if email and c_email and email == c_email:
+            return c
+    if not email:
+        for c in (account_node.get("contacts", {}) or {}).get("nodes", []):
+            if cname and (c.get("name") or "").strip().lower() == cname:
+                return c
+    return None
+
+
+def set_primary_contact(account_id, contact_id):
+    """Set the account's primary contact."""
+    try:
+        jobtread_query({
+            "updateAccount": {
+                "$": {"id": account_id, "primaryContactId": contact_id},
+                "account": {"id": {}}
+            }
+        })
+    except Exception as e:
+        print(f"  Could not set primary contact: {e}")
+
+
+def create_contact_record(account_id, name, email, phone, address):
+    """Create a contact under an account and return its id."""
+    cfv = {"Email": email or "", "Address": address or ""}
+    if phone:
+        cfv["Phone"] = phone
+    resp = jobtread_query({
+        "createContact": {
+            "$": {"accountId": account_id, "name": name or "Unknown", "customFieldValues": cfv},
+            "createdContact": {"id": {}}
+        }
+    })
+    return resp["createContact"]["createdContact"]["id"]
+
+
+def upsert_account_and_contact(cfg):
+    """
+    Find-or-create the account, and ensure the incoming contact exists & is primary.
+
+    cfg keys used: account_name, account_type, lead_source, referred_by (opt),
+    contact_name, contact_email, contact_phone, contact_address, dedup (bool).
+    Returns account_id.
+    """
+    account_cfv = {"Type": cfg["account_type"], "Lead Source": cfg["lead_source"]}
+    if cfg.get("referred_by"):
+        account_cfv["Referred By"] = cfg["referred_by"]
+
+    existing = find_account_by_name(cfg["account_name"]) if cfg.get("dedup") else None
+
+    if existing:
+        account_id = existing["id"]
+        print(f"  Existing account matched: {account_id} ({existing.get('name')})")
+        # Keep referral attribution current if we have one
+        if cfg.get("referred_by"):
+            try:
+                jobtread_query({"updateAccount": {"$": {"id": account_id,
+                    "customFieldValues": {"Referred By": cfg["referred_by"]}}, "account": {"id": {}}}})
+            except Exception as e:
+                print(f"  Could not update Referred By: {e}")
+
+        match = find_matching_contact(existing, cfg["contact_email"], cfg["contact_name"])
+        if match:
+            print(f"  Existing contact matched: {match['id']} ({match.get('name')})")
+            set_primary_contact(account_id, match["id"])
+        else:
+            print("  No matching contact — adding new contact and setting primary")
+            new_contact_id = create_contact_record(
+                account_id, cfg["contact_name"], cfg["contact_email"],
+                cfg["contact_phone"], cfg["contact_address"])
+            set_primary_contact(account_id, new_contact_id)
+        return account_id
+
+    # No existing account — create fresh
     print("  Creating JobTread account...")
     resp = jobtread_query({
         "createAccount": {
             "$": {
                 "organizationId": JOBTREAD_ORG,
                 "type": "customer",
-                "name": address,
+                "name": cfg["account_name"],
                 "suffixIfNecessary": True,
-                "customFieldValues": {
-                    "Type": "Closing Repair",
-                    "Lead Source": "Realtor"
-                }
+                "customFieldValues": account_cfv
             },
             "createdAccount": {"id": {}}
         }
     })
     account_id = resp["createAccount"]["createdAccount"]["id"]
     print(f"  Account created: {account_id}")
+    contact_id = create_contact_record(
+        account_id, cfg["contact_name"], cfg["contact_email"],
+        cfg["contact_phone"], cfg["contact_address"])
+    set_primary_contact(account_id, contact_id)
+    return account_id
 
-    # 2. Create contact
-    print("  Creating contact...")
-    contact_fields = {
-        "accountId": account_id,
-        "name": client_name,
-        "customFieldValues": {
-            "Email": client_email or "",
-            "Address": address or ""
-        }
-    }
-    if client_phone:
-        contact_fields["customFieldValues"]["Phone"] = client_phone
 
-    jobtread_query({
-        "createContact": {
-            "$": contact_fields,
-            "createdContact": {"id": {}}
-        }
-    })
-
-    # 3. Create location
-    print("  Creating location...")
+def create_location_record(account_id, address):
     resp = jobtread_query({
         "createLocation": {
-            "$": {
-                "accountId": account_id,
-                "address": address
-            },
+            "$": {"accountId": account_id, "address": address},
             "createdLocation": {"id": {}}
         }
     })
-    location_id = resp["createLocation"]["createdLocation"]["id"]
-    print(f"  Location created: {location_id}")
+    return resp["createLocation"]["createdLocation"]["id"]
 
-    # 4. Create job
-    print("  Creating job...")
-    # JobTread job name limit is 30 characters — use street portion only
-    street = address.split(",")[0].strip() if "," in address else address
-    job_name = street[:30]
+
+def create_job_record(location_id, cfg):
+    """Create the job. cfg: job_type, status_field, status_value, pm, projected_budget (opt),
+    job_name (opt → None for auto Job #####), notes_text."""
+    job_cfv = {
+        "Job Type": cfg["job_type"],
+        cfg["status_field"]: cfg["status_value"],
+    }
+    if cfg.get("pm"):
+        job_cfv["Project Manager"] = cfg["pm"]
+    if cfg.get("projected_budget"):
+        job_cfv["Projected Budget"] = cfg["projected_budget"]
+
+    job_input = {
+        "locationId": location_id,
+        "priceType": "fixed",
+        "description": cfg.get("notes_text") or "",
+        "customFieldValues": job_cfv,
+    }
+    # Only set a name for closing repairs; new forms leave it null → JobTread auto "Job #####"
+    if cfg.get("job_name"):
+        job_input["name"] = cfg["job_name"][:30]
+
     resp = jobtread_query({
-        "createJob": {
-            "$": {
-                "locationId": location_id,
-                "name": job_name,
-                "priceType": "fixed",
-                "description": notes_text or "",
-                "customFieldValues": {
-                    "Job Type": "Closing Repair",
-                    "Closing Repairs Status": "Estimating"
-                }
-            },
-            "createdJob": {"id": {}}
-        }
+        "createJob": {"$": job_input, "createdJob": {"id": {}}}
     })
-    job_id = resp["createJob"]["createdJob"]["id"]
-    print(f"  Job created: {job_id}")
+    return resp["createJob"]["createdJob"]["id"]
 
-    # 5. Create cost groups with cost items from estimate
-    print("  Adding cost groups...")
+
+def add_cost_groups(job_id, estimate):
+    """Create cost groups + one cost item each from the estimate dict. Returns count added."""
+    if not estimate:
+        return 0
     added = 0
-    cost_groups = estimate.get("cost_groups", estimate.get("line_items", []))
-
+    cost_groups = estimate.get("cost_groups", estimate.get("line_items", [])) or []
     for group in cost_groups:
-        title       = (group.get("title", "") or "").strip()
-        client_price = float(group.get("price", 0))
-        description = (group.get("description", "") or "").strip()
-        notes       = (group.get("notes", "") or "").strip()
+        title        = (group.get("title", "") or "").strip() or "Repair Item"
+        client_price = float(group.get("price", 0) or 0)
+        description  = (group.get("description", "") or "").strip()
+        notes        = (group.get("notes", "") or "").strip()
+        labor        = (group.get("labor", "") or "").strip().lower()
 
-        if not title:
-            title = "Repair Item"
-
-        # Full scope description goes on the cost group
         group_description = description
         if notes:
             group_description += f"\n\nNOTE: {notes}" if group_description else f"NOTE: {notes}"
 
-        # Reverse-engineer cost from client price using 55% blended markup
-        # client_price = cost * 1.55 → cost = client_price / 1.55
         cost = round(client_price / 1.55, 2) if client_price > 0 else 0.0
 
-        # Determine cost item name — short descriptor from title
-        # Strip leading inspection number prefix for the item name
-        import re as _re
-        item_name = _re.sub(r'^[\d\.\s]+[-\u2013]?\s*', '', title).strip()
-        if not item_name:
-            item_name = title
+        item_name = re.sub(r'^[\d\.\s]+[-\u2013]?\s*', '', title).strip() or title
         item_name = item_name[:100]
 
-        # Determine cost type — subcontractor vs other
-        sub_keywords = ["electric", "crawlspace", "flooring", "foundation drain", "vapor barrier", "dehumidif"]
-        cost_type_id = "22P9ppJUAHYQ" if any(k in title.lower() or k in description.lower() for k in sub_keywords) else "22P9ppJUAHYR"
+        # Cost type: prefer the model's labor tag, else keyword fallback
+        if labor == "sub":
+            cost_type_id = COST_TYPE_SUB
+        elif labor in ("in_house", "inhouse", "in-house"):
+            cost_type_id = COST_TYPE_OTHER
+        else:
+            blob = f"{title} {description}".lower()
+            cost_type_id = COST_TYPE_SUB if any(k in blob for k in _SUB_FALLBACK_KEYWORDS) else COST_TYPE_OTHER
 
         try:
-            # Create cost group
             resp = jobtread_query({
                 "createCostGroup": {
-                    "$": {
-                        "jobId": job_id,
-                        "name": title[:100],
-                        "description": group_description or None
-                    },
+                    "$": {"jobId": job_id, "name": title[:100], "description": group_description or None},
                     "createdCostGroup": {"id": {}}
                 }
             })
             group_id = resp["createCostGroup"]["createdCostGroup"]["id"]
-
-            # Create one cost item under the group
             jobtread_query({
                 "createCostItem": {
                     "$": {
-                        "costGroupId": group_id,
-                        "name": item_name,
-                        "quantity": 1,
-                        "unitCost": cost,
-                        "unitPrice": client_price,
-                        "costCodeId": "22P9ppJUAHXn",
-                        "costTypeId": cost_type_id
+                        "costGroupId": group_id, "name": item_name, "quantity": 1,
+                        "unitCost": cost, "unitPrice": client_price,
+                        "costCodeId": COST_CODE_UNCATEGORIZED, "costTypeId": cost_type_id
                     },
                     "createdCostItem": {"id": {}}
                 }
@@ -608,36 +723,28 @@ def create_jobtread_job(estimate, notes_text, file_urls):
         except Exception as e:
             print(f"  Skipping group '{title[:50]}': {e}")
             continue
-
     print(f"  {added}/{len(cost_groups)} cost groups added")
+    return added
 
-    # 6. Attach files from Wufoo using URL-based upload
+
+def attach_files(job_id, file_urls):
+    """Attach Wufoo files to the job via URL-based upload requests."""
     for label, url in file_urls:
         if not url:
             continue
         try:
             print(f"  Attaching file: {label}")
-            # Create upload request using the public Wufoo URL
             resp = jobtread_query({
                 "createUploadRequest": {
-                    "$": {
-                        "organizationId": JOBTREAD_ORG,
-                        "url": url
-                    },
+                    "$": {"organizationId": JOBTREAD_ORG, "url": url},
                     "createdUploadRequest": {"id": {}}
                 }
             })
             upload_id = resp["createUploadRequest"]["createdUploadRequest"]["id"]
-
-            # Attach to job
             jobtread_query({
                 "createFile": {
-                    "$": {
-                        "targetType": "job",
-                        "targetId": job_id,
-                        "name": label,
-                        "uploadRequestId": upload_id
-                    },
+                    "$": {"targetType": "job", "targetId": job_id, "name": label,
+                          "uploadRequestId": upload_id},
                     "createdFile": {"id": {}}
                 }
             })
@@ -645,7 +752,52 @@ def create_jobtread_job(estimate, notes_text, file_urls):
         except Exception as e:
             print(f"  File attach failed for {label}: {e}")
 
+
+def create_job_full(cfg):
+    """
+    Unified job-creation flow used by all forms.
+    1. Find-or-create account (+ contact, primary)
+    2. Create location
+    3. Create job (PM, status, projected budget)
+    4. Cost groups (if estimate present)
+    5. Attach files
+    """
+    account_id  = upsert_account_and_contact(cfg)
+    location_id = create_location_record(account_id, cfg["location_address"])
+    print(f"  Location: {location_id}")
+    job_id = create_job_record(location_id, cfg)
+    print(f"  Job created: {job_id}")
+    add_cost_groups(job_id, cfg.get("estimate"))
+    attach_files(job_id, cfg.get("file_urls", []))
     return job_id
+
+
+def create_jobtread_job(estimate, notes_text, file_urls):
+    """Closing-repairs job creation (account name = property address, realtor = contact)."""
+    address = estimate.get("property_address", "")
+    street  = address.split(",")[0].strip() if "," in address else address
+    cfg = {
+        "account_name":    address,
+        "account_type":    "Closing Repair",
+        "lead_source":     "Realtor",
+        "referred_by":     None,
+        "contact_name":    estimate.get("client_name", "Unknown"),
+        "contact_email":   estimate.get("client_email", ""),
+        "contact_phone":   estimate.get("client_phone", ""),
+        "contact_address": address,
+        "location_address": address,
+        "job_type":        "Closing Repair",
+        "status_field":    "Closing Repairs Status",
+        "status_value":    "New Lead",
+        "pm":              "Emily Peery",
+        "projected_budget": None,
+        "job_name":        street[:30],   # closing repairs keep the street name
+        "notes_text":      notes_text,
+        "estimate":        estimate,
+        "file_urls":       file_urls,
+        "dedup":           True,          # match on address; reuse + fix realtor primary contact
+    }
+    return create_job_full(cfg)
 
 
 def format_date(raw):
@@ -671,6 +823,306 @@ def build_notes(due_diligence, closing_date, site_visit, non_neg_notes, extra_no
     if extra_notes and extra_notes.strip():
         parts.append(f"Additional Notes: {extra_notes.strip()}")
     return "\n".join(parts)
+
+
+# ── Best-effort / general estimating (photos + description, with consult gating) ──
+
+def map_lead_source(how_heard):
+    """Map a Wufoo 'How did you hear about us?' value to a JobTread Lead Source option."""
+    h = (how_heard or "").strip().lower()
+    if not h or "select" in h:
+        return "Unknown"
+    if "gvl" in h:
+        return "GVL Today Ad"
+    if "online" in h:            # "Found Online" / "Online Search"
+        return "Google"
+    if "referral" in h:
+        return "Referral"
+    if "past client" in h:
+        return "Referral"        # ASSUMPTION — pending confirmation; change here if needed
+    return "Unknown"             # "Other" / anything unmapped
+
+
+def _media_type(url):
+    u = (url or "").lower().split("?")[0]
+    if u.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    if u.endswith(".png"):
+        return "image/png"
+    if u.endswith(".gif"):
+        return "image/gif"
+    if u.endswith(".webp"):
+        return "image/webp"
+    return None             # heic/pdf/unknown — skip as vision input (still attached as a file)
+
+
+def download_image_block(url):
+    """Download a Wufoo image and return an Anthropic image content block, or None."""
+    mt = _media_type(url)
+    if not mt:
+        print(f"  Skipping unsupported image type for vision: {url}")
+        return None
+    try:
+        raw = download_file(url)
+        b64 = base64.b64encode(raw).decode("utf-8")
+        return {"type": "image", "source": {"type": "base64", "media_type": mt, "data": b64}}
+    except Exception as e:
+        print(f"  Image fetch failed ({url}): {e}")
+        return None
+
+
+def _call_anthropic(content):
+    """Send a content array to Claude and parse the JSON estimate. Shared by general calls."""
+    payload = json.dumps({
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 4000,
+        "system": get_system_prompt(),
+        "messages": [{"role": "user", "content": content}]
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "pdfs-2024-09-25"
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=120) as r:
+        result = json.loads(r.read().decode("utf-8"))
+    raw = "".join(block.get("text", "") for block in result.get("content", []))
+    match = re.search(r"\{[\s\S]*\}", raw)
+    if not match:
+        raise Exception(f"No JSON in Claude response: {raw[:500]}")
+    return json.loads(match.group(0))
+
+
+def call_claude_general(form_label, client_name, client_phone, client_email,
+                        address, description, notes, image_urls=None, pdf_text="",
+                        best_effort=True):
+    """
+    Best-effort / full estimate from a homeowner inquiry (description + optional photos/PDF).
+    Returns the parsed estimate dict (cost_groups may be empty with needs_consult=true).
+    """
+    content = []
+    intro = f"""Generate a {form_label} estimate for Owners Choice Construction.
+
+Client name: {client_name}
+Client phone: {client_phone}
+Client email: {client_email}
+Property address: {address}
+{f"Intake notes: {notes}" if notes else ""}
+
+This is a {'best-effort estimate from a homeowner inquiry (no formal inspection report)' if best_effort else 'full estimate'}. Analyze the client's description{', the uploaded photos' if image_urls else ''}{', and the inspection report' if pdf_text else ''} to scope and price the work. Apply OCC pricing, labor classification, and scope/exclusion rules. If the information is too vague to estimate responsibly, return an empty cost_groups array with needs_consult=true and a short consult_reason — do not invent scope.
+"""
+    content.append({"type": "text", "text": intro})
+    content.append({"type": "text", "text": f"\n=== CLIENT DESCRIPTION OF WORK ===\n{(description or '')[:8000]}"})
+    if pdf_text:
+        content.append({"type": "text", "text": f"\n=== INSPECTION REPORT ===\n{pdf_text[:30000]}"})
+    for url in (image_urls or []):
+        blk = download_image_block(url)
+        if blk:
+            content.append(blk)
+    content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
+    return _call_anthropic(content)
+
+
+def build_general_notes(form, pref=None, how=None, work=None, budget=None,
+                        inspection=None, realtor=None, realtor_email=None, other=None):
+    """Assemble JobTread job notes for the non-closing-repair forms."""
+    parts = [f"Source Form: {form}"]
+    if pref:
+        parts.append(f"Preferred Contact: {pref}")
+    if how:
+        parts.append(f"How they heard: {how}")
+    if budget:
+        parts.append(f"Stated Budget: {budget}")
+    if inspection:
+        parts.append(f"Inspection Completed: {inspection}")
+    if realtor:
+        parts.append(f"Realtor: {realtor}" + (f" ({realtor_email})" if realtor_email else ""))
+    if work and work.strip():
+        parts.append(f"\nWork Requested:\n{work.strip()}")
+    if other and other.strip():
+        parts.append(f"\nAdditional Info:\n{other.strip()}")
+    return "\n".join(parts)
+
+
+def _apply_estimate_gate(estimate, notes):
+    """Given a returned estimate, decide budget vs consult. Returns (estimate_or_None, notes, projected)."""
+    projected = None
+    if not estimate:
+        return None, notes, None
+    cgs = estimate.get("cost_groups") or []
+    if estimate.get("needs_consult") or not cgs:
+        reason = estimate.get("consult_reason") or "insufficient detail for a budget"
+        notes += f"\n\n⚠️ CONSULT / SITE VISIT NEEDED: {reason}"
+    if not cgs:
+        return None, notes, None
+    total = estimate.get("total", 0) or 0
+    if total > 0:
+        projected = f"${total:,.0f}"
+    return estimate, notes, projected
+
+
+# ── Form processors ───────────────────────────────────────────────────────────
+
+def process_home_repairs(data, form_name="Home Repair", lead_source_override=None):
+    """Home Repairs and GVL Today share the same field layout."""
+    def g(k):
+        return data.get(k, [""])[0]
+    name    = f"{g('Field1')} {g('Field2')}".strip()
+    phone   = g("Field3")
+    email   = g("Field4")
+    street  = g("Field5"); city = g("Field7"); state = g("Field8"); zc = g("Field9")
+    address = f"{street}, {city}, {state} {zc}".strip(", ")
+    pref    = g("Field428")
+    how     = g("Field426")
+    work    = g("Field121")
+    p1_url, p2_url = g("Field13-url"), g("Field324-url")
+    p1_nm   = g("Field13") or "Photo 1"
+    p2_nm   = g("Field324") or "Photo 2"
+
+    print(f"New {form_name} submission: {name} — {address}")
+    lead_source = lead_source_override or map_lead_source(how)
+    notes = build_general_notes(form_name, pref=pref,
+                                how=(how if not lead_source_override else None), work=work)
+
+    image_urls = [u for u in [p1_url, p2_url] if u]
+    file_urls  = [(p1_nm, p1_url), (p2_nm, p2_url)]
+
+    estimate = None
+    try:
+        estimate = call_claude_general(f"{form_name.lower()} repair", name, phone, email,
+                                       address, work, notes, image_urls=image_urls)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+    except Exception as e:
+        print(f"  Claude failed (continuing without estimate): {e}")
+    estimate, notes, projected = _apply_estimate_gate(estimate, notes)
+
+    cfg = {
+        "account_name": name, "account_type": "Home Repair", "lead_source": lead_source,
+        "referred_by": None, "contact_name": name, "contact_email": email,
+        "contact_phone": phone, "contact_address": address, "location_address": address,
+        "job_type": "Home Repair", "status_field": "Home Repairs Status",
+        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": projected,
+        "job_name": None, "notes_text": notes, "estimate": estimate,
+        "file_urls": file_urls, "dedup": True,
+    }
+    return create_job_full(cfg)
+
+
+def process_gvl(data):
+    """GVL Today repairs form — same layout as Home Repairs, lead source hardcoded."""
+    return process_home_repairs(data, form_name="GVL Today", lead_source_override="GVL Today Ad")
+
+
+def process_remodel(data):
+    def g(k):
+        return data.get(k, [""])[0]
+    name    = f"{g('Field1')} {g('Field2')}".strip()
+    street  = g("Field3"); city = g("Field5"); state = g("Field6"); zc = g("Field7")
+    address = f"{street}, {city}, {state} {zc}".strip(", ")
+    email   = g("Field9")
+    phone   = g("Field10")
+    how     = g("Field26")
+    budget  = g("Field24")
+    desc    = g("Field22")
+
+    print(f"New Remodel submission: {name} — {address}")
+    lead_source = map_lead_source(how)
+    notes = build_general_notes("Remodel", how=how, budget=budget, work=desc)
+
+    estimate = None
+    try:
+        estimate = call_claude_general("remodel", name, phone, email, address, desc, notes)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+    except Exception as e:
+        print(f"  Claude failed (continuing without estimate): {e}")
+    estimate, notes, projected = _apply_estimate_gate(estimate, notes)
+
+    # Remodels: the client's stated range is the budget anchor regardless of estimate
+    if budget:
+        projected = budget
+
+    cfg = {
+        "account_name": name, "account_type": "Remodel", "lead_source": lead_source,
+        "referred_by": None, "contact_name": name, "contact_email": email,
+        "contact_phone": phone, "contact_address": address, "location_address": address,
+        "job_type": "Remodel", "status_field": "Home Repairs Status",
+        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": projected,
+        "job_name": None, "notes_text": notes, "estimate": estimate,
+        "file_urls": [], "dedup": True,
+    }
+    return create_job_full(cfg)
+
+
+def process_prelisting(data):
+    def g(k):
+        return data.get(k, [""])[0]
+    name    = f"{g('Field1')} {g('Field2')}".strip()
+    street  = g("Field3"); city = g("Field5"); state = g("Field6"); zc = g("Field7")
+    address = f"{street}, {city}, {state} {zc}".strip(", ")
+    email   = g("Field9")
+    phone   = g("Field10")
+    how     = g("Field24")
+    insp_done = g("Field12")
+    insp_url  = g("Field20-url")
+    insp_name = g("Field20") or "Inspection Report"
+    has_realtor = g("Field14")
+    realtor_name = f"{g('Field16')} {g('Field17')}".strip()
+    realtor_email = g("Field18")
+    other   = g("Field22")
+
+    print(f"New Pre-listing submission: {name} — {address}")
+
+    # Realtor presence overrides the 'how did you hear' dropdown for lead source
+    if realtor_name or has_realtor.strip().lower() == "yes":
+        lead_source = "Realtor"
+        referred_by = realtor_name or None
+    else:
+        lead_source = map_lead_source(how)
+        referred_by = None
+
+    notes = build_general_notes("Pre-listing Repair", how=how, inspection=insp_done,
+                                realtor=(realtor_name or None),
+                                realtor_email=(realtor_email or None), other=other)
+    if insp_done.strip().lower() == "yes" and not insp_url:
+        notes += "\n\n⚠️ Client indicated an inspection report but none was attached — follow up to obtain it."
+
+    # Parse inspection PDF for full-AI treatment when present
+    pdf_text = ""
+    if insp_url:
+        try:
+            pdf_text = "\n".join(t for _, t in extract_pdf_text(download_file(insp_url)))
+            print(f"  Inspection report: {len(pdf_text)} chars extracted")
+        except Exception as e:
+            print(f"  Inspection PDF failed: {e}")
+
+    file_urls = [(insp_name, insp_url)] if insp_url else []
+
+    estimate = None
+    try:
+        estimate = call_claude_general("pre-listing repair", name, phone, email, address,
+                                       other, notes, pdf_text=pdf_text,
+                                       best_effort=(not pdf_text))
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+    except Exception as e:
+        print(f"  Claude failed (continuing without estimate): {e}")
+    estimate, notes, projected = _apply_estimate_gate(estimate, notes)
+
+    cfg = {
+        "account_name": name, "account_type": "Home Repair", "lead_source": lead_source,
+        "referred_by": referred_by, "contact_name": name, "contact_email": email,
+        "contact_phone": phone, "contact_address": address, "location_address": address,
+        "job_type": "Pre-listing Repair", "status_field": "Home Repairs Status",
+        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": projected,
+        "job_name": None, "notes_text": notes, "estimate": estimate,
+        "file_urls": file_urls, "dedup": True,
+    }
+    return create_job_full(cfg)
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -887,6 +1339,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8")
+        path = self.path.split("?")[0].rstrip("/").lower()
 
         # Respond to Wufoo immediately — it has a short timeout
         try:
@@ -896,10 +1349,30 @@ class Handler(BaseHTTPRequestHandler):
         except BrokenPipeError:
             pass
 
-        # Process in background thread
-        t = threading.Thread(target=self._process, args=(body,))
+        # Process in background thread, routed by path
+        t = threading.Thread(target=self._route, args=(path, body))
         t.daemon = True
         t.start()
+
+    def _route(self, path, body):
+        """Dispatch each Wufoo form to its processor. Unknown paths → closing repairs (default)."""
+        try:
+            data = urllib.parse.parse_qs(body)
+            if path in ("/home-repairs", "/home-repair"):
+                process_home_repairs(data)
+            elif path in ("/gvl-today", "/gvl", "/gvltoday"):
+                process_gvl(data)
+            elif path == "/remodel":
+                process_remodel(data)
+            elif path in ("/prelisting", "/pre-listing", "/prelisting-repairs"):
+                process_prelisting(data)
+            else:
+                # Default / existing path = closing repairs (unchanged behavior)
+                self._process(body)
+        except Exception as e:
+            print(f"Routing error on '{path}': {e}")
+            import traceback
+            traceback.print_exc()
 
     def _process(self, body):
         try:
