@@ -565,7 +565,7 @@ def set_primary_contact(account_id, contact_id):
         jobtread_query({
             "updateAccount": {
                 "$": {"id": account_id, "primaryContactId": contact_id},
-                "account": {"id": {}}
+                "account": {"$": {"id": account_id}, "id": {}}
             }
         })
     except Exception as e:
@@ -606,7 +606,8 @@ def upsert_account_and_contact(cfg):
         if cfg.get("referred_by"):
             try:
                 jobtread_query({"updateAccount": {"$": {"id": account_id,
-                    "customFieldValues": {"Referred By": cfg["referred_by"]}}, "account": {"id": {}}}})
+                    "customFieldValues": {"Referred By": cfg["referred_by"]}},
+                    "account": {"$": {"id": account_id}, "id": {}}}})
             except Exception as e:
                 print(f"  Could not update Referred By: {e}")
 
@@ -646,14 +647,48 @@ def upsert_account_and_contact(cfg):
     return account_id
 
 
+def _find_location(account_id, address):
+    """Return the id of an existing location on the account matching the address, or None."""
+    target = re.sub(r"\s+", " ", (address or "").strip().lower())
+    if not target:
+        return None
+    try:
+        resp = jobtread_query({
+            "account": {
+                "$": {"id": account_id},
+                "locations": {"$": {"size": 50}, "nodes": {"id": {}, "address": {}}}
+            }
+        })
+        for l in resp.get("account", {}).get("locations", {}).get("nodes", []):
+            if re.sub(r"\s+", " ", (l.get("address") or "").strip().lower()) == target:
+                return l["id"]
+    except Exception as e:
+        print(f"  Location lookup failed: {e}")
+    return None
+
+
 def create_location_record(account_id, address):
-    resp = jobtread_query({
-        "createLocation": {
-            "$": {"accountId": account_id, "address": address},
-            "createdLocation": {"id": {}}
-        }
-    })
-    return resp["createLocation"]["createdLocation"]["id"]
+    """Find-or-create a location. JobTread forbids duplicate addresses on one account,
+    so on the dedup path we reuse the existing location instead of erroring."""
+    existing = _find_location(account_id, address)
+    if existing:
+        print(f"  Reusing existing location: {existing}")
+        return existing
+    try:
+        resp = jobtread_query({
+            "createLocation": {
+                "$": {"accountId": account_id, "address": address},
+                "createdLocation": {"id": {}}
+            }
+        })
+        return resp["createLocation"]["createdLocation"]["id"]
+    except Exception as e:
+        # Likely a duplicate that didn't string-match (address normalization) — re-find
+        print(f"  createLocation failed ({e}); re-checking for an existing location")
+        existing = _find_location(account_id, address)
+        if existing:
+            return existing
+        raise
 
 
 def create_job_record(location_id, cfg):
