@@ -307,14 +307,25 @@ def get_system_prompt():
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────
 
+def _sanitize_text(text):
+    """
+    Strip characters that corrupt a JSON payload sent to the Anthropic API:
+    - Null bytes and ASCII control chars (keep tab, newline, carriage return)
+    - Lone surrogates and other bad codepoints pypdf sometimes emits
+    """
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+    return text
+
+
 def extract_pdf_text(pdf_bytes):
-    """Extract all text from a PDF."""
+    """Extract all text from a PDF, sanitizing for safe JSON encoding."""
     try:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(pdf_bytes))
         pages = []
         for i, page in enumerate(reader.pages):
-            text = page.extract_text() or ""
+            text = _sanitize_text(page.extract_text() or "")
             if text.strip():
                 pages.append((i, text))
         return pages  # list of (page_index, text)
