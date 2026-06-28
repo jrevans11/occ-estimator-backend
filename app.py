@@ -813,6 +813,54 @@ def attach_files(job_id, file_urls):
             print(f"  File attach failed for {label}: {e}")
 
 
+def create_new_lead_todos(job_id, job_type="Home Repair"):
+    """
+    Create the standard new-lead to-do chain on a job immediately after it is created.
+    Timelines differ by job type — Closing Repairs get a tighter schedule.
+    """
+    from datetime import date, timedelta
+
+    def offset(n):
+        return (date.today() + timedelta(days=n)).isoformat()
+
+    if job_type == "Closing Repair":
+        tasks = [
+            ("📞 Call customer — introduce & qualify",   0),
+            ("📅 Schedule site visit",                   1),
+            ("🏠 Complete site visit",                   1),
+            ("📝 Build estimate",                        1),
+            ("📤 Send estimate to customer",             2),
+        ]
+    else:
+        # Home Repair, Remodel, Pre-listing, GVL — standard cadence
+        tasks = [
+            ("📞 Call customer — introduce & qualify",   0),
+            ("📅 Schedule site visit",                   1),
+            ("🏠 Complete site visit",                   3),
+            ("📝 Build estimate",                        5),
+            ("📤 Send estimate to customer",             6),
+        ]
+
+    for name, days in tasks:
+        due = offset(days)
+        try:
+            jobtread_query({
+                "createTask": {
+                    "$": {
+                        "name": name,
+                        "isToDo": True,
+                        "targetType": "job",
+                        "targetId": job_id,
+                        "startDate": due,
+                        "endDate": due,
+                    }
+                }
+            })
+            print(f"  To-do created: {name} (due {due})")
+        except Exception as e:
+            print(f"  To-do failed '{name}': {e}")
+
+
 def create_job_full(cfg):
     """
     Unified job-creation flow used by all forms.
@@ -829,6 +877,8 @@ def create_job_full(cfg):
     print(f"  Job created: {job_id}")
     add_cost_groups(job_id, cfg.get("estimate"))
     attach_files(job_id, cfg.get("file_urls", []))
+    if cfg.get("status_value") == "New Lead":
+        create_new_lead_todos(job_id, job_type=cfg.get("job_type", "Home Repair"))
     return job_id
 
 
