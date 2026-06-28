@@ -1180,41 +1180,58 @@ def get_jobs_needing_followup():
     results = []
     all_sent_job_ids = []
 
-    # Pass 1: get all jobs with their custom fields only (small query)
+    # Only look at jobs created in the last 90 days
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=90)).isoformat()
+
+    # Pass 1: get jobs with custom fields using pagination (small pages to avoid 413)
     for status_field, job_types in [
         ("Home Repairs Status",    ["Home Repair", "Remodel", "Pre-listing Repair"]),
         ("Closing Repairs Status", ["Closing Repair"]),
     ]:
-        try:
-            resp = jobtread_query({
-                "organization": {
-                    "$": {"id": JOBTREAD_ORG},
-                    "jobs": {
-                        "$": {"size": 100},
-                        "nodes": {
-                            "id": {}, "name": {},
-                            "customFieldValues": {
-                                "$": {"size": 10},
-                                "nodes": {"customField": {"name": {}}, "value": {}}
+        page = None
+        while True:
+            try:
+                jobs_input = {"size": 20, "where": [["createdAt", ">=", cutoff]]}
+                if page:
+                    jobs_input["page"] = page
+                resp = jobtread_query({
+                    "organization": {
+                        "$": {"id": JOBTREAD_ORG},
+                        "jobs": {
+                            "$": jobs_input,
+                            "nextPage": {},
+                            "nodes": {
+                                "id": {}, "name": {},
+                                "customFieldValues": {
+                                    "$": {"size": 5},
+                                    "nodes": {"customField": {"name": {}}, "value": {}}
+                                }
                             }
                         }
                     }
-                }
-            })
-            jobs = resp.get("organization", {}).get("jobs", {}).get("nodes", [])
-            for job in jobs:
-                cfvs = {
-                    cfv["customField"]["name"]: cfv["value"]
-                    for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
-                    if cfv.get("customField")
-                }
-                if cfvs.get(status_field) != "Sent":
-                    continue
-                if cfvs.get("Job Type") not in job_types:
-                    continue
-                all_sent_job_ids.append(job["id"])
-        except Exception as e:
-            print(f"  get_jobs_needing_followup error: {e}")
+                })
+                jobs_data = resp.get("organization", {}).get("jobs", {})
+                jobs = jobs_data.get("nodes", [])
+                next_page = jobs_data.get("nextPage")
+                for job in jobs:
+                    cfvs = {
+                        cfv["customField"]["name"]: cfv["value"]
+                        for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
+                        if cfv.get("customField")
+                    }
+                    if cfvs.get(status_field) != "Sent":
+                        continue
+                    if cfvs.get("Job Type") not in job_types:
+                        continue
+                    if job["id"] not in all_sent_job_ids:
+                        all_sent_job_ids.append(job["id"])
+                if not next_page:
+                    break
+                page = next_page
+            except Exception as e:
+                print(f"  get_jobs_needing_followup error: {e}")
+                break
 
     print(f"  Found {len(all_sent_job_ids)} jobs at Sent status")
 
