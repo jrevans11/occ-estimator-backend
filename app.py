@@ -1055,8 +1055,8 @@ def process_document_sent(payload):
         data = json.loads(payload) if isinstance(payload, str) else payload
         event = data.get("createdEvent", {})
         event_data = event.get("data", {})
-        next_state = event_data.get("next", {})
-        prev_state = event_data.get("previous", {})
+        next_state = event_data.get("next") or {}
+        prev_state = event_data.get("previous") or {}
 
         # Only process when emailDeliveryStatus changes to "pending" (= just sent)
         # This fires exactly once per send
@@ -1210,6 +1210,10 @@ def get_jobs_needing_followup():
                                         }
                                     }
                                 }
+                            },
+                            "tasks": {
+                                "$": {"size": 20},
+                                "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
                             }
                         }
                     }
@@ -1339,6 +1343,33 @@ def process_send_followups():
             log_followup_sent(job_id, days_since)
             print(f"  Job {job_id}: Day {days_since} follow-up sent to {first_name}")
             sent_count += 1
+
+            # Mark the matching email follow-up to-do as complete
+            email_todo_names = {
+                3:  "📧 Follow-up email #1 — check in on estimate",
+                7:  "📧 Follow-up email #2 — still interested?",
+                14: "🚨 Final decision call — win or move on",
+            }
+            todo_name = email_todo_names.get(days_since)
+            if todo_name:
+                tasks = (job.get("tasks") or {}).get("nodes", [])
+                for task in tasks:
+                    if task.get("name") == todo_name and task.get("progress") != 1:
+                        try:
+                            jobtread_query({
+                                "updateTask": {
+                                    "$": {
+                                        "id": task["id"],
+                                        "progress": 1,
+                                        "notify": False,
+                                    }
+                                }
+                            })
+                            print(f"  Checked off to-do: {todo_name}")
+                        except Exception as te:
+                            print(f"  Could not check off to-do: {te}")
+                        break
+
         except Exception as e:
             print(f"  Job {job_id}: follow-up send failed: {e}")
 
