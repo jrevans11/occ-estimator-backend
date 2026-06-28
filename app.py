@@ -821,6 +821,10 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
     """
     from datetime import date, timedelta
 
+    if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+        print(f"  Skipping to-dos — {job_type} not in automation scope")
+        return
+
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
 
     def offset(n):
@@ -870,6 +874,18 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
 JASON_ID  = "22P9ppHePJKQ"
 TYLER_ID  = "22PBsSvmYBUj"
 JASON_JOB_TYPES = {"Home Repair", "Closing Repair", "Remodel", "Pre-listing Repair"}
+
+# ── Automation scope ──────────────────────────────────────────────────────────
+# Only these job types participate in the full automation pipeline
+# (to-dos, follow-up emails, status flips, closed/long-term cleanup).
+# To enable automation for additional job types (e.g. Tyler's jobs),
+# simply add them to this set.
+AUTOMATION_ENABLED_JOB_TYPES = {
+    "Home Repair",
+    "Closing Repair",
+    "Remodel",
+    "Pre-listing Repair",
+}
 
 # Status field IDs by job type
 HOME_REPAIR_STATUS_FIELD    = "22PFPUHGUt4g"   # Home Repairs Status
@@ -1100,6 +1116,10 @@ def process_document_sent(payload):
 
         if not job_type:
             print("  Could not determine job type — skipping")
+            return
+
+        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+            print(f"  {job_type} not in automation scope — skipping")
             return
 
         # Don't touch closed or long-term jobs
@@ -1435,6 +1455,10 @@ def process_job_updated(payload):
             return
 
         print(f"  job-updated: job {job_id} | type={job_type} | status={current_status}")
+
+        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+            print(f"  {job_type} not in automation scope — skipping")
+            return
 
         if current_status in TERMINAL_STATUSES:
             # Clean up all open follow-up to-dos
