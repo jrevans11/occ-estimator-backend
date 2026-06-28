@@ -1053,9 +1053,12 @@ def process_document_sent(payload):
     """
     try:
         data = json.loads(payload) if isinstance(payload, str) else payload
+        print(f"  document-sent raw payload keys: {list(data.keys())}")
+        print(f"  document-sent data: {str(data)[:500]}")
         doc  = data.get("data", {})
         doc_type = doc.get("type")
         job_id   = (doc.get("job") or {}).get("id") or doc.get("jobId")
+        print(f"  document-sent: doc_type={doc_type}, job_id={job_id}")
 
         if not job_id:
             print("  document-sent: no job ID found, skipping")
@@ -1094,7 +1097,7 @@ def process_document_sent(payload):
                     "$": {
                         "targetType": "job",
                         "targetId": job_id,
-                        "body": f"[OCC-AUTO] Estimate sent on {sent_date}. Follow-up emails scheduled for Day 3, 7, and 14.",
+                        "message": f"[OCC-AUTO] Estimate sent on {sent_date}. Follow-up emails scheduled for Day 3, 7, and 14.",
                     },
                     "createdComment": {"id": {}}
                 }
@@ -1166,7 +1169,7 @@ def get_jobs_needing_followup():
                             },
                             "comments": {
                                 "$": {"size": 20},
-                                "nodes": {"body": {}, "createdAt": {}}
+                                "nodes": {"message": {}, "createdAt": {}}
                             },
                             "documents": {
                                 "$": {"size": 5},
@@ -1207,7 +1210,7 @@ def parse_sent_date(comments):
     import re
     from datetime import date
     for comment in (comments or []):
-        body = comment.get("body", "")
+        body = comment.get("message", "")
         if "[OCC-AUTO] Estimate sent on" in body:
             match = re.search(r"sent on (\d{4}-\d{2}-\d{2})", body)
             if match:
@@ -1221,7 +1224,7 @@ def parse_sent_date(comments):
 def already_sent_followup(comments, day):
     """Check if a follow-up email for this day has already been sent."""
     marker = FOLLOWUP_SENT_MARKERS[day]
-    return any(marker in (c.get("body") or "") for c in (comments or []))
+    return any(marker in (c.get("message") or "") for c in (comments or []))
 
 
 def log_followup_sent(job_id, day):
@@ -1234,7 +1237,7 @@ def log_followup_sent(job_id, day):
                 "$": {
                     "targetType": "job",
                     "targetId": job_id,
-                    "body": f"{marker} Day {day} follow-up email sent on {date.today().isoformat()}.",
+                    "message": f"{marker} Day {day} follow-up email sent on {date.today().isoformat()}.",
                 },
                 "createdComment": {"id": {}}
             }
