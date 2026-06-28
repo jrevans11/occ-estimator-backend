@@ -1174,10 +1174,13 @@ FOLLOWUP_SENT_MARKERS = {
 
 def get_jobs_needing_followup():
     """
-    Fetch all Home Repair and Closing Repair jobs at Sent status
-    with their comments and pending estimate documents.
+    Fetch all jobs at Sent status that need follow-up emails.
+    Uses two-pass approach: first get job IDs, then fetch details per job.
     """
     results = []
+    all_sent_job_ids = []
+
+    # Pass 1: get all jobs with their custom fields only (small query)
     for status_field, job_types in [
         ("Home Repairs Status",    ["Home Repair", "Remodel", "Pre-listing Repair"]),
         ("Closing Repairs Status", ["Closing Repair"]),
@@ -1193,27 +1196,6 @@ def get_jobs_needing_followup():
                             "customFieldValues": {
                                 "$": {"size": 10},
                                 "nodes": {"customField": {"name": {}}, "value": {}}
-                            },
-                            "comments": {
-                                "$": {"size": 20},
-                                "nodes": {"message": {}, "createdAt": {}}
-                            },
-                            "documents": {
-                                "$": {"size": 5},
-                                "nodes": {
-                                    "id": {}, "type": {}, "status": {},
-                                    "documentRecipients": {
-                                        "$": {"size": 5},
-                                        "nodes": {
-                                            "id": {},
-                                            "user": {"name": {}}
-                                        }
-                                    }
-                                }
-                            },
-                            "tasks": {
-                                "$": {"size": 20},
-                                "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
                             }
                         }
                     }
@@ -1230,9 +1212,49 @@ def get_jobs_needing_followup():
                     continue
                 if cfvs.get("Job Type") not in job_types:
                     continue
-                results.append(job)
+                all_sent_job_ids.append(job["id"])
         except Exception as e:
             print(f"  get_jobs_needing_followup error: {e}")
+
+    print(f"  Found {len(all_sent_job_ids)} jobs at Sent status")
+
+    # Pass 2: fetch full details per job
+    for job_id in all_sent_job_ids:
+        try:
+            resp = jobtread_query({
+                "job": {
+                    "$": {"id": job_id},
+                    "id": {}, "name": {},
+                    "customFieldValues": {
+                        "$": {"size": 10},
+                        "nodes": {"customField": {"name": {}}, "value": {}}
+                    },
+                    "comments": {
+                        "$": {"size": 30},
+                        "nodes": {"message": {}, "createdAt": {}}
+                    },
+                    "documents": {
+                        "$": {"size": 5},
+                        "nodes": {
+                            "id": {}, "type": {}, "status": {},
+                            "documentRecipients": {
+                                "$": {"size": 5},
+                                "nodes": {"id": {}, "user": {"name": {}}}
+                            }
+                        }
+                    },
+                    "tasks": {
+                        "$": {"size": 20},
+                        "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
+                    }
+                }
+            })
+            job = resp.get("job")
+            if job:
+                results.append(job)
+        except Exception as e:
+            print(f"  Could not fetch details for job {job_id}: {e}")
+
     return results
 
 
