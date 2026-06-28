@@ -1192,7 +1192,7 @@ def get_jobs_needing_followup():
         page = None
         while True:
             try:
-                jobs_input = {"size": 20, "where": [["createdAt", ">=", cutoff]]}
+                jobs_input = {"size": 20, "where": ["createdAt", ">=", cutoff]}
                 if page:
                     jobs_input["page"] = page
                 resp = jobtread_query({
