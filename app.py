@@ -911,16 +911,41 @@ def get_job_info(job_id):
         return {}
 
 
+# Maps job type to which status field it uses
+JOB_TYPE_STATUS_FIELD = {
+    "Home Repair":        "Home Repairs Status",
+    "Remodel":            "Home Repairs Status",
+    "Pre-listing Repair": "Home Repairs Status",
+    "Closing Repair":     "Closing Repairs Status",
+}
+# Everything else uses Renovation Status
+RENOVATION_STATUS_FIELD = "Renovation Status"
+
+
+def get_status_field_for_job_type(job_type):
+    """Return the correct status field name for a given job type."""
+    return JOB_TYPE_STATUS_FIELD.get(job_type, RENOVATION_STATUS_FIELD)
+
+
 def get_job_type_and_status(job_info):
     """Extract job type and current status from job info."""
     job_type = None
     status   = None
-    for cfv in (job_info.get("customFieldValues") or {}).get("nodes", []):
+    cfvs = (job_info.get("customFieldValues") or {}).get("nodes", [])
+    # First pass — get job type
+    for cfv in cfvs:
         field_name = (cfv.get("customField") or {}).get("name", "")
         if field_name == "Job Type":
             job_type = cfv.get("value")
-        elif field_name in ("Home Repairs Status", "Closing Repairs Status"):
-            status = cfv.get("value")
+            break
+    # Second pass — get the right status field for this job type
+    if job_type:
+        target_field = get_status_field_for_job_type(job_type)
+        for cfv in cfvs:
+            field_name = (cfv.get("customField") or {}).get("name", "")
+            if field_name == target_field:
+                status = cfv.get("value")
+                break
     return job_type, status
 
 
@@ -1003,10 +1028,7 @@ def create_longterm_todo(job_id, job_type):
 
 def set_job_status(job_id, job_type, status_value):
     """Set the correct status custom field on a job based on job type."""
-    if job_type == "Closing Repair":
-        field_name = "Closing Repairs Status"
-    else:
-        field_name = "Home Repairs Status"
+    field_name = get_status_field_for_job_type(job_type)
     try:
         jobtread_query({
             "updateJob": {
@@ -1017,7 +1039,7 @@ def set_job_status(job_id, job_type, status_value):
                 "job": {"$": {"id": job_id}, "id": {}}
             }
         })
-        print(f"  Job status set to '{status_value}'")
+        print(f"  Job status ({field_name}) set to '{status_value}'")
     except Exception as e:
         print(f"  Could not set job status: {e}")
 
