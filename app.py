@@ -817,8 +817,14 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
     """
     Create the standard new-lead to-do chain on a job immediately after it is created.
     Timelines differ by job type — Closing Repairs get a tighter schedule.
+    Tasks are auto-assigned: Jason for repairs/remodel/prelisting, Tyler for everything else.
     """
     from datetime import date, timedelta
+
+    JASON_ID = "22P9ppHePJKQ"
+    TYLER_ID = "22PBsSvmYBUj"
+    JASON_JOB_TYPES = {"Home Repair", "Closing Repair", "Remodel", "Pre-listing Repair"}
+    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
 
     def offset(n):
         return (date.today() + timedelta(days=n)).isoformat()
@@ -853,10 +859,11 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
                         "targetId": job_id,
                         "startDate": due,
                         "endDate": due,
+                        "assignees": [{"membershipId": assignee_id}],
                     }
                 }
             })
-            print(f"  To-do created: {name} (due {due})")
+            print(f"  To-do created: {name} (due {due}, assigned to {assignee_id})")
         except Exception as e:
             print(f"  To-do failed '{name}': {e}")
 
