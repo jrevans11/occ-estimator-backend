@@ -1048,16 +1048,43 @@ def set_job_status(job_id, job_type, status_value):
 
 def process_document_sent(payload):
     """
-    Fired when any document is sent in JobTread.
-    If it's an estimate (customerOrder), reset follow-up to-dos and flip status to Sent.
+    Fired when documentRecipientCreated/Updated in JobTread.
+    On email delivery status change to pending (= just sent), process the estimate.
     """
     try:
         data = json.loads(payload) if isinstance(payload, str) else payload
-        print(f"  document-sent raw payload keys: {list(data.keys())}")
-        print(f"  document-sent data: {str(data)[:500]}")
-        doc  = data.get("data", {})
-        doc_type = doc.get("type")
-        job_id   = (doc.get("job") or {}).get("id") or doc.get("jobId")
+        event = data.get("createdEvent", {})
+        event_data = event.get("data", {})
+        next_state = event_data.get("next", {})
+        prev_state = event_data.get("previous", {})
+
+        # Only process when emailDeliveryStatus changes to "pending" (= just sent)
+        # This fires exactly once per send
+        new_status  = next_state.get("emailDeliveryStatus")
+        prev_status = prev_state.get("emailDeliveryStatus")
+        print(f"  document-sent: emailDeliveryStatus {prev_status} -> {new_status}")
+
+        if new_status != "pending":
+            print("  Not a fresh send — skipping")
+            return
+
+        # Get document ID from the event
+        doc_id = next_state.get("documentId") or (event.get("document") or {}).get("id")
+        if not doc_id:
+            print("  No document ID found — skipping")
+            return
+
+        # Look up the document to get job ID and type
+        doc_resp = jobtread_query({
+            "document": {
+                "$": {"id": doc_id},
+                "id": {}, "type": {}, "status": {},
+                "job": {"id": {}}
+            }
+        })
+        doc_obj  = doc_resp.get("document", {})
+        doc_type = doc_obj.get("type")
+        job_id   = (doc_obj.get("job") or {}).get("id")
         print(f"  document-sent: doc_type={doc_type}, job_id={job_id}")
 
         if not job_id:
