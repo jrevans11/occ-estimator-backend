@@ -1443,9 +1443,7 @@ def process_job_updated(payload):
     """
     try:
         data = json.loads(payload) if isinstance(payload, str) else payload
-        print(f"  job-updated raw: {str(data)[:600]}")
-
-        # Payload structure: createdEvent.data.next.id or createdEvent.job.id
+        # Payload structure: createdEvent.job.id
         event = data.get("createdEvent") or {}
         job_id = (
             (event.get("job") or {}).get("id") or
