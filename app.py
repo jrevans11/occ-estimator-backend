@@ -1964,6 +1964,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8")
         path = self.path.split("?")[0].rstrip("/").lower()
 
+        print(f"POST received: path={path} length={length}")
+
         # Respond to Wufoo immediately — it has a short timeout
         try:
             self.send_response(200)
