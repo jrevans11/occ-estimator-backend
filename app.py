@@ -821,9 +821,6 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
     """
     from datetime import date, timedelta
 
-    JASON_ID = "22P9ppHePJKQ"
-    TYLER_ID = "22PBsSvmYBUj"
-    JASON_JOB_TYPES = {"Home Repair", "Closing Repair", "Remodel", "Pre-listing Repair"}
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
 
     def offset(n):
@@ -866,6 +863,247 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
             print(f"  To-do created: {name} (due {due}, assigned to {assignee_id})")
         except Exception as e:
             print(f"  To-do failed '{name}': {e}")
+
+
+# ── Follow-up to-do chain (post-estimate) ────────────────────────────────────
+
+JASON_ID  = "22P9ppHePJKQ"
+TYLER_ID  = "22PBsSvmYBUj"
+JASON_JOB_TYPES = {"Home Repair", "Closing Repair", "Remodel", "Pre-listing Repair"}
+
+# Status field IDs by job type
+HOME_REPAIR_STATUS_FIELD    = "22PFPUHGUt4g"   # Home Repairs Status
+CLOSING_REPAIR_STATUS_FIELD = "22PFPSefyzSp"   # Closing Repairs Status
+
+# Status values that mean the job is closed — stop all follow-ups
+TERMINAL_STATUSES = {"Closed Won", "Closed Lost"}
+LONG_TERM_STATUS  = "Long Term Follow Up"
+
+# Names used to identify follow-up to-dos (used for deletion)
+FOLLOWUP_TODO_NAMES = {
+    "📧 Follow-up email #1 — check in on estimate",
+    "📞 Follow-up call #1 — any questions?",
+    "📧 Follow-up email #2 — still interested?",
+    "🚨 Final decision call — win or move on",
+    "📅 Long term follow-up — check back in",
+}
+
+
+def get_job_info(job_id):
+    """Fetch job type, current status field values, and open to-dos."""
+    try:
+        resp = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "customFieldValues": {
+                    "$": {"size": 20},
+                    "nodes": {"customField": {"id": {}, "name": {}}, "value": {}}
+                },
+                "tasks": {
+                    "$": {"size": 50},
+                    "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
+                }
+            }
+        })
+        return resp.get("job", {})
+    except Exception as e:
+        print(f"  get_job_info failed: {e}")
+        return {}
+
+
+def get_job_type_and_status(job_info):
+    """Extract job type and current status from job info."""
+    job_type = None
+    status   = None
+    for cfv in (job_info.get("customFieldValues") or {}).get("nodes", []):
+        field_name = (cfv.get("customField") or {}).get("name", "")
+        if field_name == "Job Type":
+            job_type = cfv.get("value")
+        elif field_name in ("Home Repairs Status", "Closing Repairs Status"):
+            status = cfv.get("value")
+    return job_type, status
+
+
+def delete_followup_todos(job_info):
+    """Delete any open follow-up to-dos on a job."""
+    deleted = 0
+    for task in (job_info.get("tasks") or {}).get("nodes", []):
+        if not task.get("isToDo"):
+            continue
+        if task.get("name") in FOLLOWUP_TODO_NAMES and task.get("progress") != 1:
+            try:
+                jobtread_query({"deleteTask": {"$": {"id": task["id"]}}})
+                print(f"  Deleted to-do: {task['name']}")
+                deleted += 1
+            except Exception as e:
+                print(f"  Could not delete to-do {task['id']}: {e}")
+    return deleted
+
+
+def create_followup_todos(job_id, job_type):
+    """Create the post-estimate follow-up to-do chain assigned by job type."""
+    from datetime import date, timedelta
+
+    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
+
+    def offset(n):
+        return (date.today() + timedelta(days=n)).isoformat()
+
+    tasks = [
+        ("📧 Follow-up email #1 — check in on estimate", 3),
+        ("📞 Follow-up call #1 — any questions?",         5),
+        ("📧 Follow-up email #2 — still interested?",     7),
+        ("🚨 Final decision call — win or move on",       14),
+    ]
+
+    for name, days in tasks:
+        due = offset(days)
+        try:
+            jobtread_query({
+                "createTask": {
+                    "$": {
+                        "name": name,
+                        "isToDo": True,
+                        "targetType": "job",
+                        "targetId": job_id,
+                        "startDate": due,
+                        "endDate": due,
+                        "assignees": [{"membershipId": assignee_id}],
+                    }
+                }
+            })
+            print(f"  Follow-up to-do created: {name} (due {due})")
+        except Exception as e:
+            print(f"  Follow-up to-do failed '{name}': {e}")
+
+
+def create_longterm_todo(job_id, job_type):
+    """Create a single 60-day long-term follow-up to-do."""
+    from datetime import date, timedelta
+    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
+    due = (date.today() + timedelta(days=60)).isoformat()
+    try:
+        jobtread_query({
+            "createTask": {
+                "$": {
+                    "name": "📅 Long term follow-up — check back in",
+                    "isToDo": True,
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "startDate": due,
+                    "endDate": due,
+                    "assignees": [{"membershipId": assignee_id}],
+                }
+            }
+        })
+        print(f"  Long-term to-do created (due {due})")
+    except Exception as e:
+        print(f"  Long-term to-do failed: {e}")
+
+
+def set_job_status(job_id, job_type, status_value):
+    """Set the correct status custom field on a job based on job type."""
+    if job_type == "Closing Repair":
+        field_name = "Closing Repairs Status"
+    else:
+        field_name = "Home Repairs Status"
+    try:
+        jobtread_query({
+            "updateJob": {
+                "$": {
+                    "id": job_id,
+                    "customFieldValues": {field_name: status_value}
+                },
+                "job": {"$": {"id": job_id}, "id": {}}
+            }
+        })
+        print(f"  Job status set to '{status_value}'")
+    except Exception as e:
+        print(f"  Could not set job status: {e}")
+
+
+# ── Webhook processors ────────────────────────────────────────────────────────
+
+def process_document_sent(payload):
+    """
+    Fired when any document is sent in JobTread.
+    If it's an estimate (customerOrder), reset follow-up to-dos and flip status to Sent.
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+        doc  = data.get("data", {})
+        doc_type = doc.get("type")
+        job_id   = (doc.get("job") or {}).get("id") or doc.get("jobId")
+
+        if not job_id:
+            print("  document-sent: no job ID found, skipping")
+            return
+        if doc_type != "customerOrder":
+            print(f"  document-sent: type={doc_type}, not an estimate — skipping")
+            return
+
+        print(f"  document-sent: estimate sent on job {job_id}")
+        job_info = get_job_info(job_id)
+        job_type, current_status = get_job_type_and_status(job_info)
+
+        if not job_type:
+            print("  Could not determine job type — skipping")
+            return
+
+        # Don't touch closed or long-term jobs
+        if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
+            print(f"  Job is '{current_status}' — skipping follow-up chain")
+            return
+
+        # Delete existing follow-up to-dos and create fresh ones
+        deleted = delete_followup_todos(job_info)
+        print(f"  Deleted {deleted} existing follow-up to-dos")
+        create_followup_todos(job_id, job_type)
+
+        # Flip status to Sent
+        set_job_status(job_id, job_type, "Sent")
+
+    except Exception as e:
+        import traceback
+        print(f"process_document_sent error: {e}")
+        traceback.print_exc()
+
+
+def process_job_updated(payload):
+    """
+    Fired when any job field is updated in JobTread.
+    React to status changes: Closed Won/Lost → clean up. Long Term → 60-day to-do.
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+        job_id = (data.get("data") or {}).get("id")
+        if not job_id:
+            print("  job-updated: no job ID — skipping")
+            return
+
+        job_info = get_job_info(job_id)
+        job_type, current_status = get_job_type_and_status(job_info)
+
+        if not job_type or not current_status:
+            return
+
+        print(f"  job-updated: job {job_id} | type={job_type} | status={current_status}")
+
+        if current_status in TERMINAL_STATUSES:
+            # Clean up all open follow-up to-dos
+            deleted = delete_followup_todos(job_info)
+            print(f"  {current_status}: deleted {deleted} follow-up to-dos")
+
+        elif current_status == LONG_TERM_STATUS:
+            # Remove short-term follow-ups, add 60-day to-do
+            deleted = delete_followup_todos(job_info)
+            print(f"  Long Term Follow Up: deleted {deleted} follow-up to-dos")
+            create_longterm_todo(job_id, job_type)
+
+    except Exception as e:
+        import traceback
+        print(f"process_job_updated error: {e}")
+        traceback.print_exc()
 
 
 def create_job_full(cfg):
@@ -1472,19 +1710,22 @@ class Handler(BaseHTTPRequestHandler):
         t.start()
 
     def _route(self, path, body):
-        """Dispatch each Wufoo form to its processor. Unknown paths → closing repairs (default)."""
+        """Dispatch each incoming POST to its processor."""
         try:
-            data = urllib.parse.parse_qs(body)
             if path in ("/home-repairs", "/home-repair"):
-                process_home_repairs(data)
+                process_home_repairs(urllib.parse.parse_qs(body))
             elif path in ("/gvl-today", "/gvl", "/gvltoday"):
-                process_gvl(data)
+                process_gvl(urllib.parse.parse_qs(body))
             elif path == "/remodel":
-                process_remodel(data)
+                process_remodel(urllib.parse.parse_qs(body))
             elif path in ("/prelisting", "/pre-listing", "/prelisting-repairs"):
-                process_prelisting(data)
+                process_prelisting(urllib.parse.parse_qs(body))
+            elif path == "/jobtread-document-sent":
+                process_document_sent(body)
+            elif path == "/jobtread-job-updated":
+                process_job_updated(body)
             else:
-                # Default / existing path = closing repairs (unchanged behavior)
+                # Default = closing repairs Wufoo form
                 self._process(body)
         except Exception as e:
             print(f"Routing error on '{path}': {e}")
