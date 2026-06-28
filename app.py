@@ -1063,10 +1063,235 @@ def process_document_sent(payload):
         # Flip status to Sent
         set_job_status(job_id, job_type, "Sent")
 
+        # Log the sent date as a comment so the daily runner can find it
+        from datetime import date as _date
+        sent_date = _date.today().isoformat()
+        try:
+            jobtread_query({
+                "createComment": {
+                    "$": {
+                        "targetType": "job",
+                        "targetId": job_id,
+                        "body": f"[OCC-AUTO] Estimate sent on {sent_date}. Follow-up emails scheduled for Day 3, 7, and 14.",
+                    },
+                    "createdComment": {"id": {}}
+                }
+            })
+            print(f"  Sent date logged: {sent_date}")
+        except Exception as ce:
+            print(f"  Could not log sent date comment: {ce}")
+
     except Exception as e:
         import traceback
         print(f"process_document_sent error: {e}")
         traceback.print_exc()
+
+
+# ── Daily follow-up email runner ─────────────────────────────────────────────
+
+FOLLOWUP_MESSAGES = {
+    3: (
+        "Hi {first_name},\n\n"
+        "I just wanted to follow up and make sure you received the estimate I sent over. "
+        "Feel free to reach out if you have any questions or would like to talk through anything \u2014 "
+        "I'm happy to help. You can view and approve the estimate using the button below."
+    ),
+    7: (
+        "Hi {first_name},\n\n"
+        "Checking in one more time on the estimate I sent over for your project. "
+        "If you have any questions or if the scope of work needs any adjustments, "
+        "just let me know and we can work through it together. "
+        "I want to make sure we find the right solution for you."
+    ),
+    14: (
+        "Hi {first_name},\n\n"
+        "I wanted to reach out one last time regarding the estimate I sent over for your project. "
+        "We'd love the opportunity to work with you. If you have any questions or would like to "
+        "discuss the scope of work, please don't hesitate to give me a call. "
+        "If the timing isn't right at the moment, I completely understand \u2014 "
+        "just keep us in mind for the future."
+    ),
+}
+
+FOLLOWUP_SENT_MARKERS = {
+    3:  "[OCC-AUTO-F1]",
+    7:  "[OCC-AUTO-F2]",
+    14: "[OCC-AUTO-F3]",
+}
+
+
+def get_jobs_needing_followup():
+    """
+    Fetch all Home Repair and Closing Repair jobs at Sent status
+    with their comments and pending estimate documents.
+    """
+    results = []
+    for status_field, job_types in [
+        ("Home Repairs Status",    ["Home Repair", "Remodel", "Pre-listing Repair"]),
+        ("Closing Repairs Status", ["Closing Repair"]),
+    ]:
+        try:
+            resp = jobtread_query({
+                "organization": {
+                    "$": {"id": JOBTREAD_ORG},
+                    "jobs": {
+                        "$": {"size": 100},
+                        "nodes": {
+                            "id": {}, "name": {},
+                            "customFieldValues": {
+                                "$": {"size": 10},
+                                "nodes": {"customField": {"name": {}}, "value": {}}
+                            },
+                            "comments": {
+                                "$": {"size": 20},
+                                "nodes": {"body": {}, "createdAt": {}}
+                            },
+                            "documents": {
+                                "$": {"size": 5},
+                                "nodes": {
+                                    "id": {}, "type": {}, "status": {},
+                                    "documentRecipients": {
+                                        "$": {"size": 5},
+                                        "nodes": {
+                                            "id": {},
+                                            "user": {"name": {}}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            jobs = resp.get("organization", {}).get("jobs", {}).get("nodes", [])
+            for job in jobs:
+                cfvs = {
+                    cfv["customField"]["name"]: cfv["value"]
+                    for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
+                    if cfv.get("customField")
+                }
+                if cfvs.get(status_field) != "Sent":
+                    continue
+                if cfvs.get("Job Type") not in job_types:
+                    continue
+                results.append(job)
+        except Exception as e:
+            print(f"  get_jobs_needing_followup error: {e}")
+    return results
+
+
+def parse_sent_date(comments):
+    """Extract the estimate sent date from job comments."""
+    import re
+    from datetime import date
+    for comment in (comments or []):
+        body = comment.get("body", "")
+        if "[OCC-AUTO] Estimate sent on" in body:
+            match = re.search(r"sent on (\d{4}-\d{2}-\d{2})", body)
+            if match:
+                try:
+                    return date.fromisoformat(match.group(1))
+                except ValueError:
+                    pass
+    return None
+
+
+def already_sent_followup(comments, day):
+    """Check if a follow-up email for this day has already been sent."""
+    marker = FOLLOWUP_SENT_MARKERS[day]
+    return any(marker in (c.get("body") or "") for c in (comments or []))
+
+
+def log_followup_sent(job_id, day):
+    """Add a comment to the job recording that the follow-up was sent."""
+    from datetime import date
+    marker = FOLLOWUP_SENT_MARKERS[day]
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "body": f"{marker} Day {day} follow-up email sent on {date.today().isoformat()}.",
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+    except Exception as e:
+        print(f"  Could not log follow-up comment: {e}")
+
+
+def process_send_followups():
+    """
+    Daily runner — check all Sent jobs and send follow-up emails on Day 3, 7, 14.
+    Called via GET /send-followups from cron-job.org once per day.
+    """
+    from datetime import date
+    today = date.today()
+    print(f"Running daily follow-up check: {today.isoformat()}")
+
+    jobs = get_jobs_needing_followup()
+    print(f"  Found {len(jobs)} jobs at Sent status")
+
+    sent_count = 0
+    for job in jobs:
+        job_id = job["id"]
+        comments = (job.get("comments") or {}).get("nodes", [])
+        sent_date = parse_sent_date(comments)
+
+        if not sent_date:
+            print(f"  Job {job_id}: no sent date found — skipping")
+            continue
+
+        days_since = (today - sent_date).days
+        print(f"  Job {job_id}: {days_since} days since estimate sent")
+
+        # Check if today is a follow-up day
+        if days_since not in FOLLOWUP_MESSAGES:
+            continue
+
+        # Skip if already sent
+        if already_sent_followup(comments, days_since):
+            print(f"  Job {job_id}: Day {days_since} follow-up already sent — skipping")
+            continue
+
+        # Get the pending estimate document and recipient
+        docs = (job.get("documents") or {}).get("nodes", [])
+        recipient_id = None
+        first_name = "there"
+
+        for doc in docs:
+            if doc.get("type") == "customerOrder" and doc.get("status") == "pending":
+                recipients = (doc.get("documentRecipients") or {}).get("nodes", [])
+                if recipients:
+                    recipient_id = recipients[0]["id"]
+                    full_name = (recipients[0].get("user") or {}).get("name", "")
+                    first_name = full_name.split()[0].capitalize() if full_name else "there"
+                break
+
+        if not recipient_id:
+            print(f"  Job {job_id}: no pending estimate recipient found — skipping")
+            continue
+
+        # Build and send the email
+        message = FOLLOWUP_MESSAGES[days_since].format(first_name=first_name)
+        try:
+            jobtread_query({
+                "sendDocument": {
+                    "$": {
+                        "documentRecipientId": recipient_id,
+                        "emailMessage": message,
+                    }
+                }
+            })
+            log_followup_sent(job_id, days_since)
+            print(f"  Job {job_id}: Day {days_since} follow-up sent to {first_name}")
+            sent_count += 1
+        except Exception as e:
+            print(f"  Job {job_id}: follow-up send failed: {e}")
+
+    print(f"Daily follow-up run complete: {sent_count} emails sent")
+    return sent_count
 
 
 def process_job_updated(payload):
@@ -1665,10 +1890,28 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/refresh-pricing":
             self._handle_refresh()
+        elif path == "/send-followups":
+            self._handle_send_followups()
         else:
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OCC Estimator Backend is running!")
+
+    def _handle_send_followups(self):
+        """Daily cron endpoint — send follow-up emails for Day 3, 7, 14."""
+        try:
+            count = process_send_followups()
+            msg = f"Follow-up run complete: {count} emails sent."
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(msg.encode("utf-8"))
+        except Exception as e:
+            import traceback
+            err = f"Follow-up run failed: {e}\n{traceback.format_exc()}"
+            print(err)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(err.encode("utf-8"))
 
     def _handle_refresh(self):
         """Pull all closing repair cost groups from JobTread and update pricing."""
