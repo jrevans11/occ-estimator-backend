@@ -873,13 +873,14 @@ JASON_ID  = "22P9ppHePJKQ"
 TYLER_ID  = "22PBsSvmYBUj"
 JASON_JOB_TYPES = {"Home Repair", "Closing Repair", "Remodel", "Pre-listing Repair"}
 
-# User IDs whose task completions we care about for pipeline automation.
-# Production team members (Emily, subcontractors) are excluded — their task
-# updates are always dropped without an API call.
+# User IDs whose task completions trigger pipeline automation.
+# These are USER IDs (from webhook payload createdByUser.id) — NOT membership IDs.
+# Only these users can trigger status changes via to-do check-off.
+# To enable for Tyler or Ben, uncomment their lines and redeploy.
 AUTOMATION_USER_IDS = {
-    "22P9ppHePJKQ",  # Jason Evans
-    "22PBsSvmYBUj",  # Tyler Jarratt
-    "22PBaAd599Lm",  # Nancy Cole
+    "22P9ppHdzeEn",  # Jason Evans
+    # "22PBsSvmYYP4",  # Tyler Jarratt
+    # "22PBsT3aS3cy",  # Ben Creasman
 }
 
 # ── Automation scope ──────────────────────────────────────────────────────────
