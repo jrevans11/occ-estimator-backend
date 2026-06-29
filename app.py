@@ -813,58 +813,40 @@ def attach_files(job_id, file_urls):
             print(f"  File attach failed for {label}: {e}")
 
 
+def create_single_todo(job_id, job_type, name, due_offset=0):
+    """Create a single to-do on a job assigned to the correct team member."""
+    from datetime import date, timedelta
+    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
+    due = (date.today() + timedelta(days=due_offset)).isoformat()
+    try:
+        jobtread_query({
+            "createTask": {
+                "$": {
+                    "name": name,
+                    "isToDo": True,
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "startDate": due,
+                    "endDate": due,
+                    "assignees": [{"membershipId": assignee_id}],
+                }
+            }
+        })
+        print(f"  To-do created: {name} (due {due})")
+    except Exception as e:
+        print(f"  To-do failed '{name}': {e}")
+
+
 def create_new_lead_todos(job_id, job_type="Home Repair"):
     """
-    Create the standard new-lead to-do chain on a job immediately after it is created.
-    Timelines differ by job type — Closing Repairs get a tighter schedule.
-    Tasks are auto-assigned: Jason for repairs/remodel/prelisting, Tyler for everything else.
+    Create ONLY the first to-do when a new lead is created.
+    Each subsequent to-do is created when the previous one is checked off (domino effect).
+    This keeps the action items view clean — only the current step is visible.
     """
-    from datetime import date, timedelta
-
     if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
         print(f"  Skipping to-dos — {job_type} not in automation scope")
         return
-
-    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
-
-    def offset(n):
-        return (date.today() + timedelta(days=n)).isoformat()
-
-    if job_type == "Closing Repair":
-        tasks = [
-            ("📞 Call customer — introduce & qualify",   0),
-            ("📅 Schedule site visit",                   1),
-            ("📝 Build estimate",                        1),
-            ("📤 Send estimate to customer",             2),
-        ]
-    else:
-        # Home Repair, Remodel, Pre-listing, GVL — standard cadence
-        tasks = [
-            ("📞 Call customer — introduce & qualify",   0),
-            ("📅 Schedule site visit",                   1),
-            ("📝 Build estimate",                        5),
-            ("📤 Send estimate to customer",             6),
-        ]
-
-    for name, days in tasks:
-        due = offset(days)
-        try:
-            jobtread_query({
-                "createTask": {
-                    "$": {
-                        "name": name,
-                        "isToDo": True,
-                        "targetType": "job",
-                        "targetId": job_id,
-                        "startDate": due,
-                        "endDate": due,
-                        "assignees": [{"membershipId": assignee_id}],
-                    }
-                }
-            })
-            print(f"  To-do created: {name} (due {due}, assigned to {assignee_id})")
-        except Exception as e:
-            print(f"  To-do failed '{name}': {e}")
+    create_single_todo(job_id, job_type, "📞 Call customer — introduce & qualify", due_offset=0)
 
 
 # ── Follow-up to-do chain (post-estimate) ────────────────────────────────────
@@ -927,13 +909,83 @@ def is_forward_move(from_status, to_status):
     except ValueError:
         return False  # Unknown status — don't act
 
-# ── To-do ↔ status mapping ────────────────────────────────────────────────────
-# Maps to-do name → status to set when that to-do is checked off
-TODO_TO_STATUS = {
-    "📅 Schedule site visit":        "Appointment Set",
-    "📝 Build estimate":             "Estimating",
-    "📤 Send estimate to customer":  "Sent",
-}
+# ── To-do chain definition ───────────────────────────────────────────────────
+# Each to-do, when checked off, creates the next one automatically (domino effect).
+# offset = days from today when the next to-do is due.
+# status = pipeline status to flip when this to-do is checked off (optional).
+# For Closing Repair the offsets are tighter — handled in get_next_todo().
+
+TODO_CHAIN = [
+    {
+        "name":    "📞 Call customer — introduce & qualify",
+        "status":  None,
+        "next":    "📅 Schedule site visit",
+        "offset":  1,
+    },
+    {
+        "name":    "📅 Schedule site visit",
+        "status":  "Appointment Set",
+        "next":    "📝 Build estimate",
+        "offset":  4,
+    },
+    {
+        "name":    "📝 Build estimate",
+        "status":  "Estimating",
+        "next":    "📤 Send estimate to customer",
+        "offset":  1,
+    },
+    {
+        "name":    "📤 Send estimate to customer",
+        "status":  "Sent",
+        "next":    None,   # Estimate sent webhook takes over from here
+        "offset":  0,
+    },
+]
+
+# Closing Repair uses same chain but tighter offsets
+TODO_CHAIN_CLOSING = [
+    {
+        "name":    "📞 Call customer — introduce & qualify",
+        "status":  None,
+        "next":    "📅 Schedule site visit",
+        "offset":  1,
+    },
+    {
+        "name":    "📅 Schedule site visit",
+        "status":  "Appointment Set",
+        "next":    "📝 Build estimate",
+        "offset":  1,
+    },
+    {
+        "name":    "📝 Build estimate",
+        "status":  "Estimating",
+        "next":    "📤 Send estimate to customer",
+        "offset":  1,
+    },
+    {
+        "name":    "📤 Send estimate to customer",
+        "status":  "Sent",
+        "next":    None,
+        "offset":  0,
+    },
+]
+
+# Build lookup dicts from chain definitions
+def _build_lookups(chain):
+    to_status = {}
+    to_next   = {}
+    to_offset = {}
+    for step in chain:
+        name = step["name"]
+        if step["status"]:
+            to_status[name] = step["status"]
+        if step["next"]:
+            to_next[name]   = step["next"]
+            to_offset[name] = step["offset"]
+    return to_status, to_next, to_offset
+
+TODO_TO_STATUS,  TODO_TO_NEXT,  TODO_TO_OFFSET  = _build_lookups(TODO_CHAIN)
+TODO_TO_STATUS_C, TODO_TO_NEXT_C, TODO_TO_OFFSET_C = _build_lookups(TODO_CHAIN_CLOSING)
 
 # Maps status → to-do name to check off when that status is set by dragging
 STATUS_TO_TODO = {
@@ -1601,13 +1653,6 @@ def process_task_updated(payload):
             print(f"  task-updated: missing task name or job ID — skipping")
             return
 
-        # Only act on our named to-dos
-        target_status = TODO_TO_STATUS.get(task_name)
-        if not target_status:
-            return  # Not one of our trigger to-dos — ignore silently
-
-        print(f"  task-updated: '{task_name}' completed on job {job_id} → target status '{target_status}'")
-
         job_info = get_job_info(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
@@ -1616,8 +1661,24 @@ def process_task_updated(payload):
             return
 
         if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
-            print(f"  task-updated: {job_type} not in automation scope — skipping")
             return
+
+        is_closing = (job_type == "Closing Repair")
+
+        # Handle "Call customer" — no status flip, just chain the next to-do
+        if task_name == "📞 Call customer — introduce & qualify":
+            next_name   = (TODO_TO_NEXT_C if is_closing else TODO_TO_NEXT).get(task_name)
+            next_offset = (TODO_TO_OFFSET_C if is_closing else TODO_TO_OFFSET).get(task_name, 1)
+            if next_name:
+                create_single_todo(job_id, job_type, next_name, due_offset=next_offset)
+            return
+
+        # For all others, look up the status to flip
+        target_status = (TODO_TO_STATUS_C if is_closing else TODO_TO_STATUS).get(task_name)
+        if not target_status:
+            return  # Not one of our trigger to-dos — ignore silently
+
+        print(f"  task-updated: '{task_name}' completed on job {job_id} → target status '{target_status}'")
 
         if not current_status:
             print("  task-updated: no current status found — skipping")
@@ -1629,7 +1690,6 @@ def process_task_updated(payload):
             return
 
         # Re-fetch current status right before setting to handle simultaneous check-offs
-        # (another thread may have already advanced the status further)
         fresh_info = get_job_info(job_id)
         _, fresh_status = get_job_type_and_status(fresh_info)
         if fresh_status and not is_forward_move(fresh_status, target_status):
@@ -1637,6 +1697,13 @@ def process_task_updated(payload):
             return
 
         set_job_status(job_id, job_type, target_status)
+
+        # ── Domino: create the next to-do in the chain ────────────────────────
+        next_name   = (TODO_TO_NEXT_C if is_closing else TODO_TO_NEXT).get(task_name)
+        next_offset = (TODO_TO_OFFSET_C if is_closing else TODO_TO_OFFSET).get(task_name, 1)
+        if next_name:
+            create_single_todo(job_id, job_type, next_name, due_offset=next_offset)
+        # ─────────────────────────────────────────────────────────────────────
 
     except Exception as e:
         import traceback
