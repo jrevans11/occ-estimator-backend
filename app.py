@@ -1631,38 +1631,28 @@ def process_document_updated(payload):
             print("  Not a pending→approved transition — skipping")
             return
 
-        # Get document and job info
-        print(f"  doc-updated raw event keys: {list(event.keys())}")
-        print(f"  doc-updated next_state: {next_state}")
-        print(f"  doc-updated document field: {event.get('document')}")
-        doc = event.get("document") or {}
-        doc_type = (next_state.get("type") or
-                    prev_state.get("type") or
-                    doc.get("type") or
-                    next_state.get("documentType"))
-        include_in_budget = (next_state.get("includeInBudget") or
-                             doc.get("includeInBudget"))
-        job_id = ((doc.get("job") or {}).get("id") or
-                  (event.get("job") or {}).get("id"))
+        # Payload only includes document ID — look it up to get type, budget flag, and job
+        doc_id = (event.get("document") or {}).get("id")
+        if not doc_id:
+            print("  doc-updated: no document ID in payload — skipping")
+            return
 
-        if not job_id:
-            # Try fetching document to get job ID
-            doc_id = doc.get("id") or next_state.get("id")
-            if doc_id:
-                try:
-                    doc_resp = jobtread_query({
-                        "document": {
-                            "$": {"id": doc_id},
-                            "id": {}, "type": {}, "includeInBudget": {},
-                            "job": {"id": {}}
-                        }
-                    })
-                    doc_obj = doc_resp.get("document") or {}
-                    doc_type = doc_obj.get("type")
-                    include_in_budget = doc_obj.get("includeInBudget")
-                    job_id = (doc_obj.get("job") or {}).get("id")
-                except Exception as e:
-                    print(f"  Could not fetch document: {e}")
+        try:
+            doc_resp = jobtread_query({
+                "document": {
+                    "$": {"id": doc_id},
+                    "id": {}, "type": {}, "includeInBudget": {},
+                    "job": {"id": {}}
+                }
+            })
+            doc_obj = doc_resp.get("document") or {}
+            doc_type = doc_obj.get("type")
+            include_in_budget = doc_obj.get("includeInBudget")
+            job_id = (doc_obj.get("job") or {}).get("id")
+            print(f"  doc-updated: fetched doc {doc_id} — type={doc_type}, includeInBudget={include_in_budget}, job={job_id}")
+        except Exception as e:
+            print(f"  doc-updated: could not fetch document {doc_id}: {e}")
+            return
 
         if not job_id:
             print("  doc-updated: no job ID found — skipping")
