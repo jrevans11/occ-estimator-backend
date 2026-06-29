@@ -834,7 +834,6 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
         tasks = [
             ("📞 Call customer — introduce & qualify",   0),
             ("📅 Schedule site visit",                   1),
-            ("🏠 Complete site visit",                   1),
             ("📝 Build estimate",                        1),
             ("📤 Send estimate to customer",             2),
         ]
@@ -843,7 +842,6 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
         tasks = [
             ("📞 Call customer — introduce & qualify",   0),
             ("📅 Schedule site visit",                   1),
-            ("🏠 Complete site visit",                   3),
             ("📝 Build estimate",                        5),
             ("📤 Send estimate to customer",             6),
         ]
