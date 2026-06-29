@@ -937,6 +937,7 @@ FOLLOWUP_TODO_NAMES = {
     "📧 Follow-up email #1 — check in on estimate",
     "📞 Follow-up call #1 — any questions?",
     "📧 Follow-up email #2 — still interested?",
+    "📧 Follow-up email #3 — final touch",
     "🚨 Final decision call — win or move on",
     "📅 Long term follow-up — check back in",
 }
@@ -1031,6 +1032,7 @@ def create_followup_todos(job_id, job_type):
         ("📧 Follow-up email #1 — check in on estimate", 3),
         ("📞 Follow-up call #1 — any questions?",         5),
         ("📧 Follow-up email #2 — still interested?",     7),
+        ("📧 Follow-up email #3 — final touch",          14),
         ("🚨 Final decision call — win or move on",       14),
     ]
 
@@ -1464,7 +1466,7 @@ def process_send_followups():
             email_todo_names = {
                 3:  "📧 Follow-up email #1 — check in on estimate",
                 7:  "📧 Follow-up email #2 — still interested?",
-                14: "🚨 Final decision call — win or move on",
+                14: "📧 Follow-up email #3 — final touch",
             }
             todo_name = email_todo_names.get(days_since)
             if todo_name:
