@@ -1632,10 +1632,18 @@ def process_document_updated(payload):
             return
 
         # Get document and job info
+        print(f"  doc-updated raw event keys: {list(event.keys())}")
+        print(f"  doc-updated next_state: {next_state}")
+        print(f"  doc-updated document field: {event.get('document')}")
         doc = event.get("document") or {}
-        doc_type = next_state.get("type") or doc.get("type")
-        include_in_budget = next_state.get("includeInBudget")
-        job_id = (doc.get("job") or {}).get("id") or (event.get("job") or {}).get("id")
+        doc_type = (next_state.get("type") or
+                    prev_state.get("type") or
+                    doc.get("type") or
+                    next_state.get("documentType"))
+        include_in_budget = (next_state.get("includeInBudget") or
+                             doc.get("includeInBudget"))
+        job_id = ((doc.get("job") or {}).get("id") or
+                  (event.get("job") or {}).get("id"))
 
         if not job_id:
             # Try fetching document to get job ID
