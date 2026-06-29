@@ -873,6 +873,15 @@ JASON_ID  = "22P9ppHePJKQ"
 TYLER_ID  = "22PBsSvmYBUj"
 JASON_JOB_TYPES = {"Home Repair", "Closing Repair", "Remodel", "Pre-listing Repair"}
 
+# User IDs whose task completions we care about for pipeline automation.
+# Production team members (Emily, subcontractors) are excluded — their task
+# updates are always dropped without an API call.
+AUTOMATION_USER_IDS = {
+    "22P9ppHePJKQ",  # Jason Evans
+    "22PBsSvmYBUj",  # Tyler Jarratt
+    "22PBaAd599Lm",  # Nancy Cole
+}
+
 # ── Automation scope ──────────────────────────────────────────────────────────
 # Only these job types participate in the full automation pipeline
 # (to-dos, follow-up emails, status flips, closed/long-term cleanup).
@@ -1566,6 +1575,12 @@ def process_task_updated(payload):
             print(f"  task-filter: dropped — no account")
             return
 
+        # 5. Must be completed by someone in our automation user set
+        #    (filters out Emily, subcontractors, and other production users)
+        if changed_by not in AUTOMATION_USER_IDS:
+            print(f"  task-filter: dropped — user {changed_by} not in automation scope")
+            return
+
         print(f"  task-filter: PASSED — looking up task name")
         # ─────────────────────────────────────────────────────────────────────
 
@@ -1618,9 +1633,17 @@ def process_task_updated(payload):
             print("  task-updated: no current status found — skipping")
             return
 
-        # Only flip if it's a forward move
+        # Only flip if it's a forward move from current status
         if not is_forward_move(current_status, target_status):
             print(f"  task-updated: {current_status} → {target_status} is not a forward move — skipping")
+            return
+
+        # Re-fetch current status right before setting to handle simultaneous check-offs
+        # (another thread may have already advanced the status further)
+        fresh_info = get_job_info(job_id)
+        _, fresh_status = get_job_type_and_status(fresh_info)
+        if fresh_status and not is_forward_move(fresh_status, target_status):
+            print(f"  task-updated: status already at '{fresh_status}', skipping '{target_status}'")
             return
 
         set_job_status(job_id, job_type, target_status)
@@ -1756,11 +1779,15 @@ def process_job_updated(payload):
         prev_custom = (event_data.get("previous") or {}).get("custom") or {}
         next_custom = (event_data.get("next") or {}).get("custom") or {}
 
-        # Find which status field changed
+        # Find which status field changed IN THIS UPDATE
+        # If the status field is not in next_custom, the status didn't change
+        # in this update — don't sync to-dos from a drag
         prev_status = None
+        status_changed_in_this_update = False
         for field_name in ("Home Repairs Status", "Closing Repairs Status"):
             if field_name in next_custom:
                 prev_status = prev_custom.get(field_name)
+                status_changed_in_this_update = True
                 break
 
         if current_status in TERMINAL_STATUSES:
@@ -1775,7 +1802,8 @@ def process_job_updated(payload):
             create_longterm_todo(job_id, job_type)
 
         # Sync to-do if status moved forward via drag (and we have a mapping for it)
-        if prev_status and is_forward_move(prev_status, current_status):
+        # Only act if the status actually changed in this update
+        if status_changed_in_this_update and prev_status and is_forward_move(prev_status, current_status):
             todo_to_check = STATUS_TO_TODO.get(current_status)
             if todo_to_check:
                 complete_todo_by_name(job_info, todo_to_check)
