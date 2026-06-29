@@ -1535,26 +1535,38 @@ def process_task_updated(payload):
         prev_state = event_data.get("previous") or {}
 
         # ── Fast pre-filters (no API call needed) ────────────────────────────
-        # 1. Must be a completion event (progress → 1)
         new_progress = next_state.get("progress")
         old_progress = prev_state.get("progress")
-        if new_progress != 1 or old_progress == 1:
-            return
-
-        # 2. Must have a task ID and job ID in payload
         task_id = (event.get("task") or {}).get("id")
         job_id  = (event.get("job") or {}).get("id")
+        org_id  = (event.get("organization") or {}).get("id")
+        has_account = bool(event.get("account"))
+        changed_by  = (event.get("createdByUser") or {}).get("id", "unknown")
+
+        # Log every event so we can identify patterns
+        print(f"  task-filter: task={task_id} job={job_id} progress={old_progress}->{new_progress} by={changed_by} account={has_account}")
+
+        # 1. Must be a completion event (progress → 1)
+        if new_progress != 1 or old_progress == 1:
+            print(f"  task-filter: dropped — not a completion")
+            return
+
+        # 2. Must have a task ID and job ID
         if not task_id or not job_id:
-            return  # Not a job task — ignore silently
+            print(f"  task-filter: dropped — no task or job ID")
+            return
 
         # 3. Must belong to our organization
-        org_id = (event.get("organization") or {}).get("id")
         if org_id and org_id != JOBTREAD_ORG:
+            print(f"  task-filter: dropped — wrong org {org_id}")
             return
 
-        # 4. Must belong to an account (filters out internal/admin tasks)
-        if not event.get("account"):
+        # 4. Must belong to an account
+        if not has_account:
+            print(f"  task-filter: dropped — no account")
             return
+
+        print(f"  task-filter: PASSED — looking up task name")
         # ─────────────────────────────────────────────────────────────────────
 
         # Payload only includes task ID — look up task name via API
