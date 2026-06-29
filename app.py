@@ -1534,16 +1534,25 @@ def process_task_updated(payload):
         next_state = event_data.get("next") or {}
         prev_state = event_data.get("previous") or {}
 
+        print(f"  task-updated raw: {str(data)[:800]}")
+
         # Only act when progress changes to 1 (complete)
         new_progress = next_state.get("progress")
         old_progress = prev_state.get("progress")
+        print(f"  task-updated: progress {old_progress} -> {new_progress}")
         if new_progress != 1 or old_progress == 1:
+            print(f"  task-updated: not a completion event — skipping")
             return
 
-        # Get task name and job ID
-        task_name = next_state.get("name") or (event.get("task") or {}).get("name")
-        task_id   = next_state.get("id") or (event.get("task") or {}).get("id")
-        job_id    = (next_state.get("job") or {}).get("id") or (event.get("job") or {}).get("id")
+        # Get task name and job ID — try multiple locations in payload
+        task_name = (next_state.get("name") or
+                     prev_state.get("name") or
+                     (event.get("task") or {}).get("name"))
+        job_id    = ((next_state.get("job") or {}).get("id") or
+                     (event.get("job") or {}).get("id") or
+                     (event.get("task") or {}).get("jobId"))
+
+        print(f"  task-updated: task_name={task_name}, job_id={job_id}")
 
         if not task_name or not job_id:
             print(f"  task-updated: missing task name or job ID — skipping")
