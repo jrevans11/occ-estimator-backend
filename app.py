@@ -1534,25 +1534,39 @@ def process_task_updated(payload):
         next_state = event_data.get("next") or {}
         prev_state = event_data.get("previous") or {}
 
-        print(f"  task-updated raw: {str(data)[:800]}")
-
         # Only act when progress changes to 1 (complete)
         new_progress = next_state.get("progress")
         old_progress = prev_state.get("progress")
-        print(f"  task-updated: progress {old_progress} -> {new_progress}")
         if new_progress != 1 or old_progress == 1:
-            print(f"  task-updated: not a completion event — skipping")
             return
 
-        # Get task name and job ID — try multiple locations in payload
-        task_name = (next_state.get("name") or
-                     prev_state.get("name") or
-                     (event.get("task") or {}).get("name"))
-        job_id    = ((next_state.get("job") or {}).get("id") or
-                     (event.get("job") or {}).get("id") or
-                     (event.get("task") or {}).get("jobId"))
+        # Payload only includes task ID and job ID — need to look up task name
+        task_id = (event.get("task") or {}).get("id")
+        job_id  = (event.get("job") or {}).get("id")
 
-        print(f"  task-updated: task_name={task_name}, job_id={job_id}")
+        if not task_id or not job_id:
+            print(f"  task-updated: missing task ID or job ID — skipping")
+            return
+
+        # Look up the task to get its name
+        try:
+            task_resp = jobtread_query({
+                "task": {
+                    "$": {"id": task_id},
+                    "id": {}, "name": {}, "isToDo": {}, "progress": {}
+                }
+            })
+            task_obj  = task_resp.get("task") or {}
+            task_name = task_obj.get("name")
+            is_todo   = task_obj.get("isToDo")
+        except Exception as e:
+            print(f"  task-updated: could not fetch task {task_id}: {e}")
+            return
+
+        if not task_name or not is_todo:
+            return  # Not a to-do or couldn't get name — ignore silently
+
+        print(f"  task-updated: '{task_name}' completed on job {job_id}")
 
         if not task_name or not job_id:
             print(f"  task-updated: missing task name or job ID — skipping")
