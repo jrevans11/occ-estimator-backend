@@ -1734,6 +1734,60 @@ def process_document_updated(payload):
         traceback.print_exc()
 
 
+def process_job_created(payload):
+    """
+    Fired when any job is created in JobTread — whether manually, via form, or API.
+    Creates the new-lead to-do chain if:
+    - Job type is in AUTOMATION_ENABLED_JOB_TYPES
+    - Status is "New Lead"
+    - No to-dos already exist on the job (prevents duplicates from form submissions)
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+        event = data.get("createdEvent") or {}
+        job_id = (event.get("job") or {}).get("id")
+
+        if not job_id:
+            print("  job-created: no job ID — skipping")
+            return
+
+        print(f"  job-created: job {job_id}")
+
+        # Fetch job details
+        job_info = get_job_info(job_id)
+        job_type, current_status = get_job_type_and_status(job_info)
+
+        if not job_type:
+            print("  job-created: could not determine job type — skipping")
+            return
+
+        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+            print(f"  job-created: {job_type} not in automation scope — skipping")
+            return
+
+        if current_status != "New Lead":
+            print(f"  job-created: status is '{current_status}', not 'New Lead' — skipping")
+            return
+
+        # Check if to-dos already exist (form submissions create them before this fires)
+        existing_todos = [
+            t for t in (job_info.get("tasks") or {}).get("nodes", [])
+            if t.get("isToDo")
+        ]
+        if existing_todos:
+            print(f"  job-created: {len(existing_todos)} to-dos already exist — skipping")
+            return
+
+        # Create the new-lead to-do chain
+        print(f"  job-created: creating to-do chain for {job_type}")
+        create_new_lead_todos(job_id, job_type)
+
+    except Exception as e:
+        import traceback
+        print(f"process_job_created error: {e}")
+        traceback.print_exc()
+
+
 def process_job_updated(payload):
     """
     Fired when any job field is updated in JobTread.
@@ -2446,6 +2500,8 @@ class Handler(BaseHTTPRequestHandler):
                 process_task_updated(body)
             elif path == "/jobtread-document-updated":
                 process_document_updated(body)
+            elif path == "/jobtread-job-created":
+                process_job_created(body)
             else:
                 # Default = closing repairs Wufoo form
                 self._process(body)
