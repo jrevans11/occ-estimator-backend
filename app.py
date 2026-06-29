@@ -1534,19 +1534,31 @@ def process_task_updated(payload):
         next_state = event_data.get("next") or {}
         prev_state = event_data.get("previous") or {}
 
-        # Only act when progress changes to 1 (complete)
+        # ── Fast pre-filters (no API call needed) ────────────────────────────
+        # 1. Must be a completion event (progress → 1)
         new_progress = next_state.get("progress")
         old_progress = prev_state.get("progress")
         if new_progress != 1 or old_progress == 1:
             return
 
-        # Payload only includes task ID and job ID — need to look up task name
+        # 2. Must have a task ID and job ID in payload
         task_id = (event.get("task") or {}).get("id")
         job_id  = (event.get("job") or {}).get("id")
-
         if not task_id or not job_id:
-            print(f"  task-updated: missing task ID or job ID — skipping")
+            return  # Not a job task — ignore silently
+
+        # 3. Must belong to our organization
+        org_id = (event.get("organization") or {}).get("id")
+        if org_id and org_id != JOBTREAD_ORG:
             return
+
+        # 4. Must belong to an account (filters out internal/admin tasks)
+        if not event.get("account"):
+            return
+        # ─────────────────────────────────────────────────────────────────────
+
+        # Payload only includes task ID — look up task name via API
+        # (only reaches here if all pre-filters pass)
 
         # Look up the task to get its name
         try:
