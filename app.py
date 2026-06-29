@@ -895,6 +895,45 @@ CLOSING_REPAIR_STATUS_FIELD = "22PFPSefyzSp"   # Closing Repairs Status
 TERMINAL_STATUSES = {"Closed Won", "Closed Lost"}
 LONG_TERM_STATUS  = "Long Term Follow Up"
 
+# ── Pipeline order ───────────────────────────────────────────────────────────
+# Used to determine if a status change is forward or backward in the pipeline.
+# Only forward moves trigger to-do syncing.
+PIPELINE_ORDER = [
+    "New Lead",
+    "Appointment Set",
+    "Estimating",
+    "Sent",
+    "Sent 1st Follow Up",
+    "Sent 2nd Follow Up",
+    "Sent Final Follow UP",
+    "Revising",
+    "Closed Won",
+    "Long Term Follow Up",
+    "Closed Lost",
+]
+
+def is_forward_move(from_status, to_status):
+    """Return True only if to_status is ahead of from_status in the pipeline."""
+    try:
+        return PIPELINE_ORDER.index(to_status) > PIPELINE_ORDER.index(from_status)
+    except ValueError:
+        return False  # Unknown status — don't act
+
+# ── To-do ↔ status mapping ────────────────────────────────────────────────────
+# Maps to-do name → status to set when that to-do is checked off
+TODO_TO_STATUS = {
+    "📅 Schedule site visit":        "Appointment Set",
+    "📝 Build estimate":             "Estimating",
+    "📤 Send estimate to customer":  "Sent",
+}
+
+# Maps status → to-do name to check off when that status is set by dragging
+STATUS_TO_TODO = {
+    "Appointment Set": "📅 Schedule site visit",
+    "Estimating":      "📝 Build estimate",
+    "Sent":            "📤 Send estimate to customer",
+}
+
 # Names used to identify follow-up to-dos (used for deletion)
 FOLLOWUP_TODO_NAMES = {
     "📧 Follow-up email #1 — check in on estimate",
@@ -1403,6 +1442,26 @@ def process_send_followups():
             print(f"  Job {job_id}: Day {days_since} follow-up sent to {first_name}")
             sent_count += 1
 
+            # Flip status to match the follow-up stage
+            followup_status_map = {
+                3:  "Sent 1st Follow Up",
+                7:  "Sent 2nd Follow Up",
+                14: "Sent Final Follow UP",
+            }
+            # Re-fetch current status to check it's still appropriate before flipping
+            current_job_info = get_job_info(job_id)
+            _, current_job_status = get_job_type_and_status(current_job_info)
+            target_followup_status = followup_status_map.get(days_since)
+            job_type_for_status = None
+            for cfv in (current_job_info.get("customFieldValues") or {}).get("nodes", []):
+                if (cfv.get("customField") or {}).get("name") == "Job Type":
+                    job_type_for_status = cfv.get("value")
+                    break
+            if (target_followup_status and job_type_for_status and
+                    current_job_status not in TERMINAL_STATUSES and
+                    current_job_status != LONG_TERM_STATUS):
+                set_job_status(job_id, job_type_for_status, target_followup_status)
+
             # Mark the matching email follow-up to-do as complete
             email_todo_names = {
                 3:  "📧 Follow-up email #1 — check in on estimate",
@@ -1436,6 +1495,187 @@ def process_send_followups():
     return sent_count
 
 
+def complete_todo_by_name(job_info, todo_name):
+    """Find a to-do by name on a job and mark it complete if not already done."""
+    tasks = (job_info.get("tasks") or {}).get("nodes", [])
+    for task in tasks:
+        if task.get("name") == todo_name and task.get("isToDo") and task.get("progress") != 1:
+            try:
+                jobtread_query({
+                    "updateTask": {
+                        "$": {
+                            "id": task["id"],
+                            "progress": 1,
+                            "notify": False,
+                        }
+                    }
+                })
+                print(f"  Checked off to-do: {todo_name}")
+                return True
+            except Exception as e:
+                print(f"  Could not check off to-do '{todo_name}': {e}")
+    return False
+
+
+def process_task_updated(payload):
+    """
+    Fired when any task is updated in JobTread.
+    If one of our named to-dos is checked off, flip the job status forward.
+    Safeguards:
+    - Only act on our specific to-do names
+    - Only act if job type is in automation scope
+    - Only flip status if it would move forward in the pipeline
+    - Only flip if not already at or past the target status
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+        event = data.get("createdEvent") or {}
+        event_data = event.get("data") or {}
+        next_state = event_data.get("next") or {}
+        prev_state = event_data.get("previous") or {}
+
+        # Only act when progress changes to 1 (complete)
+        new_progress = next_state.get("progress")
+        old_progress = prev_state.get("progress")
+        if new_progress != 1 or old_progress == 1:
+            return
+
+        # Get task name and job ID
+        task_name = next_state.get("name") or (event.get("task") or {}).get("name")
+        task_id   = next_state.get("id") or (event.get("task") or {}).get("id")
+        job_id    = (next_state.get("job") or {}).get("id") or (event.get("job") or {}).get("id")
+
+        if not task_name or not job_id:
+            print(f"  task-updated: missing task name or job ID — skipping")
+            return
+
+        # Only act on our named to-dos
+        target_status = TODO_TO_STATUS.get(task_name)
+        if not target_status:
+            return  # Not one of our trigger to-dos — ignore silently
+
+        print(f"  task-updated: '{task_name}' completed on job {job_id} → target status '{target_status}'")
+
+        job_info = get_job_info(job_id)
+        job_type, current_status = get_job_type_and_status(job_info)
+
+        if not job_type:
+            print("  task-updated: could not determine job type — skipping")
+            return
+
+        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+            print(f"  task-updated: {job_type} not in automation scope — skipping")
+            return
+
+        if not current_status:
+            print("  task-updated: no current status found — skipping")
+            return
+
+        # Only flip if it's a forward move
+        if not is_forward_move(current_status, target_status):
+            print(f"  task-updated: {current_status} → {target_status} is not a forward move — skipping")
+            return
+
+        set_job_status(job_id, job_type, target_status)
+
+    except Exception as e:
+        import traceback
+        print(f"process_task_updated error: {e}")
+        traceback.print_exc()
+
+
+def process_document_updated(payload):
+    """
+    Fired when any document is updated in JobTread.
+    If a customerOrder (estimate) moves from pending → approved, flip job to Closed Won.
+    Safeguards:
+    - Only act on pending → approved transitions
+    - Only act on customerOrder type with includeInBudget = true
+    - Skip if job is already Closed Won, Closed Lost, or Long Term Follow Up
+    - Skip if job type not in automation scope
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+        event = data.get("createdEvent") or {}
+        event_data = event.get("data") or {}
+        next_state = event_data.get("next") or {}
+        prev_state = event_data.get("previous") or {}
+
+        # Only act on pending → approved
+        new_status = next_state.get("status")
+        old_status = prev_state.get("status")
+        print(f"  doc-updated: status {old_status} → {new_status}")
+
+        if old_status != "pending" or new_status != "approved":
+            print("  Not a pending→approved transition — skipping")
+            return
+
+        # Get document and job info
+        doc = event.get("document") or {}
+        doc_type = next_state.get("type") or doc.get("type")
+        include_in_budget = next_state.get("includeInBudget")
+        job_id = (doc.get("job") or {}).get("id") or (event.get("job") or {}).get("id")
+
+        if not job_id:
+            # Try fetching document to get job ID
+            doc_id = doc.get("id") or next_state.get("id")
+            if doc_id:
+                try:
+                    doc_resp = jobtread_query({
+                        "document": {
+                            "$": {"id": doc_id},
+                            "id": {}, "type": {}, "includeInBudget": {},
+                            "job": {"id": {}}
+                        }
+                    })
+                    doc_obj = doc_resp.get("document") or {}
+                    doc_type = doc_obj.get("type")
+                    include_in_budget = doc_obj.get("includeInBudget")
+                    job_id = (doc_obj.get("job") or {}).get("id")
+                except Exception as e:
+                    print(f"  Could not fetch document: {e}")
+
+        if not job_id:
+            print("  doc-updated: no job ID found — skipping")
+            return
+
+        if doc_type != "customerOrder":
+            print(f"  doc-updated: type={doc_type}, not an estimate — skipping")
+            return
+
+        if include_in_budget is False:
+            print("  doc-updated: not included in budget — skipping")
+            return
+
+        print(f"  doc-updated: estimate approved on job {job_id} — flipping to Closed Won")
+
+        job_info = get_job_info(job_id)
+        job_type, current_status = get_job_type_and_status(job_info)
+
+        if not job_type:
+            print("  doc-updated: could not determine job type — skipping")
+            return
+
+        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+            print(f"  doc-updated: {job_type} not in automation scope — skipping")
+            return
+
+        # Skip if already in a terminal state
+        if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
+            print(f"  doc-updated: job already at '{current_status}' — skipping")
+            return
+
+        # Flip to Closed Won and clean up follow-up to-dos
+        set_job_status(job_id, job_type, "Closed Won")
+        deleted = delete_followup_todos(job_info)
+        print(f"  doc-updated: Closed Won set, deleted {deleted} follow-up to-dos")
+
+    except Exception as e:
+        import traceback
+        print(f"process_document_updated error: {e}")
+        traceback.print_exc()
+
+
 def process_job_updated(payload):
     """
     Fired when any job field is updated in JobTread.
@@ -1466,6 +1706,18 @@ def process_job_updated(payload):
             print(f"  {job_type} not in automation scope — skipping")
             return
 
+        # Get previous status from payload to check direction
+        event_data = (event.get("data") or {})
+        prev_custom = (event_data.get("previous") or {}).get("custom") or {}
+        next_custom = (event_data.get("next") or {}).get("custom") or {}
+
+        # Find which status field changed
+        prev_status = None
+        for field_name in ("Home Repairs Status", "Closing Repairs Status"):
+            if field_name in next_custom:
+                prev_status = prev_custom.get(field_name)
+                break
+
         if current_status in TERMINAL_STATUSES:
             # Clean up all open follow-up to-dos
             deleted = delete_followup_todos(job_info)
@@ -1476,6 +1728,12 @@ def process_job_updated(payload):
             deleted = delete_followup_todos(job_info)
             print(f"  Long Term Follow Up: deleted {deleted} follow-up to-dos")
             create_longterm_todo(job_id, job_type)
+
+        # Sync to-do if status moved forward via drag (and we have a mapping for it)
+        if prev_status and is_forward_move(prev_status, current_status):
+            todo_to_check = STATUS_TO_TODO.get(current_status)
+            if todo_to_check:
+                complete_todo_by_name(job_info, todo_to_check)
 
     except Exception as e:
         import traceback
@@ -2121,6 +2379,10 @@ class Handler(BaseHTTPRequestHandler):
                 process_document_sent(body)
             elif path == "/jobtread-job-updated":
                 process_job_updated(body)
+            elif path == "/jobtread-task-updated":
+                process_task_updated(body)
+            elif path == "/jobtread-document-updated":
+                process_document_updated(body)
             else:
                 # Default = closing repairs Wufoo form
                 self._process(body)
