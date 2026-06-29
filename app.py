@@ -1553,36 +1553,25 @@ def process_task_updated(payload):
         has_account = bool(event.get("account"))
         changed_by  = (event.get("createdByUser") or {}).get("id", "unknown")
 
-        # Log every event so we can identify patterns
-        print(f"  task-filter: task={task_id} job={job_id} progress={old_progress}->{new_progress} by={changed_by} account={has_account}")
-
         # 1. Must be a completion event (progress → 1)
         if new_progress != 1 or old_progress == 1:
-            print(f"  task-filter: dropped — not a completion")
             return
 
         # 2. Must have a task ID and job ID
         if not task_id or not job_id:
-            print(f"  task-filter: dropped — no task or job ID")
             return
 
         # 3. Must belong to our organization
         if org_id and org_id != JOBTREAD_ORG:
-            print(f"  task-filter: dropped — wrong org {org_id}")
             return
 
         # 4. Must belong to an account
         if not has_account:
-            print(f"  task-filter: dropped — no account")
             return
 
         # 5. Must be completed by someone in our automation user set
-        #    (filters out Emily, subcontractors, and other production users)
         if changed_by not in AUTOMATION_USER_IDS:
-            print(f"  task-filter: dropped — user {changed_by} not in automation scope")
             return
-
-        print(f"  task-filter: PASSED — looking up task name")
         # ─────────────────────────────────────────────────────────────────────
 
         # Payload only includes task ID — look up task name via API
