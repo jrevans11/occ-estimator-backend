@@ -1182,12 +1182,31 @@ def check_for_customer_reply_and_pause(job_id, sent_date=None):
         if not sent_date:
             return False  # No estimate-sent marker — nothing to pause against
 
-        already_paused = any(PAUSE_LOGGED_MARKER in (c.get("message") or "") for c in comments)
+        # Find the precise timestamp of the sent-marker comment so we only
+        # treat comments AFTER it as a reply. Using only the date (not the
+        # exact moment) would wrongly catch stale comments from earlier in
+        # the same day — e.g. a prior test reply, or activity logged before
+        # this particular estimate was sent.
+        sent_marker_at = None
+        for c in comments:
+            if "[OCC-AUTO] Estimate sent on" in (c.get("message") or ""):
+                sent_marker_at = c.get("createdAt")
+                # Keep scanning — if the chain was sent more than once
+                # (re-send), use the MOST RECENT sent marker.
+        if not sent_marker_at:
+            return False  # Marker date parsed but exact comment not found — be safe and skip
+
+        already_paused = any(
+            PAUSE_LOGGED_MARKER in (c.get("message") or "") and c.get("createdAt", "") > sent_marker_at
+            for c in comments
+        )
         if already_paused:
-            return True  # Already paused — treat as "don't send", but don't repeat the action
+            return True  # Already paused since this send — treat as "don't send", don't repeat
 
         reply_found = False
         for c in comments:
+            if c.get("createdAt", "") <= sent_marker_at:
+                continue  # comment predates this estimate send — stale, ignore
             msg = c.get("message") or ""
             if "[OCC-AUTO]" in msg:
                 continue  # our own automated comments don't count as a reply
