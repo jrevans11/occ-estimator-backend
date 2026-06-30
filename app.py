@@ -407,8 +407,17 @@ def download_file(url):
 
 # ── Claude ────────────────────────────────────────────────────────────────────
 
-def call_claude(addendum_text, inspection_content, client_name, client_phone, client_email, address, notes):
-    """Build Claude content and call API. Returns parsed estimate dict."""
+def call_claude(addendum_text, inspection_pdf_bytes, client_name, client_phone, client_email, address, notes):
+    """
+    Build Claude content and call API. Returns parsed estimate dict.
+
+    The repair addendum is sent as extracted text (it's reliably a clean,
+    text-based form). The inspection report is sent as a native PDF document
+    block instead of pypdf-extracted text — inspection reports are often
+    image-heavy with handwritten annotations circling/marking specific issues,
+    which a text-only extraction would miss entirely. Native PDF mode lets
+    Claude see the actual pages, photos, and handwriting directly.
+    """
     content = []
 
     intro = f"""Generate a closing repairs estimate for Owners Choice Construction.
@@ -419,15 +428,37 @@ Client email: {client_email}
 Property address: {address}
 {f"Realtor notes: {notes}" if notes else ""}
 
-Process the repair addendum first to identify all requested items, then cross-reference with the inspection report content to write accurate scope descriptions and calibrate pricing based on described severity.
+Process the repair addendum first to identify all requested items, then cross-reference with the inspection report (provided as a PDF below — read both the printed text and any handwritten notes, circles, arrows, or markups on the pages) to write accurate scope descriptions and calibrate pricing based on described severity.
 """
     content.append({"type": "text", "text": intro})
 
     if addendum_text:
         content.append({"type": "text", "text": f"\n=== REPAIR ADDENDUM ===\n{addendum_text[:20000]}"})
 
-    if inspection_content:
-        content.append({"type": "text", "text": f"\n=== INSPECTION REPORT (targeted sections) ===\n{inspection_content}"})
+    if inspection_pdf_bytes:
+        try:
+            from pypdf import PdfReader
+            page_count = len(PdfReader(io.BytesIO(inspection_pdf_bytes)).pages)
+            if page_count > 100:
+                raise ValueError(
+                    f"Inspection report has {page_count} pages — Claude's PDF support "
+                    f"caps at 100 pages per document. Split the file and try again."
+                )
+        except ValueError:
+            raise
+        except Exception as e:
+            print(f"  Could not pre-check inspection PDF page count: {e}")
+
+        inspection_b64 = base64.b64encode(inspection_pdf_bytes).decode("utf-8")
+        content.append({"type": "text", "text": "\n=== INSPECTION REPORT (PDF below — read text, photos, and handwritten annotations) ==="})
+        content.append({
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": inspection_b64
+            }
+        })
 
     content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
 
@@ -2220,8 +2251,8 @@ def process_sales_tool_closing_estimate(body):
     print(f"  sales-tool-closing-estimate: starting AI estimate for job {job_id}")
 
     try:
-        addendum_text    = ""
-        inspection_pages = []
+        addendum_text       = ""
+        inspection_pdf_bytes = b""
 
         if addendum_url:
             print("  Downloading repair addendum...")
@@ -2232,18 +2263,15 @@ def process_sales_tool_closing_estimate(body):
 
         if inspection_url:
             print("  Downloading inspection report...")
-            inspection_bytes = download_file(inspection_url)
-            inspection_pages = extract_pdf_text(inspection_bytes)
-            print(f"  Inspection: {len(inspection_pages)} pages extracted")
+            inspection_pdf_bytes = download_file(inspection_url)
+            print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
 
-        if not addendum_text and not inspection_pages:
-            raise Exception("Files provided but no text could be extracted from either PDF")
-
-        inspection_content = smart_extract_inspection_content(addendum_text, inspection_pages)
+        if not addendum_text and not inspection_pdf_bytes:
+            raise Exception("Files provided but neither could be downloaded")
 
         print("  Calling Claude...")
         estimate = call_claude(
-            addendum_text, inspection_content,
+            addendum_text, inspection_pdf_bytes,
             client_name, client_phone, client_email, address, notes_text
         )
         total = estimate.get("total", 0)
@@ -3012,8 +3040,8 @@ class Handler(BaseHTTPRequestHandler):
 
             # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ──
             try:
-                addendum_text    = ""
-                inspection_pages = []
+                addendum_text        = ""
+                inspection_pdf_bytes = b""
 
                 if addendum_url:
                     print("  Downloading repair addendum...")
@@ -3024,18 +3052,15 @@ class Handler(BaseHTTPRequestHandler):
 
                 if inspection_url:
                     print("  Downloading inspection report...")
-                    inspection_bytes = download_file(inspection_url)
-                    inspection_pages = extract_pdf_text(inspection_bytes)
-                    print(f"  Inspection: {len(inspection_pages)} pages extracted")
+                    inspection_pdf_bytes = download_file(inspection_url)
+                    print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
 
-                if not addendum_text and not inspection_pages:
-                    raise Exception("Files attached but no text could be extracted from either PDF")
-
-                inspection_content = smart_extract_inspection_content(addendum_text, inspection_pages)
+                if not addendum_text and not inspection_pdf_bytes:
+                    raise Exception("Files attached but neither could be downloaded")
 
                 print("  Calling Claude...")
                 estimate = call_claude(
-                    addendum_text, inspection_content,
+                    addendum_text, inspection_pdf_bytes,
                     client_name, client_phone, client_email, address, notes_text
                 )
                 total = estimate.get("total", 0)
