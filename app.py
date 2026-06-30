@@ -1258,6 +1258,7 @@ def process_comment_created(payload):
 
 
 
+def delete_followup_todos(job_info):
     """Delete any open follow-up to-dos on a job."""
     deleted = 0
     for task in (job_info.get("tasks") or {}).get("nodes", []):
