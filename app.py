@@ -1002,7 +1002,59 @@ FOLLOWUP_TODO_NAMES = {
     "📧 Follow-up email #3 — final touch",
     "🚨 Final decision call — win or move on",
     "📅 Long term follow-up — check back in",
+    "💬 Customer replied — check in personally",
 }
+
+# ── Follow-up domino chain (post-estimate) ───────────────────────────────────
+# Same domino pattern as TODO_CHAIN: only the first step is created when the
+# estimate is sent. Each subsequent step is created when the previous one is
+# checked off. Keeps Action Items clean — only the current step is visible.
+# (days_since is used by the cron runner to know which day's email/message to send)
+FOLLOWUP_CHAIN = [
+    {
+        "name":       "📧 Follow-up email #1 — check in on estimate",
+        "days_since": 3,
+        "next":       "📞 Follow-up call #1 — any questions?",
+        "offset":     5,
+    },
+    {
+        "name":       "📞 Follow-up call #1 — any questions?",
+        "days_since": None,  # manual step, not auto-emailed
+        "next":       "📧 Follow-up email #2 — still interested?",
+        "offset":     7,
+    },
+    {
+        "name":       "📧 Follow-up email #2 — still interested?",
+        "days_since": 7,
+        "next":       "📧 Follow-up email #3 — final touch",
+        "offset":     14,
+    },
+    {
+        "name":       "📧 Follow-up email #3 — final touch",
+        "days_since": 14,
+        "next":       "🚨 Final decision call — win or move on",
+        "offset":     14,
+    },
+    {
+        "name":       "🚨 Final decision call — win or move on",
+        "days_since": None,  # manual step, not auto-emailed
+        "next":       None,
+        "offset":     0,
+    },
+]
+
+FOLLOWUP_TO_NEXT   = {s["name"]: s["next"]   for s in FOLLOWUP_CHAIN if s["next"]}
+FOLLOWUP_TO_OFFSET = {s["name"]: s["offset"] for s in FOLLOWUP_CHAIN if s["next"]}
+
+# The to-do created when a customer reply is detected mid-chain.
+# Replaces whatever follow-up to-do would have fired next — automation stands
+# down and hands the conversation back to a human.
+CUSTOMER_REPLY_TODO = "💬 Customer replied — check in personally"
+
+# Marker used to detect that automation already paused on this job, so we
+# don't keep creating duplicate "customer replied" to-dos on every check.
+PAUSE_LOGGED_MARKER = "[OCC-AUTO] Automation paused — customer replied"
+
 
 
 def get_job_info(job_id):
@@ -1065,7 +1117,147 @@ def get_job_type_and_status(job_info):
     return job_type, status
 
 
-def delete_followup_todos(job_info):
+def has_pending_reply_pause(job_id):
+    """
+    Quick check: has automation already been paused on this job due to a
+    customer reply? Prevents duplicate pause to-dos/comments on repeated
+    triggers (webhook + cron both calling check_for_customer_reply_and_pause).
+    """
+    try:
+        resp = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "comments": {
+                    "$": {"size": 10, "sortBy": [{"field": "createdAt", "order": "desc"}]},
+                    "nodes": {"message": {}}
+                }
+            }
+        })
+        comments = (resp.get("job") or {}).get("comments", {}).get("nodes", [])
+        return any(PAUSE_LOGGED_MARKER in (c.get("message") or "") for c in comments)
+    except Exception as e:
+        print(f"  has_pending_reply_pause check failed: {e}")
+        return False
+
+
+def check_for_customer_reply_and_pause(job_id, sent_date=None):
+    """
+    Shared logic: if the customer has replied (a comment on this job that
+    came in via email, or from someone who isn't our automation user) since
+    the estimate was sent, stop the canned follow-up chain and hand the
+    conversation back to a human.
+
+    Called from two places:
+    - process_comment_created: fires immediately when the reply lands
+    - process_send_followups: runs as a backup check before any scheduled send
+
+    Returns True if a pause was applied (caller should not proceed with a
+    scheduled automated send), False otherwise.
+    """
+    try:
+        job_info = get_job_info(job_id)
+        job_type, current_status = get_job_type_and_status(job_info)
+
+        if not job_type or job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+            return False
+        if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
+            return False
+
+        resp = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "comments": {
+                    "$": {"size": 30, "sortBy": [{"field": "createdAt", "order": "asc"}]},
+                    "nodes": {
+                        "message": {}, "createdAt": {}, "isFromEmail": {},
+                        "createdByUser": {"id": {}}
+                    }
+                }
+            }
+        })
+        comments = (resp.get("job") or {}).get("comments", {}).get("nodes", [])
+
+        if sent_date is None:
+            sent_date = parse_sent_date(comments)
+        if not sent_date:
+            return False  # No estimate-sent marker — nothing to pause against
+
+        already_paused = any(PAUSE_LOGGED_MARKER in (c.get("message") or "") for c in comments)
+        if already_paused:
+            return True  # Already paused — treat as "don't send", but don't repeat the action
+
+        reply_found = False
+        for c in comments:
+            msg = c.get("message") or ""
+            if "[OCC-AUTO]" in msg:
+                continue  # our own automated comments don't count as a reply
+            created_by = (c.get("createdByUser") or {}).get("id")
+            if c.get("isFromEmail") or (created_by and created_by not in AUTOMATION_USER_IDS):
+                reply_found = True
+                break
+
+        if not reply_found:
+            return False
+
+        print(f"  Customer reply detected on job {job_id} — pausing automated follow-ups")
+        deleted = delete_followup_todos(job_info)
+        print(f"  Deleted {deleted} remaining follow-up to-dos")
+        create_single_todo(job_id, job_type, CUSTOMER_REPLY_TODO, due_offset=0)
+
+        try:
+            from datetime import date as _date
+            jobtread_query({
+                "createComment": {
+                    "$": {
+                        "targetType": "job",
+                        "targetId": job_id,
+                        "message": f"{PAUSE_LOGGED_MARKER} on {_date.today().isoformat()}. "
+                                   f"Switched to manual check-in to-do.",
+                    },
+                    "createdComment": {"id": {}}
+                }
+            })
+        except Exception as ce:
+            print(f"  Could not log pause comment: {ce}")
+
+        return True
+
+    except Exception as e:
+        import traceback
+        print(f"check_for_customer_reply_and_pause error: {e}")
+        traceback.print_exc()
+        return False
+
+
+def process_comment_created(payload):
+    """
+    Fired when any comment is created in JobTread (commentCreated webhook).
+    If it lands on a job that's mid follow-up-chain and looks like a genuine
+    customer reply, pause the canned automation immediately rather than
+    waiting for the next cron run.
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+        event = data.get("createdEvent") or {}
+        comment = event.get("comment") or {}
+        job_id = (comment.get("job") or {}).get("id") or (event.get("job") or {}).get("id")
+
+        if not job_id:
+            return  # Comment not attached to a job — nothing to do
+
+        message = comment.get("message") or ""
+        if "[OCC-AUTO]" in message:
+            return  # Ignore our own automated comments
+
+        check_for_customer_reply_and_pause(job_id)
+
+    except Exception as e:
+        import traceback
+        print(f"process_comment_created error: {e}")
+        traceback.print_exc()
+
+
+
     """Delete any open follow-up to-dos on a job."""
     deleted = 0
     for task in (job_info.get("tasks") or {}).get("nodes", []):
@@ -1082,41 +1274,12 @@ def delete_followup_todos(job_info):
 
 
 def create_followup_todos(job_id, job_type):
-    """Create the post-estimate follow-up to-do chain assigned by job type."""
-    from datetime import date, timedelta
-
-    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
-
-    def offset(n):
-        return (date.today() + timedelta(days=n)).isoformat()
-
-    tasks = [
-        ("📧 Follow-up email #1 — check in on estimate", 3),
-        ("📞 Follow-up call #1 — any questions?",         5),
-        ("📧 Follow-up email #2 — still interested?",     7),
-        ("📧 Follow-up email #3 — final touch",          14),
-        ("🚨 Final decision call — win or move on",       14),
-    ]
-
-    for name, days in tasks:
-        due = offset(days)
-        try:
-            jobtread_query({
-                "createTask": {
-                    "$": {
-                        "name": name,
-                        "isToDo": True,
-                        "targetType": "job",
-                        "targetId": job_id,
-                        "startDate": due,
-                        "endDate": due,
-                        "assignees": [{"membershipId": assignee_id}],
-                    }
-                }
-            })
-            print(f"  Follow-up to-do created: {name} (due {due})")
-        except Exception as e:
-            print(f"  Follow-up to-do failed '{name}': {e}")
+    """
+    Create ONLY the first follow-up to-do after an estimate is sent.
+    Each subsequent step is created when the previous one is checked off
+    (domino effect — see FOLLOWUP_CHAIN / process_task_updated).
+    """
+    create_single_todo(job_id, job_type, FOLLOWUP_CHAIN[0]["name"], due_offset=3)
 
 
 def create_longterm_todo(job_id, job_type):
@@ -1471,6 +1634,12 @@ def process_send_followups():
             print(f"  Job {job_id}: Day {days_since} follow-up already sent — skipping")
             continue
 
+        # Backup check: if a customer reply slipped past the commentCreated
+        # webhook (or it never fired), catch it here before sending anything.
+        if check_for_customer_reply_and_pause(job_id, sent_date=sent_date):
+            print(f"  Job {job_id}: automation paused on customer reply — skipping scheduled send")
+            continue
+
         # Get the pending estimate document and recipient
         docs = (job.get("documents") or {}).get("nodes", [])
         recipient_id = None
@@ -1664,6 +1833,24 @@ def process_task_updated(payload):
             return
 
         is_closing = (job_type == "Closing Repair")
+
+        # ── Follow-up chain domino: manual steps only ─────────────────────────
+        # Email-sending steps (#1, #2, #3) are advanced by the cron runner itself
+        # right after it sends the email (see process_send_followups), since the
+        # next to-do's due date depends on the actual send date. Here we only
+        # need to handle the two manual steps (calls) being checked off by hand.
+        if task_name in FOLLOWUP_TO_NEXT and task_name not in (TODO_TO_NEXT_C if is_closing else TODO_TO_NEXT):
+            next_name = FOLLOWUP_TO_NEXT.get(task_name)
+            next_offset = FOLLOWUP_TO_OFFSET.get(task_name, 1)
+            if next_name:
+                # Don't resurrect the chain if automation already paused on a reply
+                if has_pending_reply_pause(job_id):
+                    print(f"  task-updated: '{task_name}' completed but automation is paused on this job — not creating '{next_name}'")
+                else:
+                    create_single_todo(job_id, job_type, next_name, due_offset=next_offset)
+                    print(f"  task-updated: follow-up chain advanced → '{next_name}'")
+            return
+        # ─────────────────────────────────────────────────────────────────────
 
         # Handle "Call customer" — no status flip, just chain the next to-do
         if task_name == "📞 Call customer — introduce & qualify":
@@ -2569,6 +2756,8 @@ class Handler(BaseHTTPRequestHandler):
                 process_document_updated(body)
             elif path == "/jobtread-job-created":
                 process_job_created(body)
+            elif path == "/jobtread-comment-created":
+                process_comment_created(body)
             else:
                 # Default = closing repairs Wufoo form
                 self._process(body)
