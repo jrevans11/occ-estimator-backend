@@ -431,32 +431,60 @@ Process the repair addendum first to identify all requested items, then cross-re
 
     content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
 
-    payload = json.dumps({
+    base_payload = {
         "model": "claude-sonnet-4-6",
-        "max_tokens": 4000,
+        "max_tokens": 8000,  # raised from 4000 — large repair lists were getting truncated mid-JSON
         "system": get_system_prompt(),
         "messages": [{"role": "user", "content": content}]
-    }).encode("utf-8")
+    }
 
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": "pdfs-2024-09-25"
-        },
-        method="POST"
+    last_error = None
+    for attempt in range(1, 4):  # up to 3 attempts before giving up
+        try:
+            payload = json.dumps(base_payload).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": ANTHROPIC_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "anthropic-beta": "pdfs-2024-09-25"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=120) as r:
+                result = json.loads(r.read().decode("utf-8"))
+
+            stop_reason = result.get("stop_reason")
+            raw = "".join(block.get("text", "") for block in result.get("content", []))
+
+            if stop_reason == "max_tokens":
+                # Response was cut off — guaranteed-broken JSON, don't even try to parse
+                raise ValueError(
+                    f"Claude response truncated by max_tokens (attempt {attempt}), "
+                    f"got {len(raw)} chars before cutoff"
+                )
+
+            match = re.search(r"\{[\s\S]*\}", raw)
+            if not match:
+                raise ValueError(f"No JSON object found in Claude response: {raw[:500]}")
+
+            return json.loads(match.group(0))
+
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = e
+            print(f"  call_claude attempt {attempt} failed: {e}")
+            if attempt < 3:
+                print(f"  Retrying ({attempt + 1}/3)...")
+                continue
+
+    # All attempts exhausted — fail loudly with enough detail to debug,
+    # rather than silently dropping the lead.
+    raise Exception(
+        f"call_claude failed after 3 attempts. Last error: {last_error}. "
+        f"This lead needs to be entered manually — check Render logs for the raw Claude output."
     )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        result = json.loads(r.read().decode("utf-8"))
-
-    raw = "".join(block.get("text", "") for block in result.get("content", []))
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if not match:
-        raise Exception(f"No JSON in Claude response: {raw[:500]}")
-    return json.loads(match.group(0))
 
 
 # ── JobTread ──────────────────────────────────────────────────────────────────
@@ -2153,18 +2181,131 @@ def create_job_full(cfg):
     return job_id
 
 
-def create_jobtread_job(estimate, notes_text, file_urls):
-    """Closing-repairs job creation (account name = property address, realtor = contact)."""
-    address = estimate.get("property_address", "")
-    street  = address.split(",")[0].strip() if "," in address else address
+def process_sales_tool_closing_estimate(body):
+    """
+    Fired by the sales-lead-tool (route.ts) after it creates a Closing Repair
+    job directly in JobTread. The job/account/contact/files already exist —
+    this endpoint only runs the AI estimate and attaches cost groups,
+    reusing the same logic as the Wufoo closing-repair flow.
+
+    Expects a JSON body: { job_id, client_name, client_phone, client_email,
+                            address, notes_text, addendum_url, inspection_url }
+
+    Fire-and-forget from the caller's perspective — route.ts does not wait
+    on this; the lead is already saved in JobTread regardless of outcome here.
+    """
+    try:
+        data = json.loads(body)
+    except Exception as e:
+        print(f"  sales-tool-closing-estimate: invalid JSON body: {e}")
+        return
+
+    job_id          = data.get("job_id")
+    client_name     = data.get("client_name", "")
+    client_phone    = data.get("client_phone", "")
+    client_email    = data.get("client_email", "")
+    address         = data.get("address", "")
+    notes_text      = data.get("notes_text", "")
+    addendum_url    = data.get("addendum_url", "")
+    inspection_url  = data.get("inspection_url", "")
+
+    if not job_id:
+        print("  sales-tool-closing-estimate: missing job_id — aborting")
+        return
+
+    if not addendum_url and not inspection_url:
+        print(f"  sales-tool-closing-estimate: job {job_id} has no addendum/inspection URL — nothing to estimate")
+        return
+
+    print(f"  sales-tool-closing-estimate: starting AI estimate for job {job_id}")
+
+    try:
+        addendum_text    = ""
+        inspection_pages = []
+
+        if addendum_url:
+            print("  Downloading repair addendum...")
+            addendum_bytes = download_file(addendum_url)
+            pages = extract_pdf_text(addendum_bytes)
+            addendum_text = "\n".join(text for _, text in pages)
+            print(f"  Addendum: {len(addendum_text)} chars extracted")
+
+        if inspection_url:
+            print("  Downloading inspection report...")
+            inspection_bytes = download_file(inspection_url)
+            inspection_pages = extract_pdf_text(inspection_bytes)
+            print(f"  Inspection: {len(inspection_pages)} pages extracted")
+
+        if not addendum_text and not inspection_pages:
+            raise Exception("Files provided but no text could be extracted from either PDF")
+
+        inspection_content = smart_extract_inspection_content(addendum_text, inspection_pages)
+
+        print("  Calling Claude...")
+        estimate = call_claude(
+            addendum_text, inspection_content,
+            client_name, client_phone, client_email, address, notes_text
+        )
+        total = estimate.get("total", 0)
+        print(f"  Estimate total: ${total:,.2f}")
+
+        added = add_cost_groups(job_id, estimate)
+        print(f"  {added} cost groups added to job {job_id}")
+
+    except Exception as e:
+        import traceback
+        print(f"  AI estimate failed for job {job_id}: {e}")
+        traceback.print_exc()
+        flag_failed_estimate(job_id, error=str(e))
+
+
+def flag_failed_estimate(job_id, error=""):
+    """
+    Called when the AI estimate step fails after the job/lead was already
+    created successfully. Surfaces the failure directly in JobTread so the
+    lead isn't silently lost — a to-do plus a comment with the error detail.
+    """
+    try:
+        create_single_todo(
+            job_id, job_type="Closing Repair",
+            name="🚨 Estimate generation failed — needs manual review",
+            due_offset=0
+        )
+    except Exception as e:
+        print(f"  Could not create failed-estimate to-do on job {job_id}: {e}")
+
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "message": f"[OCC-AUTO] AI estimate generation failed: {error[:500]}. "
+                               f"The lead, contact info, and uploaded files were saved successfully — "
+                               f"only the automatic cost estimate needs to be built manually.",
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+    except Exception as e:
+        print(f"  Could not log failed-estimate comment on job {job_id}: {e}")
+
+
+def create_jobtread_job(client_name, client_phone, client_email, address, notes_text, file_urls, estimate=None):
+    """
+    Closing-repairs job creation (account name = property address, realtor = contact).
+    estimate may be None — job/account/contact/files are created regardless;
+    cost groups are added only if/when an estimate is available.
+    """
+    street = address.split(",")[0].strip() if "," in address else address
     cfg = {
         "account_name":    address,
         "account_type":    "Closing Repair",
         "lead_source":     "Realtor",
         "referred_by":     None,
-        "contact_name":    estimate.get("client_name", "Unknown"),
-        "contact_email":   estimate.get("client_email", ""),
-        "contact_phone":   estimate.get("client_phone", ""),
+        "contact_name":    client_name or "Unknown",
+        "contact_email":   client_email or "",
+        "contact_phone":   client_phone or "",
         "contact_address": address,
         "location_address": address,
         "job_type":        "Closing Repair",
@@ -2174,7 +2315,7 @@ def create_jobtread_job(estimate, notes_text, file_urls):
         "projected_budget": None,
         "job_name":        street[:30],   # closing repairs keep the street name
         "notes_text":      notes_text,
-        "estimate":        estimate,
+        "estimate":        estimate,      # may be None — add_cost_groups handles that
         "file_urls":       file_urls,
         "dedup":           True,          # match on address; reuse + fix realtor primary contact
     }
@@ -2254,30 +2395,47 @@ def download_image_block(url):
 
 def _call_anthropic(content):
     """Send a content array to Claude and parse the JSON estimate. Shared by general calls."""
-    payload = json.dumps({
+    payload_base = {
         "model": "claude-sonnet-4-6",
-        "max_tokens": 4000,
+        "max_tokens": 8000,  # raised from 4000 — avoid truncated/invalid JSON on larger estimates
         "system": get_system_prompt(),
         "messages": [{"role": "user", "content": content}]
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "anthropic-beta": "pdfs-2024-09-25"
-        },
-        method="POST"
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        result = json.loads(r.read().decode("utf-8"))
-    raw = "".join(block.get("text", "") for block in result.get("content", []))
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if not match:
-        raise Exception(f"No JSON in Claude response: {raw[:500]}")
-    return json.loads(match.group(0))
+    }
+
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            payload = json.dumps(payload_base).encode("utf-8")
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": ANTHROPIC_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "anthropic-beta": "pdfs-2024-09-25"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=120) as r:
+                result = json.loads(r.read().decode("utf-8"))
+
+            if result.get("stop_reason") == "max_tokens":
+                raise ValueError(f"Claude response truncated by max_tokens (attempt {attempt})")
+
+            raw = "".join(block.get("text", "") for block in result.get("content", []))
+            match = re.search(r"\{[\s\S]*\}", raw)
+            if not match:
+                raise ValueError(f"No JSON in Claude response: {raw[:500]}")
+            return json.loads(match.group(0))
+
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = e
+            print(f"  _call_anthropic attempt {attempt} failed: {e}")
+            if attempt < 3:
+                continue
+
+    raise Exception(f"_call_anthropic failed after 3 attempts. Last error: {last_error}")
 
 
 def call_claude_general(form_label, client_name, client_phone, client_email,
@@ -2778,6 +2936,8 @@ class Handler(BaseHTTPRequestHandler):
                 process_job_created(body)
             elif path == "/jobtread-comment-created":
                 process_comment_created(body)
+            elif path == "/sales-tool-closing-estimate":
+                process_sales_tool_closing_estimate(body)
             else:
                 # Default = closing repairs Wufoo form
                 self._process(body)
@@ -2826,45 +2986,6 @@ class Handler(BaseHTTPRequestHandler):
                 non_neg_notes, extra_notes, inquiring_party
             )
 
-            # Download PDFs
-            addendum_text     = ""
-            inspection_pages  = []
-
-            if addendum_url:
-                print("  Downloading repair addendum...")
-                try:
-                    addendum_bytes = download_file(addendum_url)
-                    pages = extract_pdf_text(addendum_bytes)
-                    addendum_text = "\n".join(text for _, text in pages)
-                    print(f"  Addendum: {len(addendum_text)} chars extracted")
-                except Exception as e:
-                    print(f"  Addendum download failed: {e}")
-
-            if inspection_url:
-                print("  Downloading inspection report...")
-                try:
-                    inspection_bytes = download_file(inspection_url)
-                    inspection_pages = extract_pdf_text(inspection_bytes)
-                    print(f"  Inspection: {len(inspection_pages)} pages extracted")
-                except Exception as e:
-                    print(f"  Inspection download failed: {e}")
-
-            if not addendum_text and not inspection_pages:
-                print("  No usable content — aborting")
-                return
-
-            # Smart extraction: use addendum item numbers to target inspection pages
-            inspection_content = smart_extract_inspection_content(addendum_text, inspection_pages)
-
-            # Call Claude
-            print("  Calling Claude...")
-            estimate = call_claude(
-                addendum_text, inspection_content,
-                client_name, client_phone, client_email, address, notes_text
-            )
-            total = estimate.get("total", 0)
-            print(f"  Estimate total: ${total:,.2f}")
-
             # Build file list for JobTread attachment
             # Use Wufoo file URLs directly — JobTread fetches them
             file_urls = [
@@ -2874,9 +2995,61 @@ class Handler(BaseHTTPRequestHandler):
             if extra_file_url:
                 file_urls.append((extra_file_name or "Additional File", extra_file_url))
 
-            # Create job in JobTread
+            if not inspection_url and not addendum_url:
+                print("  No files attached — aborting (nothing to build a lead from)")
+                return
+
+            # ── Step 1: Create the job FIRST, with no estimate yet ────────────
+            # This guarantees the lead, contact info, and files are captured in
+            # JobTread no matter what happens next. The AI estimate is a
+            # best-effort enhancement, not a precondition for the lead existing.
             print("  Creating JobTread job...")
-            job_id = create_jobtread_job(estimate, notes_text, file_urls)
+            job_id = create_jobtread_job(
+                client_name, client_phone, client_email, address,
+                notes_text, file_urls, estimate=None
+            )
+            print(f"  Job created: {job_id}")
+
+            # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ──
+            try:
+                addendum_text    = ""
+                inspection_pages = []
+
+                if addendum_url:
+                    print("  Downloading repair addendum...")
+                    addendum_bytes = download_file(addendum_url)
+                    pages = extract_pdf_text(addendum_bytes)
+                    addendum_text = "\n".join(text for _, text in pages)
+                    print(f"  Addendum: {len(addendum_text)} chars extracted")
+
+                if inspection_url:
+                    print("  Downloading inspection report...")
+                    inspection_bytes = download_file(inspection_url)
+                    inspection_pages = extract_pdf_text(inspection_bytes)
+                    print(f"  Inspection: {len(inspection_pages)} pages extracted")
+
+                if not addendum_text and not inspection_pages:
+                    raise Exception("Files attached but no text could be extracted from either PDF")
+
+                inspection_content = smart_extract_inspection_content(addendum_text, inspection_pages)
+
+                print("  Calling Claude...")
+                estimate = call_claude(
+                    addendum_text, inspection_content,
+                    client_name, client_phone, client_email, address, notes_text
+                )
+                total = estimate.get("total", 0)
+                print(f"  Estimate total: ${total:,.2f}")
+
+                added = add_cost_groups(job_id, estimate)
+                print(f"  {added} cost groups added to job {job_id}")
+
+            except Exception as e:
+                import traceback
+                print(f"  AI estimate failed for job {job_id}: {e}")
+                traceback.print_exc()
+                flag_failed_estimate(job_id, error=str(e))
+
             print(f"  Done. JobTread job ID: {job_id}")
 
         except Exception as e:
