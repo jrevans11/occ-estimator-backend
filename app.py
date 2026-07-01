@@ -2287,7 +2287,111 @@ def process_sales_tool_closing_estimate(body):
         flag_failed_estimate(job_id, error=str(e))
 
 
-def flag_failed_estimate(job_id, error=""):
+def update_job_custom_fields(job_id, custom_field_values):
+    """Patch custom field values on an already-existing job (e.g. Projected Budget after the fact)."""
+    jobtread_query({
+        "updateJob": {
+            "$": {"id": job_id, "customFieldValues": custom_field_values},
+            "updatedJob": {"id": {}}
+        }
+    })
+
+
+def process_sales_tool_general_estimate(body):
+    """
+    Fired by the sales-lead-tool (route.ts) after it creates a Home Repair,
+    Remodel, or Pre-listing Repair job directly in JobTread, with photos
+    already attached. The job/account/contact/files already exist — this
+    endpoint runs the same best-effort AI estimate used by the Wufoo forms
+    (call_claude_general) and patches in cost groups + a projected budget.
+
+    Expects a JSON body: { job_id, job_type, client_name, client_phone,
+                            client_email, address, notes_text, description,
+                            photo_urls: [...] }
+
+    Fire-and-forget from the caller's perspective — route.ts does not wait
+    on this; the lead is already saved in JobTread regardless of outcome here.
+    """
+    try:
+        data = json.loads(body)
+    except Exception as e:
+        print(f"  sales-tool-general-estimate: invalid JSON body: {e}")
+        return
+
+    job_id       = data.get("job_id")
+    job_type     = data.get("job_type", "Home Repair")
+    client_name  = data.get("client_name", "")
+    client_phone = data.get("client_phone", "")
+    client_email = data.get("client_email", "")
+    address      = data.get("address", "")
+    notes_text   = data.get("notes_text", "")
+    description  = data.get("description", "")
+    photo_urls   = data.get("photo_urls") or []
+
+    if not job_id:
+        print("  sales-tool-general-estimate: missing job_id — aborting")
+        return
+
+    if not description and not photo_urls:
+        print(f"  sales-tool-general-estimate: job {job_id} has no description/photos — nothing to estimate")
+        return
+
+    form_label_map = {
+        "Home Repair":        "home repair",
+        "Remodel":            "remodel",
+        "Pre-listing Repair": "pre-listing repair",
+    }
+    form_label = form_label_map.get(job_type, "home repair")
+
+    print(f"  sales-tool-general-estimate: starting AI estimate for job {job_id} ({job_type})")
+
+    try:
+        estimate = call_claude_general(
+            form_label, client_name, client_phone, client_email,
+            address, description, notes_text, image_urls=photo_urls
+        )
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes_text)
+
+        if estimate:
+            total = estimate.get("total", 0) or 0
+            print(f"  Estimate total: ${total:,.2f} | consult={estimate.get('needs_consult')}")
+            added = add_cost_groups(job_id, estimate)
+            print(f"  {added} cost groups added to job {job_id}")
+        else:
+            print(f"  Needs consult — no cost groups generated for job {job_id}")
+
+        update_fields = {}
+        if projected:
+            update_fields["Projected Budget"] = projected
+        if gated_notes and gated_notes != notes_text:
+            # _apply_estimate_gate appended a "needs consult" note — surface it
+            # as a comment rather than silently rewriting the job description.
+            try:
+                jobtread_query({
+                    "createComment": {
+                        "$": {
+                            "targetType": "job",
+                            "targetId": job_id,
+                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
+                        },
+                        "createdComment": {"id": {}}
+                    }
+                })
+            except Exception as ce:
+                print(f"  Could not log consult-needed comment on job {job_id}: {ce}")
+
+        if update_fields:
+            update_job_custom_fields(job_id, update_fields)
+            print(f"  Updated job {job_id} custom fields: {update_fields}")
+
+    except Exception as e:
+        import traceback
+        print(f"  AI estimate failed for job {job_id}: {e}")
+        traceback.print_exc()
+        flag_failed_estimate(job_id, error=str(e), job_type=job_type)
+
+
+def flag_failed_estimate(job_id, error="", job_type="Closing Repair"):
     """
     Called when the AI estimate step fails after the job/lead was already
     created successfully. Surfaces the failure directly in JobTread so the
@@ -2295,7 +2399,7 @@ def flag_failed_estimate(job_id, error=""):
     """
     try:
         create_single_todo(
-            job_id, job_type="Closing Repair",
+            job_id, job_type=job_type,
             name="🚨 Estimate generation failed — needs manual review",
             due_offset=0
         )
@@ -2966,6 +3070,8 @@ class Handler(BaseHTTPRequestHandler):
                 process_comment_created(body)
             elif path == "/sales-tool-closing-estimate":
                 process_sales_tool_closing_estimate(body)
+            elif path == "/sales-tool-general-estimate":
+                process_sales_tool_general_estimate(body)
             else:
                 # Default = closing repairs Wufoo form
                 self._process(body)
