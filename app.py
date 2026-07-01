@@ -334,53 +334,6 @@ def extract_pdf_text(pdf_bytes):
         return []
 
 
-def extract_item_numbers(text):
-    """Extract inspection item numbers like 1.1, 2.3.4, Item 5, #12 etc."""
-    patterns = [
-        r'\b\d{1,2}\.\d{1,2}(?:\.\d{1,2})?\b',  # 1.1, 2.3, 3.4.1
-        r'(?:Item|#)\s*(\d+)',                     # Item 5, #12
-        r'\b([A-Z]\d+)\b',                         # A1, B2
-    ]
-    numbers = set()
-    for pattern in patterns:
-        numbers.update(re.findall(pattern, text))
-    return numbers
-
-
-def smart_extract_inspection_content(addendum_text, inspection_pages):
-    """
-    Use item numbers from the addendum to pull only relevant pages
-    from the inspection report. Falls back to full text if no item
-    numbers are found.
-    Returns a string of targeted inspection content.
-    """
-    item_numbers = extract_item_numbers(addendum_text)
-    print(f"  Found item numbers in addendum: {item_numbers}")
-
-    if not item_numbers:
-        # Fallback: return all inspection text (truncated)
-        print("  No item numbers found — using full inspection text")
-        all_text = "\n".join(text for _, text in inspection_pages)
-        return all_text[:40000]
-
-    # Match pages that contain any of the item numbers
-    matched_pages = []
-    for page_idx, page_text in inspection_pages:
-        for num in item_numbers:
-            if re.search(r'\b' + re.escape(str(num)) + r'\b', page_text):
-                matched_pages.append((page_idx, page_text))
-                break
-
-    if not matched_pages:
-        print("  Item numbers not matched in report — using full text fallback")
-        all_text = "\n".join(text for _, text in inspection_pages)
-        return all_text[:40000]
-
-    print(f"  Matched {len(matched_pages)} of {len(inspection_pages)} inspection pages")
-    combined = "\n\n".join(f"[Page {i+1}]\n{text}" for i, text in matched_pages)
-    return combined[:40000]
-
-
 # ── File download ─────────────────────────────────────────────────────────────
 
 def download_file(url):
@@ -565,11 +518,90 @@ def _contact_cfv(contact):
     return out
 
 
-def find_account_by_name(name):
-    """Lightweight exact-name lookup. Returns the account id (str) or None.
+# ── Input normalisation ───────────────────────────────────────────────────────
 
-    Kept intentionally small (id + name only) — requesting nested contacts/custom
-    fields here trips JobTread's request-size limit and would silently fail dedup.
+def normalize_name(name):
+    """Title-case a person name: 'john smith' → 'John Smith', 'MARY JANE' → 'Mary Jane'.
+    Handles hyphenated names (Mary-Jane → Mary-Jane), initials (j. → J.),
+    and prefixes/suffixes (mcgee → McGee via simple title()).
+    """
+    if not name:
+        return name
+    return " ".join(part.capitalize() for part in name.strip().split())
+
+
+def normalize_phone(phone):
+    """Return a consistently formatted US phone number string.
+
+    Stored in the contact custom field as (XXX) XXX-XXXX.
+    Returns the original string unchanged if it doesn't look like a 10- or
+    11-digit US number (so international numbers aren't mangled).
+    """
+    if not phone:
+        return phone
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+    return phone.strip()  # couldn't normalise — return as-is
+
+
+def normalize_address(address):
+    """Title-case a street address: '123 main st' → '123 Main St'.
+    Leaves zip codes (all-digit tokens) alone. Uppercases 2-letter state
+    abbreviations only when they appear in the city/state/zip component
+    (the last comma-separated part that also contains a zip code), not in
+    street suffixes like 'St', 'Dr', 'Ct' which should be title-cased.
+    """
+    if not address:
+        return address
+    parts = [p.strip() for p in address.split(",")]
+    # The state abbreviation lives in the last component that contains a zip code.
+    # e.g. "SC 29687" — we uppercase the alpha-only tokens there, title-case elsewhere.
+    last_has_zip = parts and any(t.isdigit() for t in parts[-1].split())
+    result = []
+    for i, part in enumerate(parts):
+        is_state_part = last_has_zip and (i == len(parts) - 1)
+        tokens = part.split()
+        cased = []
+        for token in tokens:
+            if token.isdigit():
+                cased.append(token)  # zip code — leave as-is
+            elif is_state_part and len(token) == 2 and token.isalpha():
+                cased.append(token.upper())  # state abbreviation — uppercase
+            else:
+                cased.append(token.capitalize())  # everything else — title case
+        result.append(" ".join(cased))
+    return ", ".join(result)
+
+
+def normalize_e164(phone):
+    """Return E.164 format (+1XXXXXXXXXX) for use in API calls / email logic.
+    Falls back to the raw string if it can't be normalised.
+    """
+    if not phone:
+        return phone
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    if len(digits) == 10:
+        return f"+1{digits}"
+    return phone.strip()
+
+
+def find_account_by_name(name, address=None):
+    """Exact-name lookup with optional address tiebreaker.
+
+    1. Fetch all customer accounts whose name matches (case-insensitive).
+    2. If exactly one match — return it immediately.
+    3. If multiple matches and an address was supplied — pick the one whose
+       location address most closely matches (normalised string compare).
+    4. If multiple matches and no address — return the first match so we
+       still avoid creating a duplicate rather than always creating a new one.
+
+    Kept intentionally small (id + name + locations) — requesting nested
+    contacts/custom fields here would trip JobTread's request-size limit.
     """
     if not name or not name.strip():
         return None
@@ -579,7 +611,10 @@ def find_account_by_name(name):
                 "$": {"id": JOBTREAD_ORG},
                 "accounts": {
                     "$": {"size": 20, "where": {"and": [["type", "customer"], ["name", "like", name.strip()]]}},
-                    "nodes": {"id": {}, "name": {}}
+                    "nodes": {
+                        "id": {}, "name": {},
+                        "locations": {"$": {"size": 10}, "nodes": {"id": {}, "address": {}}}
+                    }
                 }
             }
         })
@@ -587,11 +622,28 @@ def find_account_by_name(name):
     except Exception as e:
         print(f"  Account lookup failed (treating as new): {e}")
         return None
-    target = name.strip().lower()
-    for n in nodes:
-        if (n.get("name") or "").strip().lower() == target:
-            return n["id"]
-    return None
+
+    target_name = name.strip().lower()
+    matches = [n for n in nodes if (n.get("name") or "").strip().lower() == target_name]
+
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]["id"]
+
+    # Multiple accounts with the same name — use address as tiebreaker
+    if address:
+        target_addr = re.sub(r"\s+", " ", address.strip().lower())
+        for acct in matches:
+            for loc in (acct.get("locations") or {}).get("nodes", []):
+                loc_addr = re.sub(r"\s+", " ", (loc.get("address") or "").strip().lower())
+                if loc_addr and loc_addr == target_addr:
+                    print(f"  Multiple name matches — address tiebreaker resolved to account {acct['id']}")
+                    return acct["id"]
+
+    # No address tiebreaker or no match on address — return first (avoids creating yet another duplicate)
+    print(f"  Multiple name matches for '{name}' — no address tiebreaker, using first match {matches[0]['id']}")
+    return matches[0]["id"]
 
 
 def get_account_contacts(account_id):
@@ -614,18 +666,31 @@ def get_account_contacts(account_id):
         return []
 
 
-def find_matching_contact(contacts, email, contact_name):
-    """Given a list of contact nodes, find one matching by email (preferred) or name."""
-    email = (email or "").strip().lower()
+def find_matching_contact(contacts, phone, contact_name):
+    """Given a list of contact nodes, find one matching by name AND phone.
+
+    Both name and phone must match (case/whitespace insensitive, digits-only
+    comparison for phone) to be considered the same person.  If phone is
+    blank we fall back to name-only so we still deduplicate when a phone
+    number wasn't captured on the original entry.
+    """
     cname = (contact_name or "").strip().lower()
+    # Strip to digits for a reliable phone comparison
+    cphone_digits = re.sub(r"\D", "", phone or "")
+
     for c in contacts:
-        c_email = (_contact_cfv(c).get("Email") or "").strip().lower()
-        if email and c_email and email == c_email:
-            return c
-    if not email:
-        for c in contacts:
-            if cname and (c.get("name") or "").strip().lower() == cname:
+        cfv = _contact_cfv(c)
+        c_name_match = (c.get("name") or "").strip().lower() == cname
+
+        if cphone_digits:
+            c_phone_digits = re.sub(r"\D", "", cfv.get("Phone") or "")
+            if c_name_match and c_phone_digits and c_phone_digits == cphone_digits:
                 return c
+        else:
+            # No phone supplied — match on name alone
+            if cname and c_name_match:
+                return c
+
     return None
 
 
@@ -643,13 +708,19 @@ def set_primary_contact(account_id, contact_id):
 
 
 def create_contact_record(account_id, name, email, phone, address):
-    """Create a contact under an account and return its id."""
-    cfv = {"Email": email or "", "Address": address or ""}
-    if phone:
-        cfv["Phone"] = phone
+    """Create a contact under an account and return its id.
+    Normalises name (title case), phone (display format), and address (title case)
+    before writing so records are always clean regardless of how the data arrived.
+    """
+    clean_name    = normalize_name(name) or "Unknown"
+    clean_phone   = normalize_phone(phone) if phone else None
+    clean_address = normalize_address(address) if address else None
+    cfv = {"Email": (email or "").strip().lower(), "Address": clean_address or ""}
+    if clean_phone:
+        cfv["Phone"] = clean_phone
     resp = jobtread_query({
         "createContact": {
-            "$": {"accountId": account_id, "name": name or "Unknown", "customFieldValues": cfv},
+            "$": {"accountId": account_id, "name": clean_name, "customFieldValues": cfv},
             "createdContact": {"id": {}}
         }
     })
@@ -668,7 +739,7 @@ def upsert_account_and_contact(cfg):
     if cfg.get("referred_by"):
         account_cfv["Referred By"] = cfg["referred_by"]
 
-    account_id = find_account_by_name(cfg["account_name"]) if cfg.get("dedup") else None
+    account_id = find_account_by_name(cfg["account_name"], address=cfg.get("location_address")) if cfg.get("dedup") else None
 
     if account_id:
         print(f"  Existing account matched: {account_id} ({cfg['account_name']})")
@@ -682,7 +753,7 @@ def upsert_account_and_contact(cfg):
                 print(f"  Could not update Referred By: {e}")
 
         contacts = get_account_contacts(account_id)
-        match = find_matching_contact(contacts, cfg["contact_email"], cfg["contact_name"])
+        match = find_matching_contact(contacts, cfg["contact_phone"], cfg["contact_name"])
         if match:
             print(f"  Existing contact matched: {match['id']} ({match.get('name')})")
             set_primary_contact(account_id, match["id"])
@@ -696,12 +767,13 @@ def upsert_account_and_contact(cfg):
 
     # No existing account — create fresh
     print("  Creating JobTread account...")
+    clean_account_name = normalize_name(cfg["account_name"]) or cfg["account_name"]
     resp = jobtread_query({
         "createAccount": {
             "$": {
                 "organizationId": JOBTREAD_ORG,
                 "type": "customer",
-                "name": cfg["account_name"],
+                "name": clean_account_name,
                 "suffixIfNecessary": True,
                 "customFieldValues": account_cfv
             },
@@ -1062,6 +1134,42 @@ FOLLOWUP_TODO_NAMES = {
     "🚨 Final decision call — win or move on",
     "📅 Long term follow-up — check back in",
     "💬 Customer replied — check in personally",
+    # Review to-dos — created by cron, sent when Jason checks them off
+    "📧 Review & send — Day 3 follow-up",
+    "📧 Review & send — Day 7 follow-up",
+    "📧 Review & send — Day 14 follow-up",
+    "📧 Review & send — Closing repair check-in",
+}
+
+# Maps follow-up day → to-do name Jason reviews before sending
+FOLLOWUP_REVIEW_TODO_NAMES = {
+    3:  "📧 Review & send — Day 3 follow-up",
+    7:  "📧 Review & send — Day 7 follow-up",
+    14: "📧 Review & send — Day 14 follow-up",
+}
+
+# Maps follow-up day → pipeline status to set once the email is confirmed sent
+FOLLOWUP_STATUS_MAP = {
+    3:  "Sent 1st Follow Up",
+    7:  "Sent 2nd Follow Up",
+    14: "Sent Final Follow UP",
+}
+
+# Maps old email to-do name → which review to-do replaced it (so domino chain
+# knows to create the next step after the review to-do is checked off)
+FOLLOWUP_EMAIL_TODO_TO_REVIEW = {
+    "📧 Follow-up email #1 — check in on estimate": "📧 Review & send — Day 3 follow-up",
+    "📧 Follow-up email #2 — still interested?":    "📧 Review & send — Day 7 follow-up",
+    "📧 Follow-up email #3 — final touch":          "📧 Review & send — Day 14 follow-up",
+}
+
+# Pending review markers — logged as comments so the cron doesn't create a
+# second review to-do if it runs before Jason has checked the first one off
+FOLLOWUP_PENDING_MARKERS = {
+    3:  "[OCC-PENDING-F1]",
+    7:  "[OCC-PENDING-F2]",
+    14: "[OCC-PENDING-F3]",
+    2:  "[OCC-PENDING-CR]",  # closing repair 48-hr check-in
 }
 
 # ── Follow-up domino chain (post-estimate) ───────────────────────────────────
@@ -1504,35 +1612,136 @@ def process_document_sent(payload):
 
 # ── Daily follow-up email runner ─────────────────────────────────────────────
 
-FOLLOWUP_MESSAGES = {
-    3: (
-        "Hi {first_name},\n\n"
-        "I just wanted to follow up and make sure you received the estimate I sent over. "
-        "Feel free to reach out if you have any questions or would like to talk through anything \u2014 "
-        "I'm happy to help. You can view and approve the estimate using the button below."
-    ),
-    7: (
-        "Hi {first_name},\n\n"
-        "Checking in one more time on the estimate I sent over for your project. "
-        "If you have any questions or if the scope of work needs any adjustments, "
-        "just let me know and we can work through it together. "
-        "I want to make sure we find the right solution for you."
-    ),
-    14: (
-        "Hi {first_name},\n\n"
-        "I wanted to reach out one last time regarding the estimate I sent over for your project. "
-        "We'd love the opportunity to work with you. If you have any questions or would like to "
-        "discuss the scope of work, please don't hesitate to give me a call. "
-        "If the timing isn't right at the moment, I completely understand \u2014 "
-        "just keep us in mind for the future."
-    ),
-}
-
 FOLLOWUP_SENT_MARKERS = {
     3:  "[OCC-AUTO-F1]",
     7:  "[OCC-AUTO-F2]",
     14: "[OCC-AUTO-F3]",
 }
+
+# ── AI-powered follow-up email writer ─────────────────────────────────────────
+
+FOLLOWUP_EMAIL_SYSTEM_PROMPT = """You write follow-up emails on behalf of Jason Evans, owner of Owners Choice Construction LLC, a residential repair contractor in Greenville/Upstate SC.
+
+JASON'S VOICE — study these real examples carefully:
+
+Example 1 (checking in after no reply):
+"Good morning Sandy, Thank you for your feedback. We will make sure we make it right as far as the additional cost go. Would it be ok if I gave you a call later this morning so we can make sure there is clarity around this as we finalize these last few details? Thanks!"
+
+Example 2 (warm close after no deal):
+"Sounds good Jeff, Feel free to connect with us on this same email thread if you want, or you can reach us through our website ownerschoicerepairs.com any time as well. We would love the opportunity to work with you if the need arises. Have a great rest of the week!"
+
+Example 3 (casual update on timeline):
+"Good morning Kyle, Yes I did and Im sorry I haven't replied yet. Ill see if I can find some photos to send once I get back at my desk later this afternoon or possibly tomorrow depending on how the day goes :) Thanks!"
+
+Example 4 (explaining a technical detail warmly):
+"Good afternoon Cathy, I would not estimate there would be any pricing changes and less for some reason the foam insulation product price skyrockets, but I doubt that will happen so I would be pretty confident this price would not change. The two different sizes are for the two different size water piping you have in your crawlspace. Some of it is three-quarter inch copper and/or pecks and some of it is half inch copper. The actual foam is the same thickness, but the hole in the middle is what is different to accommodate the different size piping. Hopefully, that helps clarify what that means. You can just approve the estimate whenever it gets a little closer to when you would like to move forward, and after that, we will contact you about deposit and scheduling :) Thanks. Let me know if you have any other questions or concerns. Have a great day"
+
+Example 5 (project update mid-job):
+"Good evening Dominic, Thanks for the information. We did manage to locate the paint specs in the basement storage when we were down there as well. I'm told due to the paint being a flat, you will want 2 coats on anything that gets painted or you risk it not being an even finish. Certainly look around the house and let me know if there are areas you'd rather not touch from a paint standpoint. Alternatively if you don't see something listed that you would like included, let us know and we can make those adjustments. I'll send a version tomorrow morning with everything minus the paint for now and you can keep us updated on how to proceed with the paint later on. Have a good evening and I'll be in touch tomorrow :)"
+
+Example 6 (scheduling answer):
+"Good afternoon Lea, We are likely looking into the middle of June at the moment. Once deposits are paid then we can solidify a space on the calendar for the work. So the calendar is always changing. But that being said, the project will likely be done over the course of a week depending on what we find when opening up some of those areas of wood rot."
+
+Example 7 (coordinating with multiple parties):
+"Good afternoon Lora, Thank you for the update. That sounds like a sensible plan. I will get this revised proposal back over to Stephanie and Dominic and I'll also connect with my painter to get a rough estimated timeframe for completing everything listed. Some of it will depend on when the approval and deposit comes in but we will work as expeditiously as possible :) I'm also still in works on the window replacements for the failed seals. The glass may be under warranty but the labor to replace the glass is something I'm getting priced out. It's a slow process working with the mfg on this but I'm getting close I think. I'll keep everyone informed on that as well. Thanks!"
+
+VOICE RULES — non-negotiable:
+- Always open with time of day: "Good morning", "Good afternoon", or "Good evening" based on time of day provided. Then first name only. No "Hi" or "Hey" or "Dear".
+- Short paragraphs, one thought each. 3-6 sentences total for the whole email.
+- Use "I" for Jason personally, "we/us" for the company — both can appear in the same message naturally.
+- Reference something specific about THEIR project — the actual work scoped, the address, or a detail from the notes. Never generic.
+- End with something warm and forward-looking: "Have a great day", "I'll be in touch", "Thanks!", etc.
+- Contractions always: "I'm", "I'll", "we'd", "don't". Never stiff.
+- NO: "I hope this email finds you well", "please don't hesitate", "as per", "moving forward", "circle back", "reach out", "valued customer", "at your earliest convenience", bullet points, numbered lists, exclamation points on every sentence.
+- The :) emoji is fine used once, naturally, not forced.
+- Never mention that this is an automated or scheduled email.
+- Never invent facts about the project that aren't in the context provided.
+
+OUTPUT: Return ONLY the plain text email body. No subject line. No signature (Jason's name and contact info is added automatically). No markdown."""
+
+
+def generate_followup_email(first_name, days_since=None, job_type=None, address=None,
+                            notes=None, cost_group_names=None, day=None):
+    """
+    Call Claude to write a personalised follow-up email in Jason's voice.
+    Falls back to a safe static message if the API call fails.
+
+    days_since: 3 = first follow-up, 7 = second, 14 = final
+    cost_group_names: list of repair scope titles from the estimate (may be empty)
+    """
+    # Accept either days_since= (legacy) or day= (closing repair path)
+    days_since = days_since if days_since is not None else day
+    from datetime import datetime
+    hour = datetime.now().hour
+    if hour < 12:
+        time_of_day = "morning"
+    elif hour < 17:
+        time_of_day = "afternoon"
+    else:
+        time_of_day = "evening"
+
+    followup_context = {
+        2:  "This is a single 48-hour check-in for a closing repair estimate sent to a realtor. Tone: brief and practical — just making sure the estimate arrived and asking if they have any questions. Closing repairs are time-sensitive so keep it tight and professional. One paragraph max.",
+        3:  "This is the first follow-up, sent 3 days after the estimate. Tone: warm check-in, make sure they got it, invite questions. Light and easy — no pressure.",
+        7:  "This is the second follow-up, sent 7 days after the estimate. Tone: still warm but a little more direct. Acknowledge they may be weighing options. Offer to adjust scope or answer questions.",
+        14: "This is the third and final follow-up, sent 14 days after the estimate. Tone: genuinely warm close. We'd love the work but completely understand if timing isn't right. Leave the door open for the future without being pushy.",
+    }
+
+    scope_text = ""
+    if cost_group_names:
+        # Strip leading inspection numbers like "3.2 - " to get clean repair names
+        clean = [re.sub(r'^[\d\.\s]+[-\u2013]?\s*', '', n).strip() for n in cost_group_names[:8]]
+        clean = [n for n in clean if n]
+        if clean:
+            scope_text = f"Repair scope: {', '.join(clean)}"
+
+    prompt = f"""Write a follow-up email from Jason to this customer.
+
+Customer first name: {first_name}
+Time of day: {time_of_day}
+Property address: {address or 'not specified'}
+Job type: {job_type or 'Home Repair'}
+{scope_text}
+{f'Project notes: {notes[:500]}' if notes and notes.strip() else ''}
+
+Follow-up context: {followup_context.get(days_since, followup_context[14])}
+
+Write the email now."""
+
+    try:
+        payload = json.dumps({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 400,
+            "system": FOLLOWUP_EMAIL_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            result = json.loads(r.read().decode("utf-8"))
+        body = "".join(block.get("text", "") for block in result.get("content", [])).strip()
+        if body:
+            print(f"  AI email generated for {first_name} (day {days_since}, {len(body)} chars)")
+            return body
+    except Exception as e:
+        print(f"  AI email generation failed: {e} — using fallback")
+
+    # Static fallback — plain, on-brand, never fails
+    fallbacks = {
+        2:  f"Good morning {first_name},\n\nJust wanted to make sure the closing repair estimate we sent over came through okay. Let me know if you have any questions or need anything adjusted.\n\nThanks!",
+        3:  f"Good morning {first_name},\n\nJust wanted to make sure you received the estimate we sent over. Let me know if you have any questions or if there's anything you'd like to go over — happy to help.\n\nThanks!",
+        7:  f"Good morning {first_name},\n\nChecking in one more time on the estimate for your project. If anything needs adjusting or you have questions about the scope, just let me know and we can work through it.\n\nHave a great day!",
+        14: f"Good morning {first_name},\n\nI wanted to follow up one last time on the estimate we put together for you. We'd love the opportunity to work with you — but if the timing isn't right, no worries at all. Feel free to reach back out whenever the time comes.\n\nTake care!",
+    }
+    return fallbacks.get(days_since, fallbacks[14])
 
 
 def get_jobs_needing_followup():
@@ -1604,7 +1813,8 @@ def get_jobs_needing_followup():
             resp = jobtread_query({
                 "job": {
                     "$": {"id": job_id},
-                    "id": {}, "name": {},
+                    "id": {}, "name": {}, "description": {},
+                    "location": {"address": {}},
                     "customFieldValues": {
                         "$": {"size": 10},
                         "nodes": {"customField": {"name": {}}, "value": {}}
@@ -1626,6 +1836,10 @@ def get_jobs_needing_followup():
                     "tasks": {
                         "$": {"size": 20},
                         "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
+                    },
+                    "costGroups": {
+                        "$": {"size": 30},
+                        "nodes": {"name": {}}
                     }
                 }
             })
@@ -1679,9 +1893,85 @@ def log_followup_sent(job_id, day):
         print(f"  Could not log follow-up comment: {e}")
 
 
+def already_pending_review(comments, day):
+    """Check if a review to-do for this day has already been queued."""
+    marker = FOLLOWUP_PENDING_MARKERS.get(day, "")
+    return marker and any(marker in (c.get("message") or "") for c in (comments or []))
+
+
+def log_pending_review(job_id, day):
+    """Add a comment marking that a review to-do was created for this day."""
+    from datetime import date
+    marker = FOLLOWUP_PENDING_MARKERS.get(day, "")
+    if not marker:
+        return
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "message": f"{marker} Review to-do created on {date.today().isoformat()}.",
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+    except Exception as e:
+        print(f"  Could not log pending review comment: {e}")
+
+
+def create_review_todo(job_id, job_type, todo_name, email_body):
+    """Create the review to-do with the AI email in the description field."""
+    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
+    from datetime import date
+    today = date.today().isoformat()
+    # Truncate to 4096 chars (JobTread description limit)
+    description = email_body[:4090] if email_body else ""
+    try:
+        jobtread_query({
+            "createTask": {
+                "$": {
+                    "name": todo_name,
+                    "isToDo": True,
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "startDate": today,
+                    "endDate": today,
+                    "description": description,
+                    "assignees": [{"membershipId": assignee_id}],
+                }
+            }
+        })
+        print(f"  Review to-do created: '{todo_name}'")
+    except Exception as e:
+        print(f"  Could not create review to-do '{todo_name}': {e}")
+
+
+def get_recipient_and_name(job):
+    """Extract the pending estimate recipient ID and customer first name from a job dict."""
+    docs = (job.get("documents") or {}).get("nodes", [])
+    for doc in docs:
+        if doc.get("type") == "customerOrder" and doc.get("status") == "pending":
+            recipients = (doc.get("documentRecipients") or {}).get("nodes", [])
+            if recipients:
+                recipient_id = recipients[0]["id"]
+                full_name = (recipients[0].get("user") or {}).get("name", "")
+                first_name = full_name.split()[0].capitalize() if full_name else "there"
+                return recipient_id, first_name
+    return None, "there"
+
+
 def process_send_followups():
     """
-    Daily runner — check all Sent jobs and send follow-up emails on Day 3, 7, 14.
+    Daily runner — check all Sent jobs and queue follow-up review to-dos on
+    Day 3, 7, and 14 for non-closing-repair jobs.  For Closing Repairs, check
+    at Day 2 whether the estimate has been viewed; if not, queue a single
+    check-in review to-do.
+
+    Emails are NOT sent here — instead a to-do with the AI-drafted body in
+    the description field is created for Jason to review.  When Jason checks
+    it off, process_task_updated fires and sends the actual email at that point.
+
     Called via GET /send-followups from cron-job.org once per day.
     """
     from datetime import date
@@ -1691,7 +1981,7 @@ def process_send_followups():
     jobs = get_jobs_needing_followup()
     print(f"  Found {len(jobs)} jobs at Sent status")
 
-    sent_count = 0
+    queued_count = 0
     for job in jobs:
         job_id = job["id"]
         comments = (job.get("comments") or {}).get("nodes", [])
@@ -1704,105 +1994,229 @@ def process_send_followups():
         days_since = (today - sent_date).days
         print(f"  Job {job_id}: {days_since} days since estimate sent")
 
-        # Check if today is a follow-up day
-        if days_since not in FOLLOWUP_MESSAGES:
+        job_cfvs = {
+            cfv["customField"]["name"]: cfv["value"]
+            for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
+            if cfv.get("customField")
+        }
+        job_type_label = job_cfvs.get("Job Type", "")
+
+        # ── Closing Repair: single 48-hr check-in if not viewed ──────────────
+        if job_type_label == "Closing Repair":
+            if days_since != 2:
+                continue
+            if already_sent_followup(comments, 2) or already_pending_review(comments, 2):
+                print(f"  Job {job_id}: closing repair check-in already queued/sent — skipping")
+                continue
+
+            # Check documentLastViewedAt on the recipient
+            recipient_id, first_name = get_recipient_and_name(job)
+            if not recipient_id:
+                print(f"  Job {job_id}: no pending estimate recipient — skipping")
+                continue
+
+            viewed = False
+            try:
+                r = jobtread_query({
+                    "documentRecipient": {
+                        "$": {"id": recipient_id},
+                        "documentLastViewedAt": {},
+                        "emailDeliveryStatus": {},
+                    }
+                })
+                dr = r.get("documentRecipient") or {}
+                viewed = bool(dr.get("documentLastViewedAt"))
+                print(f"  Job {job_id}: documentLastViewedAt={dr.get('documentLastViewedAt')} emailStatus={dr.get('emailDeliveryStatus')}")
+            except Exception as e:
+                print(f"  Job {job_id}: could not check view status: {e}")
+
+            if viewed:
+                print(f"  Job {job_id}: estimate already viewed — no check-in needed")
+                continue
+
+            # Not viewed — queue a closing repair check-in review to-do
+            job_address = (job.get("location") or {}).get("address", "")
+            job_notes   = job.get("description", "") or ""
+            email_body = generate_followup_email(
+                first_name, day=2, job_type="Closing Repair",
+                address=job_address, notes=job_notes, cost_group_names=[]
+            )
+            create_review_todo(
+                job_id, "Closing Repair",
+                "📧 Review & send — Closing repair check-in", email_body
+            )
+            log_pending_review(job_id, 2)
+            queued_count += 1
             continue
 
-        # Skip if already sent
+        # ── Home Repair / Remodel / Pre-listing: Day 3, 7, 14 chain ─────────
+        if days_since not in FOLLOWUP_SENT_MARKERS:
+            continue
+
         if already_sent_followup(comments, days_since):
             print(f"  Job {job_id}: Day {days_since} follow-up already sent — skipping")
             continue
 
-        # Backup check: if a customer reply slipped past the commentCreated
-        # webhook (or it never fired), catch it here before sending anything.
+        if already_pending_review(comments, days_since):
+            print(f"  Job {job_id}: Day {days_since} review to-do already queued — skipping")
+            continue
+
         if check_for_customer_reply_and_pause(job_id, sent_date=sent_date):
-            print(f"  Job {job_id}: automation paused on customer reply — skipping scheduled send")
+            print(f"  Job {job_id}: automation paused on customer reply — skipping")
             continue
 
-        # Get the pending estimate document and recipient
-        docs = (job.get("documents") or {}).get("nodes", [])
-        recipient_id = None
-        first_name = "there"
-
-        for doc in docs:
-            if doc.get("type") == "customerOrder" and doc.get("status") == "pending":
-                recipients = (doc.get("documentRecipients") or {}).get("nodes", [])
-                if recipients:
-                    recipient_id = recipients[0]["id"]
-                    full_name = (recipients[0].get("user") or {}).get("name", "")
-                    first_name = full_name.split()[0].capitalize() if full_name else "there"
-                break
-
+        recipient_id, first_name = get_recipient_and_name(job)
         if not recipient_id:
-            print(f"  Job {job_id}: no pending estimate recipient found — skipping")
+            print(f"  Job {job_id}: no pending estimate recipient — skipping")
             continue
 
-        # Build and send the email
-        message = FOLLOWUP_MESSAGES[days_since].format(first_name=first_name)
-        try:
-            jobtread_query({
-                "sendDocument": {
-                    "$": {
-                        "documentRecipientId": recipient_id,
-                        "emailMessage": message,
+        job_address      = (job.get("location") or {}).get("address", "")
+        job_notes        = job.get("description", "") or ""
+        cost_group_names = [
+            cg.get("name", "")
+            for cg in (job.get("costGroups") or {}).get("nodes", [])
+            if cg.get("name")
+        ]
+        email_body = generate_followup_email(
+            first_name, days_since, job_type_label, job_address, job_notes, cost_group_names
+        )
+
+        todo_name = FOLLOWUP_REVIEW_TODO_NAMES[days_since]
+        create_review_todo(job_id, job_type_label, todo_name, email_body)
+        log_pending_review(job_id, days_since)
+        queued_count += 1
+        print(f"  Job {job_id}: Day {days_since} review to-do queued for {first_name}")
+
+    print(f"Daily follow-up run complete: {queued_count} review to-dos created")
+    return queued_count
+
+
+def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
+    """
+    Called from process_task_updated when Jason checks off a review to-do.
+    Reads the task description (which contains the email body — edited or
+    not), sends it via sendDocument, logs it, flips status, and advances
+    the follow-up chain domino to the next step.
+    """
+    # Determine which day this review corresponds to
+    day_map = {v: k for k, v in FOLLOWUP_REVIEW_TODO_NAMES.items()}
+    day_map["📧 Review & send — Closing repair check-in"] = 2
+    days_since = day_map.get(task_name)
+    if days_since is None:
+        print(f"  send_followup: unrecognised review to-do name '{task_name}' — skipping")
+        return
+
+    # Fetch the task to read the description (may have been edited by Jason)
+    try:
+        task_resp = jobtread_query({
+            "task": {
+                "$": {"id": task_id},
+                "description": {}
+            }
+        })
+        email_body = (task_resp.get("task") or {}).get("description") or ""
+    except Exception as e:
+        print(f"  send_followup: could not read task description: {e}")
+        return
+
+    if not email_body.strip():
+        print(f"  send_followup: task description is empty — cannot send")
+        return
+
+    # Find the pending estimate recipient on this job
+    try:
+        job_resp = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "documents": {
+                    "$": {"size": 5},
+                    "nodes": {
+                        "type": {}, "status": {},
+                        "documentRecipients": {
+                            "$": {"size": 5},
+                            "nodes": {"id": {}, "user": {"name": {}}}
+                        }
                     }
+                },
+                "customFieldValues": {
+                    "$": {"size": 10},
+                    "nodes": {"customField": {"name": {}}, "value": {}}
                 }
-            })
-            log_followup_sent(job_id, days_since)
-            print(f"  Job {job_id}: Day {days_since} follow-up sent to {first_name}")
-            sent_count += 1
-
-            # Flip status to match the follow-up stage
-            followup_status_map = {
-                3:  "Sent 1st Follow Up",
-                7:  "Sent 2nd Follow Up",
-                14: "Sent Final Follow UP",
             }
-            # Re-fetch current status to check it's still appropriate before flipping
-            current_job_info = get_job_info(job_id)
-            _, current_job_status = get_job_type_and_status(current_job_info)
-            target_followup_status = followup_status_map.get(days_since)
-            job_type_for_status = None
-            for cfv in (current_job_info.get("customFieldValues") or {}).get("nodes", []):
-                if (cfv.get("customField") or {}).get("name") == "Job Type":
-                    job_type_for_status = cfv.get("value")
-                    break
-            if (target_followup_status and job_type_for_status and
-                    current_job_status not in TERMINAL_STATUSES and
-                    current_job_status != LONG_TERM_STATUS):
-                set_job_status(job_id, job_type_for_status, target_followup_status)
+        })
+    except Exception as e:
+        print(f"  send_followup: could not fetch job {job_id}: {e}")
+        return
 
-            # Mark the matching email follow-up to-do as complete
-            email_todo_names = {
-                3:  "📧 Follow-up email #1 — check in on estimate",
-                7:  "📧 Follow-up email #2 — still interested?",
-                14: "📧 Follow-up email #3 — final touch",
+    job_data = job_resp.get("job") or {}
+    recipient_id, first_name = get_recipient_and_name(job_data)
+
+    if not recipient_id:
+        print(f"  send_followup: no pending estimate recipient on job {job_id} — cannot send")
+        return
+
+    # Send the email
+    try:
+        jobtread_query({
+            "sendDocument": {
+                "$": {
+                    "documentRecipientId": recipient_id,
+                    "emailMessage": email_body,
+                }
             }
-            todo_name = email_todo_names.get(days_since)
-            if todo_name:
-                tasks = (job.get("tasks") or {}).get("nodes", [])
-                for task in tasks:
-                    if task.get("name") == todo_name and task.get("progress") != 1:
-                        try:
-                            jobtread_query({
-                                "updateTask": {
-                                    "$": {
-                                        "id": task["id"],
-                                        "progress": 1,
-                                        "notify": False,
-                                    }
-                                }
-                            })
-                            print(f"  Checked off to-do: {todo_name}")
-                        except Exception as te:
-                            print(f"  Could not check off to-do: {te}")
-                        break
+        })
+        print(f"  send_followup: Day {days_since} follow-up sent to {first_name} on job {job_id}")
+    except Exception as e:
+        print(f"  send_followup: sendDocument failed: {e}")
+        return
 
-        except Exception as e:
-            print(f"  Job {job_id}: follow-up send failed: {e}")
+    # Log sent marker and email body as a comment
+    log_followup_sent(job_id, days_since)
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "message": f"[OCC-AUTO] Day {days_since} follow-up email sent:\n\n{email_body}",
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+    except Exception as ce:
+        print(f"  send_followup: could not log email body comment: {ce}")
 
-    print(f"Daily follow-up run complete: {sent_count} emails sent")
-    return sent_count
+    # Flip pipeline status
+    cfvs = {
+        cfv["customField"]["name"]: cfv["value"]
+        for cfv in (job_data.get("customFieldValues") or {}).get("nodes", [])
+        if cfv.get("customField")
+    }
+    job_type_label = cfvs.get("Job Type", job_type or "")
+    target_status = FOLLOWUP_STATUS_MAP.get(days_since)
+    if target_status and job_type_label:
+        current_info = get_job_info(job_id)
+        _, current_status = get_job_type_and_status(current_info)
+        if (current_status not in TERMINAL_STATUSES and
+                current_status != LONG_TERM_STATUS):
+            set_job_status(job_id, job_type_label, target_status)
+
+    # Advance the domino chain to the next follow-up step.
+    # Closing repair (day 2) has no chain — single check-in only.
+    if days_since == 2:
+        return
+
+    # Map review to-do name → the old email to-do name → next step in FOLLOWUP_CHAIN
+    old_email_name = {v: k for k, v in FOLLOWUP_EMAIL_TODO_TO_REVIEW.items()}.get(task_name)
+    if old_email_name:
+        next_name   = FOLLOWUP_TO_NEXT.get(old_email_name)
+        next_offset = FOLLOWUP_TO_OFFSET.get(old_email_name, 1)
+        if next_name:
+            if has_pending_reply_pause(job_id):
+                print(f"  send_followup: automation paused — not creating '{next_name}'")
+            else:
+                create_single_todo(job_id, job_type_label, next_name, due_offset=next_offset)
+                print(f"  send_followup: chain advanced → '{next_name}'")
 
 
 def complete_todo_by_name(job_info, todo_name):
@@ -1912,6 +2326,16 @@ def process_task_updated(payload):
             return
 
         is_closing = (job_type == "Closing Repair")
+
+        # ── Review to-do checked off → send the email now ─────────────────────
+        # Jason reviewed (and possibly edited) the draft in the to-do description.
+        # We read whatever is there and send it immediately.
+        all_review_names = set(FOLLOWUP_REVIEW_TODO_NAMES.values()) | {
+            "📧 Review & send — Closing repair check-in"
+        }
+        if task_name in all_review_names:
+            send_followup_email_from_todo(task_id, task_name, job_id, job_type)
+            return
 
         # ── Follow-up chain domino: manual steps only ─────────────────────────
         # Email-sending steps (#1, #2, #3) are advanced by the cron runner itself
@@ -2191,9 +2615,31 @@ def process_job_updated(payload):
         traceback.print_exc()
 
 
+def create_job_stub(cfg):
+    """
+    Create the job record in JobTread with no estimate — account, contact,
+    location, job, files, and first to-do.  Returns job_id.
+
+    Called by Wufoo handlers so the lead is captured immediately before
+    the best-effort AI estimate runs.  If the estimate succeeds, the caller
+    patches cost groups and projected budget via add_cost_groups() and
+    update_job_custom_fields().  If it fails, flag_failed_estimate() fires.
+    """
+    account_id  = upsert_account_and_contact(cfg)
+    location_id = create_location_record(account_id, cfg["location_address"])
+    print(f"  Location: {location_id}")
+    job_id = create_job_record(location_id, cfg)
+    print(f"  Job created: {job_id}")
+    attach_files(job_id, cfg.get("file_urls", []))
+    if cfg.get("status_value") == "New Lead":
+        create_new_lead_todos(job_id, job_type=cfg.get("job_type", "Home Repair"))
+    return job_id
+
+
 def create_job_full(cfg):
     """
-    Unified job-creation flow used by all forms.
+    Unified job-creation flow used by routes that have the estimate ready
+    at creation time (sales-lead-tool endpoints, closing-repair Wufoo).
     1. Find-or-create account (+ contact, primary)
     2. Create location
     3. Create job (PM, status, projected budget)
@@ -2644,11 +3090,11 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
     """Home Repairs and GVL Today share the same field layout."""
     def g(k):
         return data.get(k, [""])[0]
-    name    = f"{g('Field1')} {g('Field2')}".strip()
-    phone   = g("Field3")
-    email   = g("Field4")
+    name    = normalize_name(f"{g('Field1')} {g('Field2')}".strip())
+    phone   = normalize_phone(g("Field3"))
+    email   = g("Field4").strip().lower()
     street  = g("Field5"); city = g("Field7"); state = g("Field8"); zc = g("Field9")
-    address = f"{street}, {city}, {state} {zc}".strip(", ")
+    address = normalize_address(f"{street}, {city}, {state} {zc}".strip(", "))
     pref    = g("Field428")
     how     = g("Field426")
     work    = g("Field121")
@@ -2660,29 +3106,54 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
     lead_source = lead_source_override or map_lead_source(how)
     notes = build_general_notes(form_name, pref=pref,
                                 how=(how if not lead_source_override else None), work=work)
-
     image_urls = [u for u in [p1_url, p2_url] if u]
     file_urls  = [(p1_nm, p1_url), (p2_nm, p2_url)]
-
-    estimate = None
-    try:
-        estimate = call_claude_general(f"{form_name.lower()} repair", name, phone, email,
-                                       address, work, notes, image_urls=image_urls)
-        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
-    except Exception as e:
-        print(f"  Claude failed (continuing without estimate): {e}")
-    estimate, notes, projected = _apply_estimate_gate(estimate, notes)
 
     cfg = {
         "account_name": name, "account_type": "Home Repair", "lead_source": lead_source,
         "referred_by": None, "contact_name": name, "contact_email": email,
         "contact_phone": phone, "contact_address": address, "location_address": address,
         "job_type": "Home Repair", "status_field": "Home Repairs Status",
-        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": projected,
-        "job_name": None, "notes_text": notes, "estimate": estimate,
-        "file_urls": file_urls, "dedup": True,
+        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": None,
+        "job_name": None, "notes_text": notes, "file_urls": file_urls, "dedup": True,
     }
-    return create_job_full(cfg)
+
+    # ── Step 1: Create the job first — lead is captured no matter what ────────
+    job_id = create_job_stub(cfg)
+
+    # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ─────
+    try:
+        estimate = call_claude_general(f"{form_name.lower()} repair", name, phone, email,
+                                       address, work, notes, image_urls=image_urls)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
+        if estimate:
+            add_cost_groups(job_id, estimate)
+        update_fields = {}
+        if projected:
+            update_fields["Projected Budget"] = projected
+        if gated_notes != notes:
+            try:
+                jobtread_query({
+                    "createComment": {
+                        "$": {
+                            "targetType": "job", "targetId": job_id,
+                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
+                        },
+                        "createdComment": {"id": {}}
+                    }
+                })
+            except Exception as ce:
+                print(f"  Could not log consult comment: {ce}")
+        if update_fields:
+            update_job_custom_fields(job_id, update_fields)
+    except Exception as e:
+        import traceback
+        print(f"  AI estimate failed for job {job_id}: {e}")
+        traceback.print_exc()
+        flag_failed_estimate(job_id, error=str(e), job_type="Home Repair")
+
+    return job_id
 
 
 def process_gvl(data):
@@ -2693,11 +3164,11 @@ def process_gvl(data):
 def process_remodel(data):
     def g(k):
         return data.get(k, [""])[0]
-    name    = f"{g('Field1')} {g('Field2')}".strip()
+    name    = normalize_name(f"{g('Field1')} {g('Field2')}".strip())
     street  = g("Field3"); city = g("Field5"); state = g("Field6"); zc = g("Field7")
-    address = f"{street}, {city}, {state} {zc}".strip(", ")
-    email   = g("Field9")
-    phone   = g("Field10")
+    address = normalize_address(f"{street}, {city}, {state} {zc}".strip(", "))
+    email   = g("Field9").strip().lower()
+    phone   = normalize_phone(g("Field10"))
     how     = g("Field26")
     budget  = g("Field24")
     desc    = g("Field22")
@@ -2706,38 +3177,63 @@ def process_remodel(data):
     lead_source = map_lead_source(how)
     notes = build_general_notes("Remodel", how=how, budget=budget, work=desc)
 
-    estimate = None
-    try:
-        estimate = call_claude_general("remodel", name, phone, email, address, desc, notes)
-        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
-    except Exception as e:
-        print(f"  Claude failed (continuing without estimate): {e}")
-    estimate, notes, projected = _apply_estimate_gate(estimate, notes)
-
-    # Remodels: the client's stated range is the budget anchor regardless of estimate
-    if budget:
-        projected = budget
-
     cfg = {
         "account_name": name, "account_type": "Remodel", "lead_source": lead_source,
         "referred_by": None, "contact_name": name, "contact_email": email,
         "contact_phone": phone, "contact_address": address, "location_address": address,
         "job_type": "Remodel", "status_field": "Home Repairs Status",
-        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": projected,
-        "job_name": None, "notes_text": notes, "estimate": estimate,
-        "file_urls": [], "dedup": True,
+        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": None,
+        "job_name": None, "notes_text": notes, "file_urls": [], "dedup": True,
     }
-    return create_job_full(cfg)
+
+    # ── Step 1: Create the job first ─────────────────────────────────────────
+    job_id = create_job_stub(cfg)
+
+    # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
+    try:
+        estimate = call_claude_general("remodel", name, phone, email, address, desc, notes)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
+        # Remodels: client's stated budget anchors the projected field over AI total
+        if budget:
+            projected = budget
+        if estimate:
+            add_cost_groups(job_id, estimate)
+        update_fields = {}
+        if projected:
+            update_fields["Projected Budget"] = projected
+        if gated_notes != notes:
+            try:
+                jobtread_query({
+                    "createComment": {
+                        "$": {
+                            "targetType": "job", "targetId": job_id,
+                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
+                        },
+                        "createdComment": {"id": {}}
+                    }
+                })
+            except Exception as ce:
+                print(f"  Could not log consult comment: {ce}")
+        if update_fields:
+            update_job_custom_fields(job_id, update_fields)
+    except Exception as e:
+        import traceback
+        print(f"  AI estimate failed for job {job_id}: {e}")
+        traceback.print_exc()
+        flag_failed_estimate(job_id, error=str(e), job_type="Remodel")
+
+    return job_id
 
 
 def process_prelisting(data):
     def g(k):
         return data.get(k, [""])[0]
-    name    = f"{g('Field1')} {g('Field2')}".strip()
+    name    = normalize_name(f"{g('Field1')} {g('Field2')}".strip())
     street  = g("Field3"); city = g("Field5"); state = g("Field6"); zc = g("Field7")
-    address = f"{street}, {city}, {state} {zc}".strip(", ")
-    email   = g("Field9")
-    phone   = g("Field10")
+    address = normalize_address(f"{street}, {city}, {state} {zc}".strip(", "))
+    email   = g("Field9").strip().lower()
+    phone   = normalize_phone(g("Field10"))
     how     = g("Field24")
     insp_done = g("Field12")
     insp_url  = g("Field20-url")
@@ -2749,7 +3245,6 @@ def process_prelisting(data):
 
     print(f"New Pre-listing submission: {name} — {address}")
 
-    # Realtor presence overrides the 'how did you hear' dropdown for lead source
     if realtor_name or has_realtor.strip().lower() == "yes":
         lead_source = "Realtor"
         referred_by = realtor_name or None
@@ -2763,37 +3258,62 @@ def process_prelisting(data):
     if insp_done.strip().lower() == "yes" and not insp_url:
         notes += "\n\n⚠️ Client indicated an inspection report but none was attached — follow up to obtain it."
 
-    # Parse inspection PDF for full-AI treatment when present
-    pdf_text = ""
-    if insp_url:
-        try:
-            pdf_text = "\n".join(t for _, t in extract_pdf_text(download_file(insp_url)))
-            print(f"  Inspection report: {len(pdf_text)} chars extracted")
-        except Exception as e:
-            print(f"  Inspection PDF failed: {e}")
-
     file_urls = [(insp_name, insp_url)] if insp_url else []
-
-    estimate = None
-    try:
-        estimate = call_claude_general("pre-listing repair", name, phone, email, address,
-                                       other, notes, pdf_text=pdf_text,
-                                       best_effort=(not pdf_text))
-        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
-    except Exception as e:
-        print(f"  Claude failed (continuing without estimate): {e}")
-    estimate, notes, projected = _apply_estimate_gate(estimate, notes)
 
     cfg = {
         "account_name": name, "account_type": "Home Repair", "lead_source": lead_source,
         "referred_by": referred_by, "contact_name": name, "contact_email": email,
         "contact_phone": phone, "contact_address": address, "location_address": address,
         "job_type": "Pre-listing Repair", "status_field": "Home Repairs Status",
-        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": projected,
-        "job_name": None, "notes_text": notes, "estimate": estimate,
-        "file_urls": file_urls, "dedup": True,
+        "status_value": "New Lead", "pm": "Emily Peery", "projected_budget": None,
+        "job_name": None, "notes_text": notes, "file_urls": file_urls, "dedup": True,
     }
-    return create_job_full(cfg)
+
+    # ── Step 1: Create the job first ─────────────────────────────────────────
+    job_id = create_job_stub(cfg)
+
+    # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
+    try:
+        pdf_text = ""
+        if insp_url:
+            try:
+                pdf_text = "\n".join(t for _, t in extract_pdf_text(download_file(insp_url)))
+                print(f"  Inspection report: {len(pdf_text)} chars extracted")
+            except Exception as e:
+                print(f"  Inspection PDF failed: {e}")
+
+        estimate = call_claude_general("pre-listing repair", name, phone, email, address,
+                                       other, notes, pdf_text=pdf_text,
+                                       best_effort=(not pdf_text))
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
+        if estimate:
+            add_cost_groups(job_id, estimate)
+        update_fields = {}
+        if projected:
+            update_fields["Projected Budget"] = projected
+        if gated_notes != notes:
+            try:
+                jobtread_query({
+                    "createComment": {
+                        "$": {
+                            "targetType": "job", "targetId": job_id,
+                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
+                        },
+                        "createdComment": {"id": {}}
+                    }
+                })
+            except Exception as ce:
+                print(f"  Could not log consult comment: {ce}")
+        if update_fields:
+            update_job_custom_fields(job_id, update_fields)
+    except Exception as e:
+        import traceback
+        print(f"  AI estimate failed for job {job_id}: {e}")
+        traceback.print_exc()
+        flag_failed_estimate(job_id, error=str(e), job_type="Pre-listing Repair")
+
+    return job_id
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -3090,15 +3610,15 @@ class Handler(BaseHTTPRequestHandler):
             # Parse all Wufoo fields
             first          = get("Field1")
             last           = get("Field2")
-            client_name    = f"{first} {last}".strip()
-            client_phone   = get("Field3")
-            client_email   = get("Field4")
+            client_name    = normalize_name(f"{first} {last}".strip())
+            client_phone   = normalize_phone(get("Field3"))
+            client_email   = get("Field4").strip().lower()
             inquiring_party = get("Field122")
             street         = get("Field5")
             city           = get("Field7")
             state          = get("Field8")
             zip_code       = get("Field9")
-            address        = f"{street}, {city}, {state} {zip_code}".strip(", ")
+            address        = normalize_address(f"{street}, {city}, {state} {zip_code}".strip(", "))
             inspection_url = get("Field12-url")
             addendum_url   = get("Field13-url")
             extra_file_url = get("Field426-url")
