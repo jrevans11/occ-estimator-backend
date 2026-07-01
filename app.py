@@ -848,6 +848,7 @@ def create_job_record(location_id, cfg):
     job_input = {
         "locationId": location_id,
         "priceType": "fixed",
+        "scheduleIsPublished": True,
         "description": cfg.get("notes_text") or "",
         "customFieldValues": job_cfv,
     }
