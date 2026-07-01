@@ -1530,16 +1530,15 @@ def process_document_sent(payload):
         # This fires exactly once per send
         new_status  = next_state.get("emailDeliveryStatus")
         prev_status = prev_state.get("emailDeliveryStatus")
-        print(f"  document-sent: emailDeliveryStatus {prev_status} -> {new_status}")
 
         if new_status != "pending":
-            print("  Not a fresh send — skipping")
-            return
+            return  # delivery/open status update — not a fresh send, nothing to do
+
+        print(f"  document-sent: emailDeliveryStatus {prev_status} -> {new_status}")
 
         # Get document ID from the event
         doc_id = next_state.get("documentId") or (event.get("document") or {}).get("id")
         if not doc_id:
-            print("  No document ID found — skipping")
             return
 
         # Look up the document to get job ID and type
@@ -1553,30 +1552,20 @@ def process_document_sent(payload):
         doc_obj  = doc_resp.get("document", {})
         doc_type = doc_obj.get("type")
         job_id   = (doc_obj.get("job") or {}).get("id")
-        print(f"  document-sent: doc_type={doc_type}, job_id={job_id}")
 
         if not job_id:
-            print("  document-sent: no job ID found, skipping")
             return
         if doc_type != "customerOrder":
-            print(f"  document-sent: type={doc_type}, not an estimate — skipping")
             return
 
         print(f"  document-sent: estimate sent on job {job_id}")
         job_info = get_job_info(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
-        if not job_type:
-            print("  Could not determine job type — skipping")
+        if not job_type or job_type not in AUTOMATION_ENABLED_JOB_TYPES:
             return
 
-        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
-            print(f"  {job_type} not in automation scope — skipping")
-            return
-
-        # Don't touch closed or long-term jobs
         if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
-            print(f"  Job is '{current_status}' — skipping follow-up chain")
             return
 
         # Delete existing follow-up to-dos and create fresh ones
@@ -2379,8 +2368,7 @@ def process_task_updated(payload):
 
         # Only flip if it's a forward move from current status
         if not is_forward_move(current_status, target_status):
-            print(f"  task-updated: {current_status} → {target_status} is not a forward move — skipping")
-            return
+            return  # not a forward move — ignore silently
 
         # Re-fetch current status right before setting to handle simultaneous check-offs
         fresh_info = get_job_info(job_id)
@@ -2424,16 +2412,12 @@ def process_document_updated(payload):
         # Only act on pending → approved
         new_status = next_state.get("status")
         old_status = prev_state.get("status")
-        print(f"  doc-updated: status {old_status} → {new_status}")
 
         if old_status != "pending" or new_status != "approved":
-            print("  Not a pending→approved transition — skipping")
-            return
+            return  # not a pending→approved transition
 
-        # Payload only includes document ID — look it up to get type, budget flag, and job
         doc_id = (event.get("document") or {}).get("id")
         if not doc_id:
-            print("  doc-updated: no document ID in payload — skipping")
             return
 
         try:
@@ -2448,21 +2432,11 @@ def process_document_updated(payload):
             doc_type = doc_obj.get("type")
             include_in_budget = doc_obj.get("includeInBudget")
             job_id = (doc_obj.get("job") or {}).get("id")
-            print(f"  doc-updated: fetched doc {doc_id} — type={doc_type}, includeInBudget={include_in_budget}, job={job_id}")
         except Exception as e:
             print(f"  doc-updated: could not fetch document {doc_id}: {e}")
             return
 
-        if not job_id:
-            print("  doc-updated: no job ID found — skipping")
-            return
-
-        if doc_type != "customerOrder":
-            print(f"  doc-updated: type={doc_type}, not an estimate — skipping")
-            return
-
-        if include_in_budget is False:
-            print("  doc-updated: not included in budget — skipping")
+        if not job_id or doc_type != "customerOrder" or include_in_budget is False:
             return
 
         print(f"  doc-updated: estimate approved on job {job_id} — flipping to Closed Won")
@@ -2470,17 +2444,10 @@ def process_document_updated(payload):
         job_info = get_job_info(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
-        if not job_type:
-            print("  doc-updated: could not determine job type — skipping")
+        if not job_type or job_type not in AUTOMATION_ENABLED_JOB_TYPES:
             return
 
-        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
-            print(f"  doc-updated: {job_type} not in automation scope — skipping")
-            return
-
-        # Skip if already in a terminal state
         if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
-            print(f"  doc-updated: job already at '{current_status}' — skipping")
             return
 
         # Flip to Closed Won and clean up follow-up to-dos
@@ -2508,38 +2475,33 @@ def process_job_created(payload):
         job_id = (event.get("job") or {}).get("id")
 
         if not job_id:
-            print("  job-created: no job ID — skipping")
             return
 
-        print(f"  job-created: job {job_id}")
-
-        # Fetch job details
         job_info = get_job_info(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
-        if not job_type:
-            print("  job-created: could not determine job type — skipping")
-            return
-
-        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
-            print(f"  job-created: {job_type} not in automation scope — skipping")
+        if not job_id or job_type not in AUTOMATION_ENABLED_JOB_TYPES:
             return
 
         if current_status != "New Lead":
-            print(f"  job-created: status is '{current_status}', not 'New Lead' — skipping")
             return
 
-        # Check if to-dos already exist (form submissions create them before this fires)
+        # Brief pause to let any to-dos created by the sales lead tool (route.ts)
+        # or another concurrent process propagate before we check for duplicates.
+        import time
+        time.sleep(3)
+
+        # Re-fetch job info after sleep so we see any to-dos that just landed
+        job_info = get_job_info(job_id)
+
         existing_todos = [
             t for t in (job_info.get("tasks") or {}).get("nodes", [])
             if t.get("isToDo")
         ]
         if existing_todos:
-            print(f"  job-created: {len(existing_todos)} to-dos already exist — skipping")
             return
 
-        # Create the new-lead to-do chain
-        print(f"  job-created: creating to-do chain for {job_type}")
+        print(f"  job-created: creating to-do chain for {job_type} on job {job_id}")
         create_new_lead_todos(job_id, job_type)
 
     except Exception as e:
@@ -2563,7 +2525,6 @@ def process_job_updated(payload):
             (data.get("data") or {}).get("id")
         )
         if not job_id:
-            print("  job-updated: no job ID — skipping")
             return
 
         job_info = get_job_info(job_id)
@@ -2572,11 +2533,10 @@ def process_job_updated(payload):
         if not job_type or not current_status:
             return
 
-        print(f"  job-updated: job {job_id} | type={job_type} | status={current_status}")
-
         if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
-            print(f"  {job_type} not in automation scope — skipping")
             return
+
+        print(f"  job-updated: job {job_id} | type={job_type} | status={current_status}")
 
         # Get previous status from payload to check direction
         event_data = (event.get("data") or {})
@@ -2621,12 +2581,11 @@ def process_job_updated(payload):
 def create_job_stub(cfg):
     """
     Create the job record in JobTread with no estimate — account, contact,
-    location, job, files, and first to-do.  Returns job_id.
+    location, job, and files.  Returns job_id.
 
-    Called by Wufoo handlers so the lead is captured immediately before
-    the best-effort AI estimate runs.  If the estimate succeeds, the caller
-    patches cost groups and projected budget via add_cost_groups() and
-    update_job_custom_fields().  If it fails, flag_failed_estimate() fires.
+    To-dos are created by the jobCreated webhook (process_job_created) which
+    fires automatically after job creation — do NOT create them here or they
+    will be duplicated.
     """
     account_id  = upsert_account_and_contact(cfg)
     location_id = create_location_record(account_id, cfg["location_address"])
@@ -2634,8 +2593,6 @@ def create_job_stub(cfg):
     job_id = create_job_record(location_id, cfg)
     print(f"  Job created: {job_id}")
     attach_files(job_id, cfg.get("file_urls", []))
-    if cfg.get("status_value") == "New Lead":
-        create_new_lead_todos(job_id, job_type=cfg.get("job_type", "Home Repair"))
     return job_id
 
 
@@ -2648,6 +2605,8 @@ def create_job_full(cfg):
     3. Create job (PM, status, projected budget)
     4. Cost groups (if estimate present)
     5. Attach files
+
+    To-dos are created by the jobCreated webhook — do NOT create them here.
     """
     account_id  = upsert_account_and_contact(cfg)
     location_id = create_location_record(account_id, cfg["location_address"])
@@ -2656,8 +2615,6 @@ def create_job_full(cfg):
     print(f"  Job created: {job_id}")
     add_cost_groups(job_id, cfg.get("estimate"))
     attach_files(job_id, cfg.get("file_urls", []))
-    if cfg.get("status_value") == "New Lead":
-        create_new_lead_todos(job_id, job_type=cfg.get("job_type", "Home Repair"))
     return job_id
 
 
