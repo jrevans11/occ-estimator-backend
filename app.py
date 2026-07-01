@@ -1613,6 +1613,7 @@ def process_document_sent(payload):
 # ── Daily follow-up email runner ─────────────────────────────────────────────
 
 FOLLOWUP_SENT_MARKERS = {
+    2:  "[OCC-AUTO-CR]",   # closing repair 48-hr check-in
     3:  "[OCC-AUTO-F1]",
     7:  "[OCC-AUTO-F2]",
     14: "[OCC-AUTO-F3]",
@@ -1878,13 +1879,14 @@ def log_followup_sent(job_id, day):
     """Add a comment to the job recording that the follow-up was sent."""
     from datetime import date
     marker = FOLLOWUP_SENT_MARKERS[day]
+    label = "Closing repair check-in" if day == 2 else f"Day {day} follow-up"
     try:
         jobtread_query({
             "createComment": {
                 "$": {
                     "targetType": "job",
                     "targetId": job_id,
-                    "message": f"{marker} Day {day} follow-up email sent on {date.today().isoformat()}.",
+                    "message": f"{marker} {label} email sent on {date.today().isoformat()}.",
                 },
                 "createdComment": {"id": {}}
             }
