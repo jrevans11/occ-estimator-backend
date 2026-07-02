@@ -2042,6 +2042,9 @@ def process_send_followups():
             continue
 
         # ── Home Repair / Remodel / Pre-listing: Day 3, 7, 14 chain ─────────
+        # Day 2 is closing-repair-only — skip it for all other job types
+        if days_since == 2:
+            continue
         if days_since not in FOLLOWUP_SENT_MARKERS:
             continue
 
