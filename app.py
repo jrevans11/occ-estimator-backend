@@ -2790,8 +2790,11 @@ def process_sales_tool_general_estimate(body):
                 print(f"  Could not log consult-needed comment on job {job_id}: {ce}")
 
         if update_fields:
-            update_job_custom_fields(job_id, update_fields)
-            print(f"  Updated job {job_id} custom fields: {update_fields}")
+            try:
+                update_job_custom_fields(job_id, update_fields)
+                print(f"  Updated job {job_id} custom fields: {update_fields}")
+            except Exception as ue:
+                print(f"  Projected Budget field update failed (budget still saved): {ue}")
 
     except Exception as e:
         import traceback
@@ -3030,6 +3033,27 @@ def build_general_notes(form, pref=None, how=None, work=None, budget=None,
     return "\n".join(parts)
 
 
+def _coerce_budget_number(value):
+    """Turn a budget value (possibly a string like '$50,000' or '50k') into a
+    plain number for JobTread's Projected Budget field. Returns None if nothing
+    numeric can be parsed."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return round(float(value))
+    s = str(value).strip().lower().replace(",", "").replace("$", "").replace(" ", "")
+    if not s:
+        return None
+    mult = 1
+    if s.endswith("k"):
+        mult = 1000
+        s = s[:-1]
+    try:
+        return round(float(s) * mult)
+    except ValueError:
+        return None
+
+
 def _apply_estimate_gate(estimate, notes):
     """Given a returned estimate, decide budget vs consult. Returns (estimate_or_None, notes, projected)."""
     projected = None
@@ -3043,7 +3067,7 @@ def _apply_estimate_gate(estimate, notes):
         return None, notes, None
     total = estimate.get("total", 0) or 0
     if total > 0:
-        projected = f"${total:,.0f}"
+        projected = round(float(total))
     return estimate, notes, projected
 
 
@@ -3109,7 +3133,10 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
             except Exception as ce:
                 print(f"  Could not log consult comment: {ce}")
         if update_fields:
-            update_job_custom_fields(job_id, update_fields)
+            try:
+                update_job_custom_fields(job_id, update_fields)
+            except Exception as ue:
+                print(f"  Projected Budget field update failed (budget still saved): {ue}")
     except Exception as e:
         import traceback
         print(f"  AI estimate failed for job {job_id}: {e}")
@@ -3159,7 +3186,7 @@ def process_remodel(data):
         estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
         # Remodels: client's stated budget anchors the projected field over AI total
         if budget:
-            projected = budget
+            projected = _coerce_budget_number(budget)
         if estimate:
             add_cost_groups(job_id, estimate)
         update_fields = {}
@@ -3179,7 +3206,10 @@ def process_remodel(data):
             except Exception as ce:
                 print(f"  Could not log consult comment: {ce}")
         if update_fields:
-            update_job_custom_fields(job_id, update_fields)
+            try:
+                update_job_custom_fields(job_id, update_fields)
+            except Exception as ue:
+                print(f"  Projected Budget field update failed (budget still saved): {ue}")
     except Exception as e:
         import traceback
         print(f"  AI estimate failed for job {job_id}: {e}")
@@ -3269,7 +3299,12 @@ def process_prelisting(data):
             except Exception as ce:
                 print(f"  Could not log consult comment: {ce}")
         if update_fields:
-            update_job_custom_fields(job_id, update_fields)
+            try:
+                update_job_custom_fields(job_id, update_fields)
+            except Exception as ue:
+                # Budget/cost groups already saved — don't flag the whole estimate
+                # as failed just because the Projected Budget field write errored.
+                print(f"  Projected Budget field update failed (budget still saved): {ue}")
     except Exception as e:
         import traceback
         print(f"  AI estimate failed for job {job_id}: {e}")
