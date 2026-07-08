@@ -1223,7 +1223,116 @@ CUSTOMER_REPLY_TODO = "💬 Customer replied — check in personally"
 # don't keep creating duplicate "customer replied" to-dos on every check.
 PAUSE_LOGGED_MARKER = "[OCC-AUTO] Automation paused — customer replied"
 
+# ── Change-order follow-up (Client Walk-Through tool) ────────────────────────
+# The walk-through tool creates two to-dos per change order immediately. When
+# the PM checks off "Send change order NNNN for approval", we create a single
+# 2-day follow-up. The PM checks the follow-up off when the client approves the
+# change order (approval is not auto-detected — see note at the bottom of this
+# file for why).
+CO_SEND_FOR_APPROVAL_RE = re.compile(
+    r"send change order\s+#?(\d{3,4})\s+for approval", re.IGNORECASE
+)
+CO_FOLLOWUP_NAME_TMPL   = "Follow up on CO {num} approval"
+CO_FOLLOWUP_OFFSET_DAYS = 2
 
+
+def resolve_job_pm_membership(job_id):
+    """Return the membershipId of the job's assigned PM (from the 'Project
+    Manager' custom field), or None. Mirrors the Walk-Through tool's resolver."""
+    try:
+        resp = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "customFieldValues": {
+                    "$": {"size": 20},
+                    "nodes": {"customField": {"name": {}}, "value": {}}
+                }
+            }
+        })
+        pm_name = None
+        for n in (resp.get("job") or {}).get("customFieldValues", {}).get("nodes", []):
+            if (n.get("customField") or {}).get("name") == "Project Manager":
+                pm_name = n.get("value")
+                break
+        if not pm_name:
+            return None
+        m = jobtread_query({
+            "organization": {
+                "$": {"id": JOBTREAD_ORG},
+                "memberships": {
+                    "$": {"size": 1, "where": [["user", "name"], pm_name]},
+                    "nodes": {"id": {}}
+                }
+            }
+        })
+        nodes = (m.get("organization") or {}).get("memberships", {}).get("nodes", [])
+        return nodes[0]["id"] if nodes else None
+    except Exception as e:
+        print(f"  resolve_job_pm_membership failed: {e}")
+        return None
+
+
+def handle_co_send_for_approval(task_id, job_id):
+    """
+    If the checked-off task is a CO "Send change order NNNN for approval" to-do,
+    create the 2-day "Follow up on CO NNNN approval" to-do assigned to the job's
+    PM. Returns True if this was a CO task (so the caller can stop), else False.
+
+    Runs BEFORE the AUTOMATION_USER_IDS gate in process_task_updated because CO
+    to-dos are checked off by PMs, who are not in that set.
+    """
+    try:
+        resp = jobtread_query({"task": {"$": {"id": task_id}, "name": {}, "isToDo": {}}})
+        task = resp.get("task") or {}
+        name = task.get("name") or ""
+    except Exception as e:
+        print(f"  handle_co_send_for_approval: task lookup failed: {e}")
+        return False
+
+    match = CO_SEND_FOR_APPROVAL_RE.search(name)
+    if not match:
+        return False
+
+    co_num = match.group(1).zfill(4)
+    followup_name = CO_FOLLOWUP_NAME_TMPL.format(num=co_num)
+
+    # Idempotency — don't create a duplicate if a follow-up for this CO is open.
+    try:
+        existing = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "tasks": {"$": {"size": 50},
+                          "nodes": {"name": {}, "isToDo": {}, "progress": {}}}
+            }
+        })
+        for t in (existing.get("job") or {}).get("tasks", {}).get("nodes", []):
+            if t.get("name") == followup_name and t.get("progress") != 1:
+                print(f"  CO {co_num}: follow-up already open — skipping")
+                return True
+    except Exception as e:
+        print(f"  CO follow-up dup-check failed (continuing): {e}")
+
+    from datetime import date, timedelta
+    due = (date.today() + timedelta(days=CO_FOLLOWUP_OFFSET_DAYS)).isoformat()
+
+    task_input = {
+        "name": followup_name,
+        "isToDo": True,
+        "targetType": "job",
+        "targetId": job_id,
+        "startDate": due,
+        "endDate": due,
+    }
+    pm_membership = resolve_job_pm_membership(job_id)
+    if pm_membership:
+        task_input["assignees"] = [{"membershipId": pm_membership}]
+
+    try:
+        jobtread_query({"createTask": {"$": task_input}})
+        print(f"  CO {co_num}: follow-up created '{followup_name}' (due {due})")
+    except Exception as e:
+        print(f"  CO {co_num}: follow-up creation failed: {e}")
+    return True
 
 def get_job_info(job_id):
     """Fetch job type, current status field values, and open to-dos."""
@@ -2276,6 +2385,13 @@ def process_task_updated(payload):
 
         # 4. Must belong to an account
         if not has_account:
+            return
+
+        # 4b. Change-order follow-up (Walk-Through tool) is PM-driven. PMs are
+        #     NOT in AUTOMATION_USER_IDS, so handle it before the user gate. If
+        #     this was a CO "send for approval" checkoff, the follow-up is
+        #     created here and we're done.
+        if handle_co_send_for_approval(task_id, job_id):
             return
 
         # 5. Must be completed by someone in our automation user set
