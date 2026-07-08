@@ -1128,14 +1128,12 @@ STATUS_TO_TODO = {
 
 # Names used to identify follow-up to-dos (used for deletion)
 FOLLOWUP_TODO_NAMES = {
-    "📧 Follow-up email #1 — check in on estimate",
     "📞 Follow-up call #1 — any questions?",
-    "📧 Follow-up email #2 — still interested?",
-    "📧 Follow-up email #3 — final touch",
     "🚨 Final decision call — win or move on",
     "📅 Long term follow-up — check back in",
     "💬 Customer replied — check in personally",
-    # Review to-dos — created by cron, sent when Jason checks them off
+    # Review to-dos — created by cron, sent when Jason checks them off.
+    # These now ARE the follow-up to-dos — no separate email-placeholder chain.
     "📧 Review & send — Day 3 follow-up",
     "📧 Review & send — Day 7 follow-up",
     "📧 Review & send — Day 14 follow-up",
@@ -1156,14 +1154,6 @@ FOLLOWUP_STATUS_MAP = {
     14: "Sent Final Follow UP",
 }
 
-# Maps old email to-do name → which review to-do replaced it (so domino chain
-# knows to create the next step after the review to-do is checked off)
-FOLLOWUP_EMAIL_TODO_TO_REVIEW = {
-    "📧 Follow-up email #1 — check in on estimate": "📧 Review & send — Day 3 follow-up",
-    "📧 Follow-up email #2 — still interested?":    "📧 Review & send — Day 7 follow-up",
-    "📧 Follow-up email #3 — final touch":          "📧 Review & send — Day 14 follow-up",
-}
-
 # Pending review markers — logged as comments so the cron doesn't create a
 # second review to-do if it runs before Jason has checked the first one off
 FOLLOWUP_PENDING_MARKERS = {
@@ -1173,46 +1163,16 @@ FOLLOWUP_PENDING_MARKERS = {
     2:  "[OCC-PENDING-CR]",  # closing repair 48-hr check-in
 }
 
-# ── Follow-up domino chain (post-estimate) ───────────────────────────────────
-# Same domino pattern as TODO_CHAIN: only the first step is created when the
-# estimate is sent. Each subsequent step is created when the previous one is
-# checked off. Keeps Action Items clean — only the current step is visible.
-# (days_since is used by the cron runner to know which day's email/message to send)
-FOLLOWUP_CHAIN = [
-    {
-        "name":       "📧 Follow-up email #1 — check in on estimate",
-        "days_since": 3,
-        "next":       "📞 Follow-up call #1 — any questions?",
-        "offset":     5,
-    },
-    {
-        "name":       "📞 Follow-up call #1 — any questions?",
-        "days_since": None,  # manual step, not auto-emailed
-        "next":       "📧 Follow-up email #2 — still interested?",
-        "offset":     7,
-    },
-    {
-        "name":       "📧 Follow-up email #2 — still interested?",
-        "days_since": 7,
-        "next":       "📧 Follow-up email #3 — final touch",
-        "offset":     14,
-    },
-    {
-        "name":       "📧 Follow-up email #3 — final touch",
-        "days_since": 14,
-        "next":       "🚨 Final decision call — win or move on",
-        "offset":     14,
-    },
-    {
-        "name":       "🚨 Final decision call — win or move on",
-        "days_since": None,  # manual step, not auto-emailed
-        "next":       None,
-        "offset":     0,
-    },
-]
-
-FOLLOWUP_TO_NEXT   = {s["name"]: s["next"]   for s in FOLLOWUP_CHAIN if s["next"]}
-FOLLOWUP_TO_OFFSET = {s["name"]: s["offset"] for s in FOLLOWUP_CHAIN if s["next"]}
+# ── Follow-up manual call steps ──────────────────────────────────────────────
+# The cron (process_send_followups) creates the "Review & send" to-do for
+# Day 3 / 7 / 14 directly off the real elapsed time since sending — there is
+# no separate placeholder chain anymore. The only thing that dominoes off a
+# review to-do being checked off is an optional MANUAL call step (a human
+# action, not an email) for Jason to do next. Day 7 has no manual step.
+MANUAL_CALL_AFTER_DAY = {
+    3:  {"name": "📞 Follow-up call #1 — any questions?", "offset": 7},
+    14: {"name": "🚨 Final decision call — win or move on", "offset": 0},
+}
 
 # The to-do created when a customer reply is detected mid-chain.
 # Replaces whatever follow-up to-do would have fired next — automation stands
@@ -1223,116 +1183,7 @@ CUSTOMER_REPLY_TODO = "💬 Customer replied — check in personally"
 # don't keep creating duplicate "customer replied" to-dos on every check.
 PAUSE_LOGGED_MARKER = "[OCC-AUTO] Automation paused — customer replied"
 
-# ── Change-order follow-up (Client Walk-Through tool) ────────────────────────
-# The walk-through tool creates two to-dos per change order immediately. When
-# the PM checks off "Send change order NNNN for approval", we create a single
-# 2-day follow-up. The PM checks the follow-up off when the client approves the
-# change order (approval is not auto-detected — see note at the bottom of this
-# file for why).
-CO_SEND_FOR_APPROVAL_RE = re.compile(
-    r"send change order\s+#?(\d{3,4})\s+for approval", re.IGNORECASE
-)
-CO_FOLLOWUP_NAME_TMPL   = "Follow up on CO {num} approval"
-CO_FOLLOWUP_OFFSET_DAYS = 2
 
-
-def resolve_job_pm_membership(job_id):
-    """Return the membershipId of the job's assigned PM (from the 'Project
-    Manager' custom field), or None. Mirrors the Walk-Through tool's resolver."""
-    try:
-        resp = jobtread_query({
-            "job": {
-                "$": {"id": job_id},
-                "customFieldValues": {
-                    "$": {"size": 20},
-                    "nodes": {"customField": {"name": {}}, "value": {}}
-                }
-            }
-        })
-        pm_name = None
-        for n in (resp.get("job") or {}).get("customFieldValues", {}).get("nodes", []):
-            if (n.get("customField") or {}).get("name") == "Project Manager":
-                pm_name = n.get("value")
-                break
-        if not pm_name:
-            return None
-        m = jobtread_query({
-            "organization": {
-                "$": {"id": JOBTREAD_ORG},
-                "memberships": {
-                    "$": {"size": 1, "where": [["user", "name"], pm_name]},
-                    "nodes": {"id": {}}
-                }
-            }
-        })
-        nodes = (m.get("organization") or {}).get("memberships", {}).get("nodes", [])
-        return nodes[0]["id"] if nodes else None
-    except Exception as e:
-        print(f"  resolve_job_pm_membership failed: {e}")
-        return None
-
-
-def handle_co_send_for_approval(task_id, job_id):
-    """
-    If the checked-off task is a CO "Send change order NNNN for approval" to-do,
-    create the 2-day "Follow up on CO NNNN approval" to-do assigned to the job's
-    PM. Returns True if this was a CO task (so the caller can stop), else False.
-
-    Runs BEFORE the AUTOMATION_USER_IDS gate in process_task_updated because CO
-    to-dos are checked off by PMs, who are not in that set.
-    """
-    try:
-        resp = jobtread_query({"task": {"$": {"id": task_id}, "name": {}, "isToDo": {}}})
-        task = resp.get("task") or {}
-        name = task.get("name") or ""
-    except Exception as e:
-        print(f"  handle_co_send_for_approval: task lookup failed: {e}")
-        return False
-
-    match = CO_SEND_FOR_APPROVAL_RE.search(name)
-    if not match:
-        return False
-
-    co_num = match.group(1).zfill(4)
-    followup_name = CO_FOLLOWUP_NAME_TMPL.format(num=co_num)
-
-    # Idempotency — don't create a duplicate if a follow-up for this CO is open.
-    try:
-        existing = jobtread_query({
-            "job": {
-                "$": {"id": job_id},
-                "tasks": {"$": {"size": 50},
-                          "nodes": {"name": {}, "isToDo": {}, "progress": {}}}
-            }
-        })
-        for t in (existing.get("job") or {}).get("tasks", {}).get("nodes", []):
-            if t.get("name") == followup_name and t.get("progress") != 1:
-                print(f"  CO {co_num}: follow-up already open — skipping")
-                return True
-    except Exception as e:
-        print(f"  CO follow-up dup-check failed (continuing): {e}")
-
-    from datetime import date, timedelta
-    due = (date.today() + timedelta(days=CO_FOLLOWUP_OFFSET_DAYS)).isoformat()
-
-    task_input = {
-        "name": followup_name,
-        "isToDo": True,
-        "targetType": "job",
-        "targetId": job_id,
-        "startDate": due,
-        "endDate": due,
-    }
-    pm_membership = resolve_job_pm_membership(job_id)
-    if pm_membership:
-        task_input["assignees"] = [{"membershipId": pm_membership}]
-
-    try:
-        jobtread_query({"createTask": {"$": task_input}})
-        print(f"  CO {co_num}: follow-up created '{followup_name}' (due {due})")
-    except Exception as e:
-        print(f"  CO {co_num}: follow-up creation failed: {e}")
-    return True
 
 def get_job_info(job_id):
     """Fetch job type, current status field values, and open to-dos."""
@@ -1570,13 +1421,9 @@ def delete_followup_todos(job_info):
     return deleted
 
 
-def create_followup_todos(job_id, job_type):
-    """
-    Create ONLY the first follow-up to-do after an estimate is sent.
-    Each subsequent step is created when the previous one is checked off
-    (domino effect — see FOLLOWUP_CHAIN / process_task_updated).
-    """
-    create_single_todo(job_id, job_type, FOLLOWUP_CHAIN[0]["name"], due_offset=3)
+# create_followup_todos removed — the cron (process_send_followups) creates
+# the first real to-do ("Review & send — Day 3 follow-up") itself once 3 days
+# have actually elapsed. No placeholder is created when the estimate is sent.
 
 
 def create_longterm_todo(job_id, job_type):
@@ -1677,10 +1524,12 @@ def process_document_sent(payload):
         if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
             return
 
-        # Delete existing follow-up to-dos and create fresh ones
+        # Clear out any stale follow-up to-dos from a prior send. The cron
+        # (process_send_followups) will create the real Day 3/7/14 review
+        # to-dos itself once that much time has actually elapsed — no
+        # placeholder is created here.
         deleted = delete_followup_todos(job_info)
         print(f"  Deleted {deleted} existing follow-up to-dos")
-        create_followup_todos(job_id, job_type)
 
         # Flip status to Sent
         set_job_status(job_id, job_type, "Sent")
@@ -1749,7 +1598,8 @@ VOICE RULES — non-negotiable:
 - Always open with time of day: "Good morning", "Good afternoon", or "Good evening" based on time of day provided. Then first name only. No "Hi" or "Hey" or "Dear".
 - Short paragraphs, one thought each. 3-6 sentences total for the whole email.
 - Use "I" for Jason personally, "we/us" for the company — both can appear in the same message naturally.
-- Reference something specific about THEIR project — the actual work scoped, the address, or a detail from the notes. Never generic.
+- Reference something specific about THEIR project — the actual work scoped, or a detail from the notes. Never generic.
+- Do NOT mention or restate the property address in the body — the client already knows what property is being discussed, so naming it back to them reads as generated. Use project/scope details instead to make it feel specific.
 - End with something warm and forward-looking: "Have a great day", "I'll be in touch", "Thanks!", etc.
 - Contractions always: "I'm", "I'll", "we'd", "don't". Never stiff.
 - NO: "I hope this email finds you well", "please don't hesitate", "as per", "moving forward", "circle back", "reach out", "valued customer", "at your earliest convenience", bullet points, numbered lists, exclamation points on every sentence.
@@ -1757,7 +1607,13 @@ VOICE RULES — non-negotiable:
 - Never mention that this is an automated or scheduled email.
 - Never invent facts about the project that aren't in the context provided.
 
-OUTPUT: Return ONLY the plain text email body. No subject line. No signature (Jason's name and contact info is added automatically). No markdown."""
+FORMATTING — non-negotiable:
+- The greeting line ("Good afternoon Daryl,") stands alone as its own line, followed by a blank line before the body starts.
+- The closing line ("Hope you're having a great week!") stands alone as its own line, with a blank line before it separating it from the body.
+- Use a blank line between paragraphs if there is more than one paragraph in the body.
+- Structure: greeting line \\n\\n body paragraph(s) \\n\\n closing line. Never run the greeting or closing into the same paragraph as the body text.
+
+OUTPUT: Return ONLY the plain text email body, using real blank lines (\\n\\n) between the greeting, body, and closing as described above. No subject line. No signature (Jason's name and contact info is added automatically). No markdown."""
 
 
 def generate_followup_email(first_name, days_since=None, job_type=None, address=None,
@@ -1799,7 +1655,7 @@ def generate_followup_email(first_name, days_since=None, job_type=None, address=
 
 Customer first name: {first_name}
 Time of day: {time_of_day}
-Property address: {address or 'not specified'}
+Property address (context only — do NOT mention this in the email body): {address or 'not specified'}
 Job type: {job_type or 'Home Repair'}
 {scope_text}
 {f'Project notes: {notes[:500]}' if notes and notes.strip() else ''}
@@ -2305,22 +2161,17 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
                 current_status != LONG_TERM_STATUS):
             set_job_status(job_id, job_type_label, target_status)
 
-    # Advance the domino chain to the next follow-up step.
-    # Closing repair (day 2) has no chain — single check-in only.
-    if days_since == 2:
-        return
-
-    # Map review to-do name → the old email to-do name → next step in FOLLOWUP_CHAIN
-    old_email_name = {v: k for k, v in FOLLOWUP_EMAIL_TODO_TO_REVIEW.items()}.get(task_name)
-    if old_email_name:
-        next_name   = FOLLOWUP_TO_NEXT.get(old_email_name)
-        next_offset = FOLLOWUP_TO_OFFSET.get(old_email_name, 1)
-        if next_name:
-            if has_pending_reply_pause(job_id):
-                print(f"  send_followup: automation paused — not creating '{next_name}'")
-            else:
-                create_single_todo(job_id, job_type_label, next_name, due_offset=next_offset)
-                print(f"  send_followup: chain advanced → '{next_name}'")
+    # After sending, create the next MANUAL step (a human call), if any.
+    # Day 2 (closing repair) has no manual step — single check-in only.
+    # Day 7 has no manual step either — straight to Day 14's review to-do
+    # via the cron. Day 3 → phone call; Day 14 → final decision call.
+    manual_step = MANUAL_CALL_AFTER_DAY.get(days_since)
+    if manual_step:
+        if has_pending_reply_pause(job_id):
+            print(f"  send_followup: automation paused — not creating '{manual_step['name']}'")
+        else:
+            create_single_todo(job_id, job_type_label, manual_step["name"], due_offset=manual_step["offset"])
+            print(f"  send_followup: created manual step → '{manual_step['name']}'")
 
 
 def complete_todo_by_name(job_info, todo_name):
@@ -2387,13 +2238,6 @@ def process_task_updated(payload):
         if not has_account:
             return
 
-        # 4b. Change-order follow-up (Walk-Through tool) is PM-driven. PMs are
-        #     NOT in AUTOMATION_USER_IDS, so handle it before the user gate. If
-        #     this was a CO "send for approval" checkoff, the follow-up is
-        #     created here and we're done.
-        if handle_co_send_for_approval(task_id, job_id):
-            return
-
         # 5. Must be completed by someone in our automation user set
         if changed_by not in AUTOMATION_USER_IDS:
             return
@@ -2448,21 +2292,12 @@ def process_task_updated(payload):
             send_followup_email_from_todo(task_id, task_name, job_id, job_type)
             return
 
-        # ── Follow-up chain domino: manual steps only ─────────────────────────
-        # Email-sending steps (#1, #2, #3) are advanced by the cron runner itself
-        # right after it sends the email (see process_send_followups), since the
-        # next to-do's due date depends on the actual send date. Here we only
-        # need to handle the two manual steps (calls) being checked off by hand.
-        if task_name in FOLLOWUP_TO_NEXT and task_name not in (TODO_TO_NEXT_C if is_closing else TODO_TO_NEXT):
-            next_name = FOLLOWUP_TO_NEXT.get(task_name)
-            next_offset = FOLLOWUP_TO_OFFSET.get(task_name, 1)
-            if next_name:
-                # Don't resurrect the chain if automation already paused on a reply
-                if has_pending_reply_pause(job_id):
-                    print(f"  task-updated: '{task_name}' completed but automation is paused on this job — not creating '{next_name}'")
-                else:
-                    create_single_todo(job_id, job_type, next_name, due_offset=next_offset)
-                    print(f"  task-updated: follow-up chain advanced → '{next_name}'")
+        # Manual call steps ("Follow-up call #1", "Final decision call") are
+        # terminal when checked off — they don't create a next to-do. The
+        # cron (process_send_followups) independently creates the next
+        # "Review & send" to-do once enough real time has elapsed, so there
+        # is nothing to advance here.
+        if task_name in FOLLOWUP_TODO_NAMES:
             return
         # ─────────────────────────────────────────────────────────────────────
 
