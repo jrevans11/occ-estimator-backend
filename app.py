@@ -945,11 +945,29 @@ def attach_files(job_id, file_urls):
             print(f"  File attach failed for {label}: {e}")
 
 
+def next_business_day(d):
+    """
+    Roll a date forward to the next Monday if it lands on a Saturday or
+    Sunday. Jason doesn't work weekends, so no to-do should ever be due on
+    one — anything that would land there gets pushed to the following Monday.
+    """
+    # Monday=0 ... Saturday=5, Sunday=6
+    if d.weekday() == 5:      # Saturday → Monday
+        from datetime import timedelta
+        return d + timedelta(days=2)
+    if d.weekday() == 6:      # Sunday → Monday
+        from datetime import timedelta
+        return d + timedelta(days=1)
+    return d
+
+
 def create_single_todo(job_id, job_type, name, due_offset=0):
-    """Create a single to-do on a job assigned to the correct team member."""
+    """Create a single to-do on a job assigned to the correct team member.
+    Due date is rolled forward off a weekend to the following Monday."""
     from datetime import date, timedelta
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
-    due = (date.today() + timedelta(days=due_offset)).isoformat()
+    due_date = next_business_day(date.today() + timedelta(days=due_offset))
+    due = due_date.isoformat()
     try:
         jobtread_query({
             "createTask": {
@@ -1430,7 +1448,7 @@ def create_longterm_todo(job_id, job_type):
     """Create a single 60-day long-term follow-up to-do."""
     from datetime import date, timedelta
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
-    due = (date.today() + timedelta(days=60)).isoformat()
+    due = next_business_day(date.today() + timedelta(days=60)).isoformat()
     try:
         jobtread_query({
             "createTask": {
@@ -1881,7 +1899,7 @@ def create_review_todo(job_id, job_type, todo_name, email_body):
     """Create the review to-do with the AI email in the description field."""
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
     from datetime import date
-    today = date.today().isoformat()
+    today = next_business_day(date.today()).isoformat()
     # Truncate to 4096 chars (JobTread description limit)
     description = email_body[:4090] if email_body else ""
     try:
