@@ -844,12 +844,16 @@ def create_job_record(location_id, cfg):
         job_cfv["Project Manager"] = cfg["pm"]
     if cfg.get("projected_budget"):
         job_cfv["Projected Budget"] = cfg["projected_budget"]
+    if cfg.get("notes_text"):
+        # Job "description" is customer-facing (shows at the top of Customer
+        # Orders), so inquiry notes go in the "Notes" custom field instead —
+        # internal-only, not shown on customer documents.
+        job_cfv["Notes"] = cfg["notes_text"]
 
     job_input = {
         "locationId": location_id,
         "priceType": "fixed",
         "scheduleIsPublished": True,
-        "description": cfg.get("notes_text") or "",
         "customFieldValues": job_cfv,
     }
     # Only set a name for closing repairs; new forms leave it null → JobTread auto "Job #####"
@@ -2011,7 +2015,7 @@ def process_send_followups():
 
             # Not viewed — queue a closing repair check-in review to-do
             job_address = (job.get("location") or {}).get("address", "")
-            job_notes   = job.get("description", "") or ""
+            job_notes   = job_cfvs.get("Notes", "") or ""
             email_body = generate_followup_email(
                 first_name, day=2, job_type="Closing Repair",
                 address=job_address, notes=job_notes, cost_group_names=[]
@@ -2049,7 +2053,7 @@ def process_send_followups():
             continue
 
         job_address      = (job.get("location") or {}).get("address", "")
-        job_notes        = job.get("description", "") or ""
+        job_notes        = job_cfvs.get("Notes", "") or ""
         cost_group_names = [
             cg.get("name", "")
             for cg in (job.get("costGroups") or {}).get("nodes", [])
