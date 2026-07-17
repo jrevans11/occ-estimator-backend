@@ -1,0 +1,33 @@
+number,name,cost_code_id
+110,Project Management,22PETC5BN43J
+120,General Conditions,22PETCH6zZhB
+210,In-House Labor,22PETCKqJVWh
+220,Subcontractor Labor,22PETCNDcfDc
+230,Internal Use,22PETCRMQJUW
+310,Demolition,22PETCV44N5r
+320,Temporary Protection,22PETCZhucah
+330,Cleanup & Disposal,22PEisAAMqHT
+410,Framing,22PETCnHxzta
+420,Windows & Doors,22PETCw3Y5uW
+430,Insulation Materials,22PETCzzFKms
+440,Roofing Materials,22PETD7NBVn6
+450,Siding & Trim,22PETDKgbpyb
+460,Gutters,22PETDUJiBpT
+470,Exterior Paint,22PEirZPQTCv
+510,Plumbing,22PEirbTJDhB
+520,Electrical,22PEircqrwCW
+530,HVAC,22PEirdn7FzR
+540,Gas Line Work,22PEirfSpRRw
+610,Crawlspace Work,22PEirgpMcRX
+620,Masonry Materials,22PEiri3uvVN
+630,Concrete,22PEirjXp7Vd
+710,Drywall,22PEirkhpFRY
+720,Trim & Millwork,22PEirnGfCx8
+730,Interior Paint,22PEirpS2yfs
+740,Flooring,22PEirrujXsu
+750,Cabinetry,22PEirswMmvP
+760,Countertops,22PEiruPd5SV
+810,Hardware,22PEirvgWyqi
+820,Specialty Items,22PEirws4B2K
+830,Shower Glass,22PEiryGteTJ
+840,Appliance Selection,22PEirzQU5Wx
