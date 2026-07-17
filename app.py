@@ -9,6 +9,17 @@ import http.client
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# v2 closing-repair estimating logic (labor+material breakdown, real cost
+# codes, historical reference examples, Home Depot catalog resolution,
+# addendum vision support). See estimate_v2_draft.py module docstring for
+# full history. Used ONLY by the two closing-repair flows below
+# (process_sales_tool_closing_estimate and the Wufoo closing-repair
+# handler) — deliberately NOT wired into call_claude()/add_cost_groups()/
+# get_system_prompt(), which stay untouched because call_claude_general()
+# (Home Repair, GVL, Remodel, Pre-listing, and the general sales-tool flow)
+# still depends on their original flat-price schema and behavior.
+import estimate_v2_draft as v2
+
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 WUFOO_API_KEY    = os.environ.get("WUFOO_API_KEY", "")
@@ -303,6 +314,61 @@ def get_system_prompt():
     return SYSTEM_PROMPT
 
 
+def get_system_prompt_v2():
+    """
+    System prompt for the v2 closing-repair flow (call_claude_v2 +
+    add_cost_groups_v2) — used ONLY by process_sales_tool_closing_estimate
+    and the Wufoo closing-repair handler.
+
+    Reuses SYSTEM_PROMPT's shared sections verbatim (company info, pricing
+    rules, labor classification, out-of-scope rules, customer-facing output
+    rules, scope rules, best-effort gating, description formatting, labor
+    tagging) so any future edits to those sections apply automatically to
+    both prompts. Swaps out exactly two pieces:
+      1. The flat "REPAIR PRICING REFERENCE" lookup-table intro is replaced
+         with v2.build_full_estimating_prompt() (the STEP 1-4 reasoning
+         method + 17 real historical examples) — the old EXTERIOR/INTERIOR/
+         GARAGE price tables themselves are KEPT, right after it, since
+         build_full_estimating_prompt()'s own text explicitly frames them as
+         a sanity-check reference ("the per-category price lists below").
+      2. The old flat OUTPUT schema (single "price" field) is replaced with
+         v2.EXAMPLE_OUTPUT_SCHEMA (cost_code, labor_lines, material_lines,
+         sub_scope_price, confidence, quantity_note).
+
+    Deliberately does NOT modify SYSTEM_PROMPT or get_system_prompt() —
+    call_claude_general() (Home Repair/GVL/Remodel/Pre-listing/general
+    sales-tool flows) shares those with the OLD add_cost_groups(), which
+    only understands the flat "price" field. Changing the shared prompt's
+    output schema would silently break estimate generation for all of those
+    other job types.
+    """
+    price_ref_marker = "REPAIR PRICING REFERENCE"
+    price_tables_marker = "EXTERIOR:"
+    customer_facing_marker = "CUSTOMER-FACING OUTPUT RULES"
+    output_marker = "OUTPUT: Respond with ONLY valid JSON, no markdown:"
+
+    required = [price_ref_marker, price_tables_marker, customer_facing_marker, output_marker]
+    if not all(m in SYSTEM_PROMPT for m in required):
+        print("  WARNING: get_system_prompt_v2() couldn't find expected markers in "
+              "SYSTEM_PROMPT — falling back to get_system_prompt() (old schema). "
+              "This means the v2 closing-repair flow will silently behave like the "
+              "old flow until SYSTEM_PROMPT's structure is reconciled.")
+        return get_system_prompt()
+
+    head = SYSTEM_PROMPT[:SYSTEM_PROMPT.index(price_ref_marker)]
+    price_tables = SYSTEM_PROMPT[SYSTEM_PROMPT.index(price_tables_marker):SYSTEM_PROMPT.index(customer_facing_marker)]
+    shared_rules = SYSTEM_PROMPT[SYSTEM_PROMPT.index(customer_facing_marker):SYSTEM_PROMPT.index(output_marker)]
+
+    estimating_logic = v2.build_full_estimating_prompt()
+    new_output_schema = "OUTPUT: Respond with ONLY valid JSON, no markdown:\n" + v2.EXAMPLE_OUTPUT_SCHEMA
+
+    return (
+        head
+        + estimating_logic + "\n\n"
+        + price_tables + "\n"
+        + shared_rules
+        + new_output_schema
+    )
 
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────
@@ -2633,33 +2699,45 @@ def process_sales_tool_closing_estimate(body):
     print(f"  sales-tool-closing-estimate: starting AI estimate for job {job_id}")
 
     try:
-        addendum_text       = ""
+        addendum_pdf_bytes   = b""
         inspection_pdf_bytes = b""
 
+        # v2: addendum now goes to Claude as native PDF (vision), same as the
+        # inspection report — NOT extract_pdf_text. Realtors send addendums
+        # as clean typed PDFs, scans, or sometimes not at all (the inspection
+        # report alone carries the ask), or as a marked-up inspection report.
+        # See CLAUDE.md "repair addendum vision support" for the full finding.
         if addendum_url:
             print("  Downloading repair addendum...")
-            addendum_bytes = download_file(addendum_url)
-            pages = extract_pdf_text(addendum_bytes)
-            addendum_text = "\n".join(text for _, text in pages)
-            print(f"  Addendum: {len(addendum_text)} chars extracted")
+            addendum_pdf_bytes = download_file(addendum_url)
+            print(f"  Addendum: {len(addendum_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
 
         if inspection_url:
             print("  Downloading inspection report...")
             inspection_pdf_bytes = download_file(inspection_url)
             print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
 
-        if not addendum_text and not inspection_pdf_bytes:
+        if not addendum_pdf_bytes and not inspection_pdf_bytes:
             raise Exception("Files provided but neither could be downloaded")
 
-        print("  Calling Claude...")
-        estimate = call_claude(
-            addendum_text, inspection_pdf_bytes,
-            client_name, client_phone, client_email, address, notes_text
+        print("  Calling Claude (v2 — labor+material breakdown)...")
+        estimate = v2.call_claude_v2(
+            addendum_pdf_bytes, inspection_pdf_bytes,
+            client_name, client_phone, client_email, address, notes_text,
+            system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
         )
-        total = estimate.get("total", 0)
-        print(f"  Estimate total: ${total:,.2f}")
+        # Don't trust Claude's own "total" field here — under the new schema
+        # it's not told to apply markup itself, so its self-reported total
+        # has no reliable basis. Compute the real billed total the same way
+        # add_cost_groups_v2() actually prices each line.
+        total = v2.compute_estimate_total(estimate)
+        print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
 
-        added = add_cost_groups(job_id, estimate)
+        print("  Resolving material lines against Home Depot catalog...")
+        estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
+        print(f"  Catalog resolution: {catalog_stats}")
+
+        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
         print(f"  {added} cost groups added to job {job_id}")
 
     except Exception as e:
@@ -3637,33 +3715,40 @@ class Handler(BaseHTTPRequestHandler):
 
             # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ──
             try:
-                addendum_text        = ""
+                addendum_pdf_bytes   = b""
                 inspection_pdf_bytes = b""
 
+                # v2: addendum now goes to Claude as native PDF (vision), same
+                # as the inspection report — NOT extract_pdf_text. See
+                # CLAUDE.md "repair addendum vision support" for why (scans,
+                # marked-up inspection reports, or no separate file at all).
                 if addendum_url:
                     print("  Downloading repair addendum...")
-                    addendum_bytes = download_file(addendum_url)
-                    pages = extract_pdf_text(addendum_bytes)
-                    addendum_text = "\n".join(text for _, text in pages)
-                    print(f"  Addendum: {len(addendum_text)} chars extracted")
+                    addendum_pdf_bytes = download_file(addendum_url)
+                    print(f"  Addendum: {len(addendum_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
 
                 if inspection_url:
                     print("  Downloading inspection report...")
                     inspection_pdf_bytes = download_file(inspection_url)
                     print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
 
-                if not addendum_text and not inspection_pdf_bytes:
+                if not addendum_pdf_bytes and not inspection_pdf_bytes:
                     raise Exception("Files attached but neither could be downloaded")
 
-                print("  Calling Claude...")
-                estimate = call_claude(
-                    addendum_text, inspection_pdf_bytes,
-                    client_name, client_phone, client_email, address, notes_text
+                print("  Calling Claude (v2 — labor+material breakdown)...")
+                estimate = v2.call_claude_v2(
+                    addendum_pdf_bytes, inspection_pdf_bytes,
+                    client_name, client_phone, client_email, address, notes_text,
+                    system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
                 )
-                total = estimate.get("total", 0)
-                print(f"  Estimate total: ${total:,.2f}")
+                total = v2.compute_estimate_total(estimate)
+                print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
 
-                added = add_cost_groups(job_id, estimate)
+                print("  Resolving material lines against Home Depot catalog...")
+                estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
+                print(f"  Catalog resolution: {catalog_stats}")
+
+                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
                 print(f"  {added} cost groups added to job {job_id}")
 
             except Exception as e:
