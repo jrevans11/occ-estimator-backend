@@ -950,7 +950,7 @@ Property address: {address}
 def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
                     client_phone, client_email, address, notes,
                     system_prompt, anthropic_api_key,
-                    model="claude-sonnet-4-6", max_tokens=8000, timeout=300):
+                    model="claude-sonnet-4-6", max_tokens=24000, timeout=400):
     """Replaces call_claude() in app.py. Same retry/parsing behavior, but:
       - addendum is now native PDF (vision), not extract_pdf_text
       - both documents are optional independently (see build_claude_document_content)
@@ -959,25 +959,36 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
     module globals, so this stays a pure, unit-testable function like
     add_cost_groups_v2 above (pass a fake urlopen/requests layer in tests).
 
-    BUG FIX (Jul 2026, found on the first real live submission): this used
-    to inherit call_claude()'s timeout=120 and only retry on
-    (json.JSONDecodeError, ValueError) — i.e. bad-JSON responses. A real
-    submission with a large inspection report (1.9MB / many pages) hit a
-    genuine TimeoutError, which isn't a JSONDecodeError/ValueError, so it
-    skipped the retry loop entirely and failed on attempt 1 with no retry at
-    all (confirmed in the Render traceback: straight from "Calling Claude"
-    to the outer exception handler, no "attempt 2" log line). Two fixes:
-      1. timeout raised 120 -> 300s default. The v2 prompt asks for much
-         more detailed per-repair reasoning (quantity, labor hours,
-         multiple material lines, cost code, confidence) than the old flat
-         price lookup, so it legitimately needs more generation time,
-         especially with a large multi-page vision document. This call runs
-         in a background thread (fire-and-forget from the webhook's
-         perspective — the HTTP response already returned before this
-         runs), so a longer timeout costs nothing downstream.
-      2. The retry loop now also catches TimeoutError/OSError/HTTPException
-         (network-level failures), not just JSON parsing failures, so a
-         transient timeout gets retried instead of failing outright.
+    BUG FIX #1 (Jul 2026, 1st live submission): this used to inherit
+    call_claude()'s timeout=120 and only retry on (json.JSONDecodeError,
+    ValueError) — i.e. bad-JSON responses. A real submission with a large
+    inspection report (1.9MB / many pages) hit a genuine TimeoutError,
+    which isn't a JSONDecodeError/ValueError, so it skipped the retry loop
+    entirely and failed on attempt 1 with no retry at all. Fixed: timeout
+    raised 120 -> 300s (this call runs in a background thread — the
+    webhook's HTTP response already returned before this runs — so a
+    longer timeout costs nothing downstream), and the except clause
+    broadened to also catch TimeoutError/OSError/HTTPException.
+
+    BUG FIX #2 (Jul 2026, 2nd live submission, same real job resubmitted):
+    with the timeout fixed, the SAME submission then failed differently —
+    "Claude response truncated by max_tokens (attempt 1), got 27031 chars
+    before cutoff", and again on attempt 2 (same failure, since retrying
+    with the same max_tokens just truncates at the same point again — this
+    failure mode is NOT transient, so the retry loop alone can't fix it).
+    Root cause: the v2 schema asks for far more output per repair item
+    (quantity_note, confidence, cost_code, multiple labor_lines and
+    material_lines) than the old flat "price" field ever needed, and a
+    real closing-repair inspection report can have many repair items — 8000
+    max_tokens simply wasn't enough for a job with a lot of items. Checked
+    Anthropic's docs: Claude Sonnet 4.5-class models support up to 64,000
+    output tokens standard (no beta header needed), so 8000 had a lot of
+    headroom to give. Raised max_tokens 8000 -> 24000 and timeout 300 ->
+    400s (generation time scales with output length, so the timeout needed
+    more room too) — not the max possible, but a big enough jump to clear
+    a normal job's real item count with margin, without asking for enough
+    tokens that a single truncated/hung generation eats an excessive amount
+    of time before failing.
     """
     content = build_claude_document_content(
         addendum_pdf_bytes, inspection_pdf_bytes,
