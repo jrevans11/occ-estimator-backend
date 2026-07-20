@@ -128,6 +128,8 @@ import io
 import json
 import base64
 import urllib.request
+import urllib.error
+import http.client
 import os
 
 # Resolve the historical CSV relative to THIS file's directory, not the
@@ -948,7 +950,7 @@ Property address: {address}
 def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
                     client_phone, client_email, address, notes,
                     system_prompt, anthropic_api_key,
-                    model="claude-sonnet-4-6", max_tokens=8000):
+                    model="claude-sonnet-4-6", max_tokens=8000, timeout=300):
     """Replaces call_claude() in app.py. Same retry/parsing behavior, but:
       - addendum is now native PDF (vision), not extract_pdf_text
       - both documents are optional independently (see build_claude_document_content)
@@ -956,6 +958,26 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
     system_prompt and anthropic_api_key are passed in rather than read from
     module globals, so this stays a pure, unit-testable function like
     add_cost_groups_v2 above (pass a fake urlopen/requests layer in tests).
+
+    BUG FIX (Jul 2026, found on the first real live submission): this used
+    to inherit call_claude()'s timeout=120 and only retry on
+    (json.JSONDecodeError, ValueError) — i.e. bad-JSON responses. A real
+    submission with a large inspection report (1.9MB / many pages) hit a
+    genuine TimeoutError, which isn't a JSONDecodeError/ValueError, so it
+    skipped the retry loop entirely and failed on attempt 1 with no retry at
+    all (confirmed in the Render traceback: straight from "Calling Claude"
+    to the outer exception handler, no "attempt 2" log line). Two fixes:
+      1. timeout raised 120 -> 300s default. The v2 prompt asks for much
+         more detailed per-repair reasoning (quantity, labor hours,
+         multiple material lines, cost code, confidence) than the old flat
+         price lookup, so it legitimately needs more generation time,
+         especially with a large multi-page vision document. This call runs
+         in a background thread (fire-and-forget from the webhook's
+         perspective — the HTTP response already returned before this
+         runs), so a longer timeout costs nothing downstream.
+      2. The retry loop now also catches TimeoutError/OSError/HTTPException
+         (network-level failures), not just JSON parsing failures, so a
+         transient timeout gets retried instead of failing outright.
     """
     content = build_claude_document_content(
         addendum_pdf_bytes, inspection_pdf_bytes,
@@ -984,7 +1006,7 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
                 },
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 result = json.loads(r.read().decode("utf-8"))
 
             stop_reason = result.get("stop_reason")
@@ -1002,9 +1024,9 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
 
             return json.loads(match.group(0))
 
-        except (json.JSONDecodeError, ValueError) as e:
+        except (json.JSONDecodeError, ValueError, TimeoutError, OSError, http.client.HTTPException) as e:
             last_error = e
-            print(f"  call_claude_v2 attempt {attempt} failed: {e}")
+            print(f"  call_claude_v2 attempt {attempt} failed ({type(e).__name__}): {e}")
             if attempt < 3:
                 print(f"  Retrying ({attempt + 1}/3)...")
                 continue
