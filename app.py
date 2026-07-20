@@ -43,10 +43,44 @@ PRICING RULES:
 - Material markup: cost + 65%
 - Subcontractor markup: cost + 45%
 
-LABOR CLASSIFICATION (who performs the work — drives which markup applies):
-- SUBCONTRACTOR work (apply 45% markup): all electrical work; MAJOR HVAC repairs (system replacement, compressor, refrigerant, major ductwork); MAJOR plumbing (re-pipe, sewer/drain line, water heater replacement, slab leaks); crawlspace moisture remediation and clean-out (vapor barrier, dehumidifier, fungal/mold treatment, sump pump).
-- IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else — drywall, paint, carpentry, trim, doors, windows, flooring, general repairs, minor plumbing fixture work, minor HVAC service, exterior/roofing repairs, etc.
-- Minor/routine HVAC and plumbing (filter swaps, fixture seals, leak repairs, condensate lines, toilet/faucet work) are IN-HOUSE, not sub.
+LABOR CLASSIFICATION (who performs the work — drives which markup applies;
+refined Jul 2026 from Jason's direct answers on real gray-area cases):
+- SUBCONTRACTOR work (apply 45% markup): all electrical work; MAJOR HVAC
+  repairs (system replacement, compressor, refrigerant, major ductwork);
+  MAJOR plumbing (re-pipe, sewer/drain line, water heater replacement, slab
+  leaks, cast iron drain work of any kind, ANY drain work located in the
+  crawlspace, and any internal-parts replacement on a plumbing fixture such
+  as a shower valve cartridge or valve body — too many variables for
+  in-house crews); ALL crawlspace work related to moisture mitigation
+  (vapor barrier, dehumidifier, clean-out, fungal/mold treatment, sump
+  pump, crawlspace insulation repair/replacement) — no small-fix exception,
+  always sub regardless of size.
+- IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else
+  — drywall, paint, carpentry, trim, flooring, general handyman repairs,
+  and minor plumbing/HVAC fixture work such as a sink pop-up assembly,
+  securing a loose shower arm/faucet/fixture, clearing a simple
+  slow-draining sink or vanity P-trap, exposed HVAC lineset insulation, and
+  small/loose duct-work repairs or strapping. ALWAYS in-house regardless of
+  what else is happening in the job: exterior wood rot repair, small
+  siding or roofing repairs, window parts replacement, window/door
+  replacement, and other general handyman-type repairs.
+- HVAC INSPECTIONS: only add a sub HVAC inspection line item when the
+  inspection report specifically calls for an HVAC inspection/diagnostic
+  visit. Otherwise, small HVAC items (lineset insulation, minor duct
+  repairs/strapping) stay in-house without a sub inspection fee attached.
+- JOB-WIDE BUNDLING RULE (applies to plumbing, electrical, and HVAC alike):
+  if a job already has enough sub-scope work in a trade to require calling
+  that sub out anyway — e.g. plumbing: a water heater replacement/missing
+  expansion tank, a re-pipe, several leaking drains, or any cast iron drain
+  work; electrical: a panel job or major rewiring; HVAC: a system/
+  compressor replacement — bundle the smaller same-trade items that would
+  normally be in-house into that sub's visit too, since they're already
+  on-site for it (e.g. a loose faucet, a slow drain, an exterior spigot).
+  Still itemize each bundled item as its own line where possible rather
+  than one lump sum. If a trade's ONLY issue in the job is a small,
+  in-house-eligible item with no other sub-scope trigger in that same
+  trade (e.g. a single exterior spigot replacement and nothing else
+  plumbing-related), keep it in-house.
 
 NEVER ESTIMATE — OUT OF SCOPE (OCC does not offer these):
 - Radon remediation/mitigation
@@ -2726,6 +2760,11 @@ def process_sales_tool_closing_estimate(body):
             client_name, client_phone, client_email, address, notes_text,
             system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
         )
+        # Enforce OCC's 3-hr minimum in-house labor charge per job (Jul 2026
+        # pricing Q&A) before computing the total or writing cost groups, so
+        # both reflect the enforced floor if the itemized hours fell short.
+        estimate = v2.enforce_minimum_labor_hours(estimate)
+
         # Don't trust Claude's own "total" field here — under the new schema
         # it's not told to apply markup itself, so its self-reported total
         # has no reliable basis. Compute the real billed total the same way
@@ -2737,7 +2776,7 @@ def process_sales_tool_closing_estimate(body):
         estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
         print(f"  Catalog resolution: {catalog_stats}")
 
-        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
+        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
         print(f"  {added} cost groups added to job {job_id}")
 
     except Exception as e:
@@ -3741,6 +3780,7 @@ class Handler(BaseHTTPRequestHandler):
                     client_name, client_phone, client_email, address, notes_text,
                     system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
                 )
+                estimate = v2.enforce_minimum_labor_hours(estimate)
                 total = v2.compute_estimate_total(estimate)
                 print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
 
@@ -3748,7 +3788,7 @@ class Handler(BaseHTTPRequestHandler):
                 estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
                 print(f"  Catalog resolution: {catalog_stats}")
 
-                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
+                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
                 print(f"  {added} cost groups added to job {job_id}")
 
             except Exception as e:
