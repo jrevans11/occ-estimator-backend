@@ -218,8 +218,31 @@ full rear eave" or "single fixture, no photo — assumed 1 unit"). If you
 truly cannot tell, make the most reasonable assumption for a typical
 closing-repair scope of that type and flag "confidence": "low".
 
+IMPORTANT — photos are ground truth, the inspector's wording is not. Home
+inspectors are generalists, not tradespeople, and sometimes misdescribe or
+underdiagnose what they're looking at (e.g. calling an active plumbing leak
+"water staining," describing a full missing tile section as "cracked tile,"
+or missing that "wood rot" is actually a pest/termite issue). When a photo
+clearly shows something DIFFERENT from what the report's text says — not
+just a different quantity, but a different actual problem, cause, or
+severity — trust what is visible in the photo and estimate/classify/describe
+based on that, not the inspector's wording. Call this out explicitly in
+"quantity_note" whenever it happens (e.g. "Report says 'minor water
+staining' but photo shows an active supply-line leak — estimated as a
+plumbing repair, not a cosmetic one") so Jason's team can see exactly where
+and why the AI overrode the report's text. If a photo is unclear,
+low-resolution, or genuinely isn't provided for a given item, say so plainly
+in "quantity_note" instead of inventing visual detail you can't actually
+see — the goal is trustworthy photo-based judgment, not the appearance of it.
+
 STEP 2 — CLASSIFY LABOR: sub vs in_house per the LABOR CLASSIFICATION rules
-elsewhere in this prompt.
+elsewhere in this prompt (including the JOB-WIDE BUNDLING RULE — review the
+WHOLE job's items in a trade together before classifying each one, not item
+by item in isolation, since a small item can flip from in_house to sub
+depending on what else is happening in that same trade on this job). If a
+single root problem genuinely needs BOTH an in-house fix and a sub fix (e.g.
+a sub-scope plumbing leak plus in-house drywall repair from the resulting
+water damage), set "labor" to "mixed" instead of choosing one — see STEP 3C.
 
 STEP 2B — ASSIGN A COST CODE: set "cost_code" to EXACTLY one of these real
 category names (copy the spelling exactly, this maps directly to a real
@@ -260,6 +283,38 @@ STEP 3A — IF IN-HOUSE: break the work into
   report groups them together (e.g. one "Exterior Wood Rot" group with
   separate labor + material lines per location).
 
+  HOURS ROUNDING / NON-PRODUCTIVE TIME BUFFER: always pad your estimated
+  hours upward a bit to cover realistic non-productive time (gathering
+  tools, moving around the property, cleanup/pack-up) — this is deliberate
+  policy, not sloppy rounding. It applies to bigger tasks too, not just
+  quick ones (e.g. a task that might realistically take 3 hours often gets
+  quoted closer to 4) — the ratio isn't fixed, use judgment, but default to
+  generous rather than lean.
+
+  JOB MINIMUM LABOR: every job that has any in-house labor at all is billed
+  for AT LEAST 3 hours of in-house labor across the WHOLE job (this covers
+  drive time and setup for the visit) — this is a whole-job floor, not a
+  per-item minimum. If your itemized labor_lines already add up to 3+ hours
+  across the job (common once there are a few items), no adjustment is
+  needed. If the job only has one small in-house item, make sure its hours
+  reflect this — do not quote a single tiny in-house item at well under 3
+  hours total. (The system also enforces this floor programmatically as a
+  safety net — see enforce_minimum_labor_hours() — but estimate it correctly
+  yourself first.)
+
+  STRUCTURAL SHORING / ELLIS JACKS: when an inspection report calls out
+  improper temporary foundation support in the crawlspace — e.g. screw jack
+  posts (the adjustable steel posts sold at Home Depot), a dry-stacked CMU
+  block stack, or any other improvised point shoring — this is IN-HOUSE
+  work (OCC's crew replaces these directly; it is not part of the
+  crawlspace-moisture-mitigation sub scope). Always specify a real Ellis
+  jack (search the Home Depot catalog for "Ellis jack" — OCC's own catalog
+  lists them by model number, e.g. "STL 22"-style codes) sized to the
+  span/height needed, paired with a 12x12 base plate (catalog item like
+  "BASE12"). Use the same Ellis-jack-plus-base-plate approach for any drop
+  girder repair or headered joist repair that needs a permanent support
+  point, not just for replacing bad temporary shoring.
+
 STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace):
   do NOT itemize hours or materials — subs bill OCC scope-based or day-rate
   per visit, not itemized labor+materials, so a granular breakdown here
@@ -288,6 +343,26 @@ STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace):
     in the CRAWLSPACE/FOUNDATION section of this prompt — those came from
     real quotes, not invoices, so treat them as reasonable but softer
     anchors than the electrical numbers above.
+
+  QUOTE-REQUIRED CATEGORIES — do not guess a sub_scope_price for these if
+  the addendum/report doesn't give enough detail to size them responsibly;
+  instead OMIT the cost group entirely and add it to "skipped_items" with a
+  reason like "requires an on-site sub quote — insufficient detail to price
+  responsibly": panel replacement/relocation or major rewiring/code
+  corrections; water heater replacement; major HVAC system/compressor
+  replacement; cast iron drain replacement or any re-pipe work; sill plate
+  replacement. This list expands the original panel-only safety net — when
+  in doubt on a big-ticket sub item with vague scope, flag it for a real
+  quote rather than fabricating a number.
+
+STEP 3C — IF MIXED (one root problem needs both in-house AND sub work):
+  set "labor" to "mixed" and fill in BOTH parts within this SAME cost
+  group — do not split it into two groups. Fill "sub_scope_price" for the
+  sub portion (per STEP 3B) AND "labor_lines"/"material_lines" for the
+  in-house portion (per STEP 3A), itemized separately within the group so
+  it's clear what's sub work vs. in-house work even though it's one line
+  item on the report (e.g. a sub-scope plumbing leak repair plus the
+  in-house drywall patch it caused).
 
 STEP 4 — CONFIDENCE: set "confidence" to "high" (clear quantity + typical
 scope), "medium" (reasonable assumption, some ambiguity), or "low" (report
@@ -355,6 +430,15 @@ HISTORICAL_REFERENCE_GROUP_KEYS = [
     ("22PHKJegqZ2s", "Exterior Spigot Repair"),
     ("22PHJvyu7ymv", "Caulk Countertop/Backsplash Gaps"),
 ]
+
+# RESOLVED (Jul 2026 pricing Q&A): "Exterior Spigot Repair" above is CORRECT
+# as an in-house example — Jason confirmed a spigot replacement is in-house
+# when it's the ONLY plumbing item in the job. It only bundles into a
+# plumber's sub visit under the JOB-WIDE BUNDLING RULE (see LABOR
+# CLASSIFICATION in app.py's SYSTEM_PROMPT) when the same job ALSO has a
+# real plumbing sub-scope trigger (water heater replacement, a re-pipe,
+# several leaking drains, cast iron drain work). No conflict — this example
+# stays in the historical reference list unchanged.
 
 
 def load_historical_reference_examples(
@@ -462,6 +546,23 @@ EXAMPLE_OUTPUT_SCHEMA = """
       "material_lines": [],
       "sub_scope_price": 750.00,
       "notes": null
+    },
+    {
+      "title": "6.4 - Plumbing Leak and Resulting Drywall Damage",
+      "description": "- Repair active supply line leak under kitchen sink (plumber).\\n- Patch and repaint water-damaged drywall below sink (in-house).",
+      "labor": "mixed",
+      "cost_code": "Plumbing",
+      "quantity_note": "~2 sq ft drywall patch based on photo of water staining",
+      "confidence": "medium",
+      "labor_lines": [
+        {"trade": "drywall", "hours": 1.5, "rate": 89.00}
+      ],
+      "material_lines": [
+        {"item": "drywall patch kit + joint compound", "qty": 1, "unit": "kit", "unit_cost": 15.00},
+        {"item": "matching interior paint (prorated)", "qty": 1, "unit": "allowance", "unit_cost": 12.00}
+      ],
+      "sub_scope_price": 300.00,
+      "notes": "labor='mixed' — sub handles the plumbing repair (sub_scope_price), in-house handles the drywall patch (labor_lines/material_lines), both under one cost group since it's one root problem"
     }
   ],
   "total": 0.00,
@@ -586,6 +687,15 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
 
             if not ok or not products:
                 stats["no_match"] += 1
+                # Jason's ask (Jul 2026 pricing Q&A): when there's no
+                # catalog match at all, still flag it so his team knows to
+                # manually check the price rather than silently trusting
+                # Claude's own guessed cost with no visible signal. (A real
+                # secondary price source — e.g. searching Amazon or another
+                # retailer when Home Depot's catalog comes up empty — isn't
+                # wired in yet; this is intentionally just a flag for now,
+                # not a substitute lookup.)
+                line["catalog_no_match"] = True
                 continue
 
             scored = sorted(
@@ -597,9 +707,18 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
             if best_score >= auto_apply_threshold and best_product.get("unitCost"):
                 original_cost = line.get("unit_cost")
                 line["unit_cost"] = float(best_product["unitCost"])
+                # Full product detail carried through to add_cost_groups_v2()
+                # so it can write a real description (+ attempt a photo
+                # attachment) onto the JobTread cost item — not just swap
+                # the price and drop everything else on the floor.
                 line["catalog_match"] = {
                     "name": best_product.get("name"),
+                    "brand": best_product.get("brand"),
+                    "department": best_product.get("department"),
+                    "modelNumber": best_product.get("modelNumber"),
                     "sku": best_product.get("storeSkuNumber"),
+                    "unitOfMeasure": best_product.get("unitOfMeasure"),
+                    "imageUrl": best_product.get("imageUrl"),
                     "link": best_product.get("link"),
                     "matched_score": round(best_score, 2),
                     "llm_guessed_cost": original_cost,
@@ -609,7 +728,8 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                 line["catalog_candidates"] = [
                     {
                         "name": p.get("name"), "unit_cost": p.get("unitCost"),
-                        "sku": p.get("storeSkuNumber"), "link": p.get("link"),
+                        "brand": p.get("brand"), "sku": p.get("storeSkuNumber"),
+                        "imageUrl": p.get("imageUrl"), "link": p.get("link"),
                     }
                     for _, p in scored[:top_n]
                 ]
@@ -645,6 +765,74 @@ COST_TYPE_OTHER = "22P9ppJUAHYR"  # kept for reference; no longer used below
 # COST_CODE_MAP and COST_CODE_UNCATEGORIZED are defined above, near the top
 # of the file, alongside the real 3-digit cost code data.
 
+# Jason's rule (Jul 2026 pricing Q&A): "Generally we need to bill for at
+# least 3 hours. If the job has only one small item that's not
+# subcontractor then we need to minimum charge 3 hrs plus materials." This
+# is a WHOLE-JOB floor on total in-house labor (covers drive time/setup for
+# the visit), not a per-line-item minimum — see enforce_minimum_labor_hours().
+MINIMUM_INHOUSE_LABOR_HOURS = 3.0
+
+
+def enforce_minimum_labor_hours(estimate, minimum_hours=MINIMUM_INHOUSE_LABOR_HOURS,
+                                 rate=89.00):
+    """Enforce OCC's 3-hour minimum in-house labor charge per job, in code
+    rather than trusting the LLM to self-police it consistently (same
+    reasoning as compute_estimate_total() — Claude's own arithmetic/
+    judgment on a hard business-policy floor shouldn't be the only thing
+    standing between a real job and an underbilled one).
+
+    Sums hours across every labor_lines entry in every cost group. If the
+    job has ANY in-house labor at all and the total is below minimum_hours,
+    appends a new, clearly-labeled cost group ("Minimum Labor Charge — Trip/
+    Setup Time") with a single labor line making up the shortfall — a real,
+    visible, auditable JobTread line item rather than silently inflating an
+    existing one. Jobs with ZERO in-house labor (all-sub, or empty) are left
+    untouched — the floor is specifically about dispatching OCC's own crew.
+
+    Call this AFTER call_claude_v2() and BEFORE add_cost_groups_v2(), same
+    place compute_estimate_total() gets called, so the written JobTread
+    cost groups and the computed total both reflect the enforced floor.
+
+    Mutates and returns the same estimate dict.
+    """
+    if not estimate:
+        return estimate
+
+    groups = estimate.get("cost_groups", []) or []
+    total_hours = 0.0
+    has_any_inhouse_labor = False
+    for g in groups:
+        for line in g.get("labor_lines", []) or []:
+            hours = float(line.get("hours", 0) or 0)
+            if hours > 0:
+                has_any_inhouse_labor = True
+                total_hours += hours
+
+    if not has_any_inhouse_labor or total_hours >= minimum_hours:
+        return estimate
+
+    shortfall = round(minimum_hours - total_hours, 2)
+    print(f"  Itemized in-house labor totaled {total_hours:.2f} hrs — below "
+          f"the {minimum_hours:.0f}-hr job minimum, adding a {shortfall:.2f} hr "
+          f"adjustment line")
+    groups.append({
+        "title": "Minimum Labor Charge — Trip/Setup Time",
+        "description": ("- Minimum in-house labor charge for this visit, "
+                         "covering trip time and job setup."),
+        "labor": "in_house",
+        "cost_code": "In-House Labor",
+        "quantity_note": (f"Itemized in-house work totaled {total_hours:.2f} hrs "
+                           f"— bumped to OCC's {minimum_hours:.0f}-hr job minimum "
+                           f"per standing policy."),
+        "confidence": "high",
+        "labor_lines": [{"trade": "general", "hours": shortfall, "rate": rate}],
+        "material_lines": [],
+        "sub_scope_price": None,
+        "notes": None,
+    })
+    estimate["cost_groups"] = groups
+    return estimate
+
 
 def compute_estimate_total(estimate):
     """Compute the real billed total programmatically from labor_lines,
@@ -665,25 +853,155 @@ def compute_estimate_total(estimate):
         return 0.0
     total = 0.0
     for group in estimate.get("cost_groups", []) or []:
-        labor = (group.get("labor", "") or "").strip().lower()
-        if labor == "sub":
-            sub_cost = float(group.get("sub_scope_price", 0) or 0)
-            if sub_cost > 0:
-                total += round(sub_cost * SUB_MARKUP, 2)
-        else:
-            for line in group.get("labor_lines", []) or []:
-                hours = float(line.get("hours", 0) or 0)
-                rate = float(line.get("rate", 89.00) or 89.00)
-                total += hours * rate
-            for line in group.get("material_lines", []) or []:
-                qty = float(line.get("qty", 0) or 0)
-                unit_cost = float(line.get("unit_cost", 0) or 0)
-                if qty > 0 and unit_cost > 0:
-                    total += round(qty * unit_cost * MATERIAL_MARKUP, 2)
+        # NOTE (Jul 2026 pricing Q&A): a group's sub portion and in-house
+        # portion are no longer mutually exclusive — "labor" can be "mixed"
+        # when one root problem needs both a sub fix and an in-house fix
+        # under the same cost group (see STEP 3C). So sum whichever pieces
+        # of data are actually present, rather than branching on the
+        # "labor" tag — a "mixed" group has both a real sub_scope_price AND
+        # real labor_lines/material_lines, and both need to count.
+        sub_cost = float(group.get("sub_scope_price", 0) or 0)
+        if sub_cost > 0:
+            total += round(sub_cost * SUB_MARKUP, 2)
+        for line in group.get("labor_lines", []) or []:
+            hours = float(line.get("hours", 0) or 0)
+            rate = float(line.get("rate", 89.00) or 89.00)
+            total += hours * rate
+        for line in group.get("material_lines", []) or []:
+            qty = float(line.get("qty", 0) or 0)
+            unit_cost = float(line.get("unit_cost", 0) or 0)
+            if qty > 0 and unit_cost > 0:
+                total += round(qty * unit_cost * MATERIAL_MARKUP, 2)
     return round(total, 2)
 
 
-def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
+# Real cost-item custom field NAMES on Jason's org (confirmed Jul 2026 via
+# organization.customFields, filtered to targetType="costItem"): SKU (text,
+# id 22PAMX7kB95M), Product Link (url, 22PAMX92jTKk), Service Category
+# (option, 22PAMWeEp6jF), Specifications (text, 22PFnwKMHdVW).
+#
+# "Preferred Vendor" and "Internal Notes" were RENAMED by Jason (Jul 2026,
+# same session) to "Brand" and "Model Number" respectively — same field ids
+# (22PAKQnJBHGA, 22PCLg5dUPQ2), same text type, just relabeled — specifically
+# to fix a semantic mismatch this code surfaced: those two fields were being
+# reused to hold Brand/Model Number data (matching JobTread's own "Link to
+# Global Catalog" import-mapping dialog default: Brand -> Preferred Vendor,
+# Model Number -> Internal Notes), which was a confusing label for what was
+# actually being stored there. Renaming (not adding new fields) was Jason's
+# choice — keeps just the 6 existing fields, no new ones, and the Global
+# Catalog import mapping should now show Brand -> Brand / Model Number ->
+# Model Number automatically since it maps by field id, not label.
+#
+# createJob in app.py already proves the write mechanism: customFieldValues
+# is passed as a plain {"Field Name": value} dict directly in the mutation's
+# $ args (see job_cfv around app.py's create_job_record) — job-scoped custom
+# fields resolve by NAME, not by id. createCostItem is expected to work the
+# same way for costItem-scoped fields (not independently confirmed with a
+# live write — my research key can only read, every create attempt returns
+# "You don't have permission" regardless of whether the args are valid — so
+# this needs a real check against the next live submission's JobTread job).
+COST_ITEM_FIELD_SKU = "SKU"
+COST_ITEM_FIELD_PRODUCT_LINK = "Product Link"
+COST_ITEM_FIELD_BRAND = "Brand"
+COST_ITEM_FIELD_MODEL_NUMBER = "Model Number"
+
+
+def _build_material_custom_field_values(line):
+    """For a confidently auto-matched material line, build the
+    customFieldValues dict to write onto createCostItem — real SKU/link/
+    brand/model into the actual custom fields Jason's team already uses,
+    not a text blob. Returns {} if there's no confident catalog_match (the
+    weak-match "candidates" case doesn't have one clean value per field, so
+    that stays a text note — see _build_material_description).
+    """
+    catalog_match = line.get("catalog_match")
+    if not catalog_match:
+        return {}
+    values = {}
+    if catalog_match.get("sku"):
+        values[COST_ITEM_FIELD_SKU] = str(catalog_match["sku"])
+    if catalog_match.get("link"):
+        values[COST_ITEM_FIELD_PRODUCT_LINK] = catalog_match["link"]
+    if catalog_match.get("brand"):
+        values[COST_ITEM_FIELD_BRAND] = catalog_match["brand"]
+    if catalog_match.get("modelNumber"):
+        # Field is now literally named "Model Number" (renamed from
+        # "Internal Notes" by Jason) — no need for a "Model: " prefix on
+        # the value itself anymore, the field label already says it.
+        values[COST_ITEM_FIELD_MODEL_NUMBER] = catalog_match["modelNumber"]
+    return values
+
+
+def _build_material_description(line):
+    """Build a short free-text description for a material cost item.
+    Confirmed via the Pave API (Jul 2026) that costItem.description is a
+    real, currently-unused field (queried an existing item, got back null).
+
+    For a confident catalog_match, the STRUCTURED detail (SKU, link, brand,
+    model) now goes into real custom fields instead (see
+    _build_material_custom_field_values) — this just adds the real product
+    name as a one-line description, so the item reads clearly at a glance.
+    For a weak match (multiple candidates, nothing auto-selected), there's
+    no single clean value to put in a structured field, so the candidate
+    list stays here as free text.
+    """
+    catalog_match = line.get("catalog_match")
+    if catalog_match:
+        return catalog_match.get("name") or ""
+
+    candidates = line.get("catalog_candidates")
+    if candidates:
+        lines = ["Possible Home Depot matches (not auto-selected — confirm before ordering):"]
+        for c in candidates:
+            bits = [c.get("name") or "Unnamed product"]
+            if c.get("unit_cost"):
+                bits.append(f"${c['unit_cost']}")
+            if c.get("link"):
+                bits.append(c["link"])
+            lines.append("  - " + " | ".join(bits))
+        return "\n".join(lines)
+
+    if line.get("catalog_no_match"):
+        # Jason's ask (Jul 2026 pricing Q&A): flag unmatched materials so
+        # the team knows to manually verify price rather than trusting an
+        # unlabeled AI guess. Standard 65% markup is still applied to the
+        # guessed cost per his answer ("standard markup but flag it so I
+        # can check") — this note is the visible check-flag, not a price
+        # change.
+        return "⚠️ No Home Depot catalog match found — cost is AI-estimated, please verify pricing before ordering."
+
+    return ""
+
+
+def _attach_catalog_image(jobtread_query_fn, org_id, cost_item_id, image_url, name):
+    """Best-effort: attach a Home Depot product photo to a cost item, using
+    the same createUploadRequest -> createFile(targetType, targetId, url)
+    pattern app.py's attach_files() already uses successfully at the job
+    level. NOT independently confirmed to work at targetType="costItem" —
+    my research API key only has read access (creates return "You don't
+    have permission"), so this couldn't be live-tested end to end. If it
+    turns out targetType="costItem" isn't supported, this just fails
+    silently (caller wraps it in try/except) and the estimate is unaffected
+    either way — worth checking Render logs after the next real submission
+    to confirm whether "Photo attach skipped" ever prints.
+    """
+    upload_resp = jobtread_query_fn({
+        "createUploadRequest": {
+            "$": {"organizationId": org_id, "url": image_url},
+            "createdUploadRequest": {"id": {}}
+        }
+    })
+    upload_id = upload_resp["createUploadRequest"]["createdUploadRequest"]["id"]
+    jobtread_query_fn({
+        "createFile": {
+            "$": {"targetType": "costItem", "targetId": cost_item_id,
+                  "name": name, "uploadRequestId": upload_id},
+            "createdFile": {"id": {}}
+        }
+    })
+
+
+def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
     """
     Create cost groups with MULTIPLE cost items each (labor + material
     lines for in-house work, a single scoped line for sub work) instead of
@@ -691,6 +1009,11 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
 
     jobtread_query_fn: pass in app.py's jobtread_query() function so this
     stays a pure function you can unit test without hitting the real API.
+
+    org_id: optional — only needed to attempt attaching a real Home Depot
+    product photo to auto-matched material lines (see _attach_catalog_image).
+    If omitted, materials still get a real text description (SKU/brand/link)
+    just no photo attachment attempt.
     """
     if not estimate:
         return 0
@@ -733,38 +1056,54 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
 
         items_added_this_group = 0
 
-        if labor == "sub":
-            # sub_scope_price is OCC's COST from the sub (before markup) —
-            # see STEP 3B in ESTIMATING_LOGIC_SECTION ("OCC's cost from the
-            # sub, before markup"). BUG FIX (Jul 2026): this used to divide
-            # sub_scope_price by SUB_MARKUP to get "cost", i.e. treated it as
-            # the already-marked-up CLIENT price instead — which would have
-            # billed the client exactly OCC's real cost with zero margin on
-            # every sub line item, while also writing a fabricated, too-low
-            # "cost" into JobTread. Correct direction: sub_scope_price IS the
-            # cost; multiply UP by SUB_MARKUP to get the billed price.
-            sub_cost = float(group.get("sub_scope_price", 0) or 0)
-            if sub_cost > 0:
-                sub_price = round(sub_cost * SUB_MARKUP, 2)
-                item_name = re.sub(r'^[\d\.\s]+[-–]?\s*', '', title).strip() or title
-                try:
-                    jobtread_query_fn({
-                        "createCostItem": {
-                            "$": {
-                                "costGroupId": group_id, "name": item_name[:100], "quantity": 1,
-                                "unitCost": sub_cost, "unitPrice": sub_price,
-                                "costCodeId": cost_code_id, "costTypeId": COST_TYPE_SUB
-                            },
-                            "createdCostItem": {"id": {}}
-                        }
-                    })
-                    items_added_this_group += 1
-                except Exception as e:
-                    print(f"  Failed to add sub cost item for '{title[:50]}': {e}")
-        else:
-            # In-house: one CostItem per labor line (costType=Labor), one per
-            # material line (costType=Materials) — using JobTread's own real
-            # cost types instead of lumping everything into "Other".
+        # NOTE (Jul 2026 pricing Q&A): sub and in-house are no longer
+        # mutually exclusive at the group level. Jason confirmed that when
+        # one root problem needs both a sub fix and an in-house fix (e.g. a
+        # sub-scope plumbing leak plus the in-house drywall patch it
+        # caused), he wants ONE cost group with multiple cost items inside
+        # it, not two separate groups — see STEP 3C / "mixed" in
+        # ESTIMATING_LOGIC_SECTION. So both blocks below run independently,
+        # gated on whether their own data is actually present, instead of
+        # branching on the "labor" tag (which used to force an either/or).
+        # A normal "sub"-only group just won't have labor_lines/
+        # material_lines populated, and a normal "in_house"-only group just
+        # won't have a sub_scope_price — both fall through exactly as
+        # before; only "mixed" groups now populate both blocks.
+
+        # sub_scope_price is OCC's COST from the sub (before markup) — see
+        # STEP 3B in ESTIMATING_LOGIC_SECTION ("OCC's cost from the sub,
+        # before markup"). BUG FIX (Jul 2026): this used to divide
+        # sub_scope_price by SUB_MARKUP to get "cost", i.e. treated it as
+        # the already-marked-up CLIENT price instead — which would have
+        # billed the client exactly OCC's real cost with zero margin on
+        # every sub line item, while also writing a fabricated, too-low
+        # "cost" into JobTread. Correct direction: sub_scope_price IS the
+        # cost; multiply UP by SUB_MARKUP to get the billed price.
+        sub_cost = float(group.get("sub_scope_price", 0) or 0)
+        if sub_cost > 0:
+            sub_price = round(sub_cost * SUB_MARKUP, 2)
+            item_name = re.sub(r'^[\d\.\s]+[-–]?\s*', '', title).strip() or title
+            try:
+                jobtread_query_fn({
+                    "createCostItem": {
+                        "$": {
+                            "costGroupId": group_id, "name": item_name[:100], "quantity": 1,
+                            "unitCost": sub_cost, "unitPrice": sub_price,
+                            "costCodeId": cost_code_id, "costTypeId": COST_TYPE_SUB
+                        },
+                        "createdCostItem": {"id": {}}
+                    }
+                })
+                items_added_this_group += 1
+            except Exception as e:
+                print(f"  Failed to add sub cost item for '{title[:50]}': {e}")
+
+        # In-house: one CostItem per labor line (costType=Labor), one per
+        # material line (costType=Materials) — using JobTread's own real
+        # cost types instead of lumping everything into "Other". Runs
+        # whenever labor_lines/material_lines are present, regardless of
+        # whether this group ALSO had a sub_scope_price above (mixed case).
+        if True:
             for line in group.get("labor_lines", []) or []:
                 hours = float(line.get("hours", 0) or 0)
                 rate = float(line.get("rate", 89.00) or 89.00)
@@ -796,23 +1135,67 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
                 if qty <= 0 or unit_cost <= 0:
                     continue
                 unit_price = round(unit_cost * MATERIAL_MARKUP, 2)
+                item_description = _build_material_description(line)
+                custom_field_values = _build_material_custom_field_values(line)
+                base_args = {
+                    "costGroupId": group_id,
+                    "name": item[:100],
+                    "quantity": qty,
+                    "unitCost": unit_cost,
+                    "unitPrice": unit_price,
+                    "costCodeId": cost_code_id, "costTypeId": COST_TYPE_MATERIALS
+                }
+                enriched_args = dict(base_args)
+                if item_description:
+                    enriched_args["description"] = item_description
+                if custom_field_values:
+                    enriched_args["customFieldValues"] = custom_field_values
+
+                # Try the enriched write first (description + custom fields).
+                # Neither has been live-write-confirmed against createCostItem
+                # specifically (description is a confirmed-real READ field;
+                # customFieldValues is a confirmed-real WRITE arg on createJob,
+                # not independently proven on createCostItem). If the enriched
+                # call fails for ANY reason, fall back to the bare-minimum args
+                # already proven to work in the first successful live run
+                # (job 22PbETG4esX5) — so a bad new field costs us the extra
+                # detail on that one line, never the line item itself.
                 try:
-                    jobtread_query_fn({
-                        "createCostItem": {
-                            "$": {
-                                "costGroupId": group_id,
-                                "name": item[:100],
-                                "quantity": qty,
-                                "unitCost": unit_cost,
-                                "unitPrice": unit_price,
-                                "costCodeId": cost_code_id, "costTypeId": COST_TYPE_MATERIALS
-                            },
-                            "createdCostItem": {"id": {}}
-                        }
+                    resp = jobtread_query_fn({
+                        "createCostItem": {"$": enriched_args, "createdCostItem": {"id": {}}}
                     })
+                except Exception as enriched_err:
+                    if enriched_args != base_args:
+                        print(f"  Enriched material create failed for '{item[:50]}' "
+                              f"({enriched_err}) — retrying with bare args (no description/custom fields)")
+                        try:
+                            resp = jobtread_query_fn({
+                                "createCostItem": {"$": base_args, "createdCostItem": {"id": {}}}
+                            })
+                        except Exception as e:
+                            print(f"  Failed to add material line for '{title[:50]}' (bare retry also failed): {e}")
+                            resp = None
+                    else:
+                        print(f"  Failed to add material line for '{title[:50]}': {enriched_err}")
+                        resp = None
+
+                if resp is not None:
                     items_added_this_group += 1
-                except Exception as e:
-                    print(f"  Failed to add material line for '{title[:50]}': {e}")
+                    # Best-effort: attach the real Home Depot product photo to
+                    # the cost item, same way app.py's attach_files() already
+                    # attaches job-level files (createUploadRequest -> createFile
+                    # by URL). Never lets a failure here block the estimate —
+                    # this is a nice-to-have, not confirmed with a live write
+                    # test yet (see estimate_v2_draft.py module docstring).
+                    catalog_match = line.get("catalog_match") or {}
+                    image_url = catalog_match.get("imageUrl")
+                    if image_url and org_id:
+                        try:
+                            created_id = resp["createCostItem"]["createdCostItem"]["id"]
+                            _attach_catalog_image(jobtread_query_fn, org_id, created_id,
+                                                   image_url, item[:100])
+                        except Exception as e:
+                            print(f"  Photo attach skipped for '{item[:50]}' (non-fatal): {e}")
 
         if items_added_this_group > 0:
             added_groups += 1
