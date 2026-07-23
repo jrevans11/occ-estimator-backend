@@ -145,43 +145,6 @@ DEFAULT_HISTORICAL_CSV = os.path.join(
     _MODULE_DIR, "historical_home_and_closing_repairs_budget_detail_dedup.csv"
 )
 
-# Redland Electric (OCC's electrical sub) real invoice/estimate history —
-# rebuilt Jul 2026 by pulling 46 real Redland email threads (invoices,
-# estimates, receipts) directly from Jason's Gmail via the Housecall Pro
-# notification emails, which embed the actual line-item table (services,
-# qty, unit price, amount, scope description) right in the email HTML for
-# invoices — no PDF parsing needed. 21 unique jobs / 36 line items kept
-# (Oct 2024-Jul 2026), replacing the earlier CSV of the same name that went
-# missing from this repo. See redland_electric_invoice_history.csv itself
-# for the full real scope text per line — this is the calibration source
-# for STEP 3B's sub_scope_price reasoning (see load_redland_reference_examples()).
-DEFAULT_REDLAND_CSV = os.path.join(
-    _MODULE_DIR, "redland_electric_invoice_history.csv"
-)
-
-# Four more sub/vendor invoice-history CSVs (Jul 2026), pulled the same way as
-# Redland — real Gmail invoices/estimates opened via Chrome (Gmail's inline
-# PDF viewer, since none of these vendors embed line items directly in the
-# email HTML the way Housecall Pro/Redland does — CSM uses Vonigo, Tile with
-# Style/Jordan Lumber send plain PDFs, Greer Flooring sends its own PDF
-# quote format). See each CSV's own header comment / CLAUDE.md for the pull
-# details. Jason's call (Jul 2026): treat significant flooring/tile work
-# performed by Tile with Style, Greer Flooring, or Jordan Lumber as SUB work
-# (45% markup), same as Crawlspace Medic — see the FLOORING/TILE section
-# added to app.py's SYSTEM_PROMPT.
-DEFAULT_CRAWLSPACE_MEDIC_CSV = os.path.join(
-    _MODULE_DIR, "crawlspace_medic_invoice_history.csv"
-)
-DEFAULT_TILE_WITH_STYLE_CSV = os.path.join(
-    _MODULE_DIR, "tile_with_style_invoice_history.csv"
-)
-DEFAULT_GREER_FLOORING_CSV = os.path.join(
-    _MODULE_DIR, "greer_flooring_invoice_history.csv"
-)
-DEFAULT_JORDAN_LUMBER_CSV = os.path.join(
-    _MODULE_DIR, "jordan_lumber_invoice_history.csv"
-)
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # Real 3-digit cost codes (Jason's chosen set — see cost_codes_3digit.csv).
@@ -352,8 +315,7 @@ STEP 3A — IF IN-HOUSE: break the work into
   girder repair or headered joist repair that needs a permanent support
   point, not just for replacing bad temporary shoring.
 
-STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace /
-significant flooring or tile install-refinish-retile work):
+STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace):
   do NOT itemize hours or materials — subs bill OCC scope-based or day-rate
   per visit, not itemized labor+materials, so a granular breakdown here
   would be fake precision. Instead reason to a single "sub_scope_price"
@@ -378,44 +340,9 @@ significant flooring or tile install-refinish-retile work):
         $1,800-4,650 — highly scope-dependent, treat as "quote required"
         if the addendum/report doesn't give enough detail to size it
     Crawlspace/Foundation (Crawlspace Medic): use the ranges already listed
-    in the CRAWLSPACE/FOUNDATION section of this prompt. As of Jul 2026 these
-    are backed by real CSM invoices (not just quotes) — see
-    REAL_CRAWLSPACE_MEDIC_EXAMPLES below for the actual itemized jobs.
-    Flooring/Tile (Tile with Style / Greer Flooring / Jordan Lumber): a small
-    crack/grout patch or a few replacement boards/tiles stays IN-HOUSE
-    (STEP 3A) — only treat this as sub scope (and use sub_scope_price) for
-    full-room-or-larger install/refinish/re-tile work.
-
-    UNLIKE electrical/HVAC/plumbing/crawlspace above, this category has real,
-    clean per-sqft (or per-linear-ft) rates with material and install labor
-    broken out SEPARATELY — see the FLOORING/TILE rate table in this prompt.
-    That means you should COMPUTE sub_scope_price rather than anchor-picking
-    a number from a historical job total:
-      1. Determine the affected square footage (or linear footage for trim)
-         from the report/addendum — room dimensions if given, otherwise a
-         reasonable estimate from photos/context. State this assumption in
-         "quantity_note" exactly like STEP 3A does (e.g. "~140 sqft of
-         shower wall tile based on a 5x7 shower stall, floor to ceiling") —
-         do NOT put dollar amounts or rate math in quantity_note, only the
-         quantity assumption itself (see the CUSTOMER-FACING OUTPUT RULES —
-         quantity_note flows into the same description field a client may see).
-      2. Multiply that quantity by the real material rate AND the real
-         install labor rate for the flooring/tile type involved (both are
-         listed separately in the rate table).
-      3. Add any applicable flat-fee lines that apply to the scope — demo,
-         floor prep, take-up/disposal of existing flooring, setting
-         materials, trim, thresholds, underlayment, niche/bench/drain, etc.
-      4. Sum steps 2 and 3 into a single sub_scope_price number.
-    Use REAL_TILE_WITH_STYLE_EXAMPLES, REAL_GREER_FLOORING_EXAMPLES, and
-    REAL_JORDAN_LUMBER_EXAMPLES below, and the SANITY-CHECK JOB TOTALS in the
-    rate table, only as a gut-check on your computed number (if you're
-    wildly outside the range for a comparable scope, reconsider your
-    quantity assumption) — not as the primary way to arrive at the price.
-    This computed approach will be materially more accurate than picking
-    from a blended range, since the real rate data supports it. If the
-    report doesn't give enough detail to estimate square footage responsibly
-    (no dimensions, no photos to gauge scale), treat it as a quote-required
-    item instead of guessing a quantity.
+    in the CRAWLSPACE/FOUNDATION section of this prompt — those came from
+    real quotes, not invoices, so treat them as reasonable but softer
+    anchors than the electrical numbers above.
 
   QUOTE-REQUIRED CATEGORIES — do not guess a sub_scope_price for these if
   the addendum/report doesn't give enough detail to size them responsibly;
@@ -566,213 +493,17 @@ def load_historical_reference_examples(
     return "\n".join(lines)
 
 
-# Diverse subset of real Redland job_numbers picked from
-# redland_electric_invoice_history.csv for STEP 3B few-shot calibration —
-# covers the full range a real closing-repair/sub-scope decision needs to
-# span: trip-fee-only visit, several small single-fixture repairs in one
-# invoice, per-unit code-correction pricing, a harder-access per-unit repair,
-# a quote-that-changed-based-on-field-conditions example, a full day-rate
-# multi-item punch-list job, a flat-price fixture-bundle job, and a
-# big custom-quoted panel/feeder job (the "quote required" category).
-REDLAND_REFERENCE_JOB_KEYS = [
-    "INV-2086",  # minimum service-call trip charge, single small item
-    "INV-1841",  # several small single-fixture repairs in one visit ($25-$175 each)
-    "INV-1915",  # per-unit code-correction pricing + one harder-access repair
-    "INV-1908",  # per-unit garage door opener rewiring
-    "INV-1889",  # quote ($1,000) revised down to actual ($600) based on field conditions
-    "INV-2036",  # full day-rate multi-item whole-house punch list + real materials
-    "INV-2052",  # flat-price fixture-bundle job (exterior lighting), no materials line
-    "EST-281",   # big custom-quoted panel/feeder rewire — "quote required" category anchor
-]
-
-
-def load_redland_reference_examples(csv_path=None, job_keys=None):
-    """Pull a diverse subset of real Redland Electric jobs out of
-    redland_electric_invoice_history.csv and format them as a compact
-    few-shot text block for STEP 3B (sub-scope electrical pricing).
-
-    Same graceful-degradation pattern as load_historical_reference_examples():
-    returns "" instead of raising if the CSV isn't present, so a deploy that's
-    missing this file just quietly falls back to the static REAL SUB COST
-    REFERENCE ranges already in ESTIMATING_LOGIC_SECTION instead of crashing.
-    """
-    import csv as _csv
-
-    csv_path = csv_path if csv_path is not None else DEFAULT_REDLAND_CSV
-    job_keys = job_keys if job_keys is not None else REDLAND_REFERENCE_JOB_KEYS
-    if not os.path.exists(csv_path):
-        print(f"  WARNING: Redland reference CSV not found at '{csv_path}' — "
-              f"prompt will build WITHOUT real Redland examples (falls back to "
-              f"the static REAL SUB COST REFERENCE ranges only).")
-        return ""
-
-    wanted = set(job_keys)
-    by_job = {}
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in _csv.DictReader(f):
-            if row["job_number"] in wanted:
-                by_job.setdefault(row["job_number"], []).append(row)
-
-    lines = ["REAL_REDLAND_ELECTRIC_EXAMPLES (actual past invoices/estimates "
-             "from OCC's electrical sub — real scope text, real billed prices "
-             "= OCC's real cost before the 45% sub markup; calibration only, "
-             "do not copy verbatim):"]
-    for key in job_keys:
-        items = by_job.get(key, [])
-        if not items:
-            continue
-        addr = items[0]["service_address"]
-        total = items[0]["job_total_billed"]
-        lines.append(f"\n- {key} ({addr}) — job total billed by Redland: ${total}")
-        for it in items:
-            desc = it["line_item_description"].strip()
-            qty = it["quantity"].strip() or "1"
-            price = it["unit_price"].strip()
-            amt = it["line_amount"].strip()
-            lines.append(f"    {desc} — qty {qty} @ ${price} = ${amt}")
-            notes = it["scope_notes"].strip()
-            if notes:
-                lines.append(f"      scope: {notes}")
-    return "\n".join(lines)
-
-
-# Diverse job_number subsets for the four Jul 2026 vendor CSVs — same
-# hand-picked-diversity approach as REDLAND_REFERENCE_JOB_KEYS. None of
-# these CSVs are big enough to need trimming for token budget the way the
-# 5,353-row historical CSV does, so these lists mostly just fix the display
-# order; None -> loader falls back to "every job_number in the CSV".
-CRAWLSPACE_MEDIC_REFERENCE_JOB_KEYS = [
-    "Q-80764",     # multi-item moisture/insulation job (vapor barrier, insulation, vents)
-    "INV-925664",  # large basement French drain job + real field-condition change order
-    "Q-64247",     # sump pump + dehumidifier + vent seal + outlets, mid-size
-    "INV-927598",  # vapor barrier + vent seal + fungal treatment, mid-size
-    "Q-64895",     # big structural sill/joist repair job (top of the range)
-    "Q-79246",     # dehumidifier-only, most current (2026) single-item price
-]
-TILE_WITH_STYLE_REFERENCE_JOB_KEYS = [
-    "EST-2525",  # full bath tile remodel, top of the range, per-sqft rates
-    "EST-2301",  # real closing-repair-scale crack/regrout job, flat lump price
-    "INV-2740",  # small real paid invoice, bottom of the range
-    "EST-2412",  # mid-size bath job, mosaic vs standard per-sqft rate contrast
-]
-GREER_FLOORING_REFERENCE_JOB_KEYS = [
-    "ES406605",     # carpet + hardwood refinish combo, full material/services/tax split
-    "ES406275",     # LVP + carpet combo, most line-item variety
-    "CONVO-GROUT",  # small verbal tile/grout repair quote, bottom of the range
-]
-JORDAN_LUMBER_REFERENCE_JOB_KEYS = None  # only one real job on file — use all of it
-
-
-def load_vendor_reference_examples(csv_path, job_keys, label, note):
-    """Generic version of load_redland_reference_examples() for the other
-    four vendor CSVs (Jul 2026) — same file shape (job_number/doc_date/
-    service_address/line_item_description/line_amount/job_total_billed/
-    scope_notes), with optional quantity/unit/unit_price columns that get
-    included in the formatted line when present. Same graceful-degradation
-    pattern: returns "" instead of raising if the CSV is missing, so a
-    deploy without these files just quietly falls back to the static ranges
-    already in ESTIMATING_LOGIC_SECTION / app.py's SYSTEM_PROMPT.
-
-    job_keys=None means "use every job in the file, in file order" instead
-    of a hand-picked subset.
-    """
-    import csv as _csv
-
-    if not os.path.exists(csv_path):
-        print(f"  WARNING: reference CSV not found at '{csv_path}' for "
-              f"{label} — prompt will build WITHOUT these real examples.")
-        return ""
-
-    by_job = {}
-    order = []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in _csv.DictReader(f):
-            key = row["job_number"]
-            if job_keys is not None and key not in job_keys:
-                continue
-            if key not in by_job:
-                by_job[key] = []
-                order.append(key)
-            by_job[key].append(row)
-
-    keys_in_order = job_keys if job_keys is not None else order
-    lines = [f"REAL_{label}_EXAMPLES ({note}):"]
-    for key in keys_in_order:
-        items = by_job.get(key, [])
-        if not items:
-            continue
-        addr = items[0]["service_address"]
-        total = items[0]["job_total_billed"]
-        lines.append(f"\n- {key} ({addr}) — job total: ${total}")
-        for it in items:
-            desc = it["line_item_description"].strip()
-            amt = it["line_amount"].strip()
-            qty = (it.get("quantity") or "").strip()
-            unit = (it.get("unit") or "").strip()
-            unit_price = (it.get("unit_price") or "").strip()
-            if qty and unit and unit_price:
-                lines.append(f"    {desc} — qty {qty} {unit} @ ${unit_price} = ${amt}")
-            else:
-                lines.append(f"    {desc} — ${amt}")
-            notes = (it.get("scope_notes") or "").strip()
-            if notes:
-                lines.append(f"      note: {notes}")
-    return "\n".join(lines)
-
-
-def build_full_estimating_prompt(csv_path=None, redland_csv_path=None,
-                                  crawlspace_medic_csv_path=None,
-                                  tile_with_style_csv_path=None,
-                                  greer_flooring_csv_path=None,
-                                  jordan_lumber_csv_path=None):
+def build_full_estimating_prompt(csv_path=None):
     """Assemble the piece of the system prompt that replaces the old flat
     price-lookup section: the estimating method/logic + real historical
     reference examples. This is what actually wires the historical data into
     the live prompt (Task #8) — everything above this point defines the
     pieces, this is where they get glued together.
-
-    Also splices in real Redland Electric examples (load_redland_reference_
-    examples()) plus, as of Jul 2026, real Crawlspace Medic, Tile with Style,
-    Greer Flooring, and Jordan Lumber examples (load_vendor_reference_
-    examples()) right after the in-house historical examples, so STEP 3B's
-    sub_scope_price reasoning has real scope-to-price anchors for all five
-    sub categories to work from, not just the static numeric ranges already
-    in ESTIMATING_LOGIC_SECTION / app.py's SYSTEM_PROMPT.
     """
     examples_text = load_historical_reference_examples(csv_path)
-    redland_text = load_redland_reference_examples(redland_csv_path)
-    csm_text = load_vendor_reference_examples(
-        crawlspace_medic_csv_path or DEFAULT_CRAWLSPACE_MEDIC_CSV,
-        CRAWLSPACE_MEDIC_REFERENCE_JOB_KEYS, "CRAWLSPACE_MEDIC",
-        "OCC's crawlspace/foundation sub — real cost before 45% markup")
-    tws_text = load_vendor_reference_examples(
-        tile_with_style_csv_path or DEFAULT_TILE_WITH_STYLE_CSV,
-        TILE_WITH_STYLE_REFERENCE_JOB_KEYS, "TILE_WITH_STYLE",
-        "OCC's tile sub — real cost before 45% markup")
-    greer_text = load_vendor_reference_examples(
-        greer_flooring_csv_path or DEFAULT_GREER_FLOORING_CSV,
-        GREER_FLOORING_REFERENCE_JOB_KEYS, "GREER_FLOORING",
-        "OCC's carpet/LVP/hardwood-refinish sub — real cost before 45% markup")
-    jordan_text = load_vendor_reference_examples(
-        jordan_lumber_csv_path or DEFAULT_JORDAN_LUMBER_CSV,
-        JORDAN_LUMBER_REFERENCE_JOB_KEYS, "JORDAN_LUMBER",
-        "OCC's hardwood flooring sub — real cost before 45% markup; finishing "
-        "line items are billed separately by Greg Porter Floorsanding, not Jordan Lumber")
-
-    prompt = ESTIMATING_LOGIC_SECTION
     if examples_text:
-        prompt += "\n\n" + examples_text
-    if redland_text:
-        prompt += "\n\n" + redland_text
-    if csm_text:
-        prompt += "\n\n" + csm_text
-    if tws_text:
-        prompt += "\n\n" + tws_text
-    if greer_text:
-        prompt += "\n\n" + greer_text
-    if jordan_text:
-        prompt += "\n\n" + jordan_text
-    return prompt
+        return ESTIMATING_LOGIC_SECTION + "\n\n" + examples_text
+    return ESTIMATING_LOGIC_SECTION
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -896,6 +627,158 @@ def search_home_depot_catalog(search_query, jobtread_query_fn, org_id, page=1):
     return True, resp.get("homeDepotProducts", {}).get("nodes", [])
 
 
+# The "true catalog link" mechanism (Jul 2026 investigation, read-only —
+# see CLAUDE.md "Home Depot 'true catalog link' mechanism — SOLVED" entry
+# for the full writeup). When Jason manually adds a Global Catalog item to a
+# budget in the JobTread UI, the resulting costItem gets a real
+# `sourceCostItem` relation pointing at a shared "master" costItem record
+# that lives under a SEPARATE JobTread-owned organization (id
+# "22NrfN7U8S9j", confirmed by reading a real linked item's own cached
+# record) — every JobTread customer who imports the same product links back
+# to the same shared master, rather than each org getting a private copy.
+# Items our pipeline creates via plain createCostItem never get this
+# relation set, which is exactly why they never show up on a real Home
+# Depot order even though the price/name/SKU look identical.
+#
+# The recipe (two calls, not one):
+#   1. createGlobalOrganizationCostItem({type, storeId, productId}) — get
+#      back the shared master costItem id (idempotent: reuses the existing
+#      master if any JobTread customer already imported that product).
+#   2. Normal createCostItem, with `sourceCostItem: {id: <master id>}` added
+#      to the args on top of everything already written (cost/price/
+#      description/customFieldValues) — this is the actual link.
+#
+# Call #1's mutation shape (type/storeId/productId args, costGroup comes
+# back null since it's a shared record not attached to any one job) was
+# confirmed live in an earlier session. The exact string value "type" wants
+# for a Home Depot product specifically was NOT captured verbatim at the
+# time — GLOBAL_CATALOG_PRODUCT_TYPE below is a best guess based on
+# JobTread's own _type naming convention seen elsewhere in this project
+# (lowercase-first camelCase, e.g. "costItem", "costGroup", "customField").
+# If it's wrong, link_catalog_master_item() just returns None and the
+# material line is created exactly as it is today (real price, description,
+# custom fields) — this is a pure best-effort addition, never a blocker.
+GLOBAL_CATALOG_PRODUCT_TYPE = "HomeDepotProduct"
+
+
+def link_catalog_master_item(jobtread_query_fn, org_id, product_id, store_id=None):
+    """Get (or idempotently create) the shared "master" costItem record for
+    a real Home Depot product, so a material line's createCostItem call can
+    set `sourceCostItem` and become a TRULY linked catalog item (shows up on
+    a real Home Depot order in JobTread, same as a manually-added item) —
+    not just a costItem with the same price/name/SKU.
+
+    Returns the master costItem id, or None on any failure. Never raises —
+    org_id/product_id are required by the caller before this is even
+    attempted; any API-level failure (wrong "type" value, permission issue,
+    network problem) just means the line doesn't get truly linked this time,
+    it still gets created with its real cost/price/description regardless.
+    """
+    try:
+        resp = jobtread_query_fn({
+            "createGlobalOrganizationCostItem": {
+                "$": {
+                    "type": GLOBAL_CATALOG_PRODUCT_TYPE,
+                    "storeId": store_id or HOME_DEPOT_STORE_ID,
+                    "productId": product_id,
+                },
+                "createdCostItem": {"id": {}}
+            }
+        })
+        return resp["createGlobalOrganizationCostItem"]["createdCostItem"]["id"]
+    except Exception as e:
+        print(f"  Global catalog master-item link failed for product "
+              f"{product_id}: {e}")
+        return None
+
+
+# Unit synonyms collapsed to one normalized form, used by _extract_size_tokens
+# / _size_mismatch below (Jul 2026 matching-quality tightening — see
+# resolve_material_lines_with_catalog docstring for why this exists: the
+# 12 Tall Tree Lane job showed a real case of an exterior primer ordered as
+# "1 qt" auto-matching to a real but wrong-size "5 gal" bucket — same product
+# line, wrong container, and the old word-overlap score had no way to catch
+# that since none of the overlapping words were about size at all).
+_SIZE_UNIT_ALIASES = {
+    "gallon": "gal", "gallons": "gal", "gal": "gal",
+    "quart": "qt", "quarts": "qt", "qt": "qt",
+    "ounce": "oz", "ounces": "oz", "oz": "oz",
+    "pound": "lb", "pounds": "lb", "lbs": "lb", "lb": "lb",
+    "foot": "ft", "feet": "ft", "ft": "ft",
+    "inch": "in", "inches": "in", "in": "in",
+}
+
+
+def _extract_size_tokens(text):
+    """Pull (value, normalized_unit) size tokens like (5.0, 'gal') or
+    (1.0, 'qt') out of a product description/name. Best-effort regex, not a
+    real unit parser — only needs to catch the common "N unit" pattern well
+    enough to flag an obvious size conflict, not parse every possible
+    container spec.
+    """
+    tokens = []
+    for value, unit in re.findall(
+        r"(\d+(?:\.\d+)?)\s*[-]?\s*"
+        r"(gallons?|gal|quarts?|qt|ounces?|oz|pounds?|lbs?|feet|foot|ft|inches?|in)\b",
+        text.lower()
+    ):
+        norm_unit = _SIZE_UNIT_ALIASES.get(unit, unit)
+        try:
+            tokens.append((float(value), norm_unit))
+        except ValueError:
+            continue
+    return tokens
+
+
+# Base-unit conversions so a size check can compare across units within the
+# same family (e.g. "1 qt" vs "5 gal" is the same family — volume — at very
+# different quantities, not just a same-unit mismatch). Plain "oz" is
+# genuinely ambiguous (fluid vs. weight), so it's included in BOTH families;
+# a comparison only fires when both sides share at least one common family.
+_VOLUME_OZ = {"gal": 128.0, "qt": 32.0, "oz": 1.0}
+_WEIGHT_OZ = {"lb": 16.0, "oz": 1.0}
+_LENGTH_IN = {"ft": 12.0, "in": 1.0}
+
+
+def _size_families(value, unit):
+    """Return {family_name: value_converted_to_that_family's_base_unit} for
+    whichever size families this unit participates in."""
+    fams = {}
+    if unit in _VOLUME_OZ:
+        fams["volume"] = value * _VOLUME_OZ[unit]
+    if unit in _WEIGHT_OZ:
+        fams["weight"] = value * _WEIGHT_OZ[unit]
+    if unit in _LENGTH_IN:
+        fams["length"] = value * _LENGTH_IN[unit]
+    return fams
+
+
+def _size_mismatch(query, product_name):
+    """True if both strings mention a size in the same family (volume,
+    weight, or length) but at clearly different quantities (1.5x+ apart
+    after converting to a common base unit) — a strong signal that a
+    word-overlap match found the right product line but the wrong container
+    size (e.g. "1 qt" primer vs. a real "5 gal" bucket of the same primer —
+    different units entirely, but both volume, so a same-unit-only check
+    would miss this). Only flags a real disagreement; doesn't penalize lines
+    that just don't happen to mention a comparable size on both sides.
+    """
+    q_sizes = _extract_size_tokens(query)
+    n_sizes = _extract_size_tokens(product_name)
+    for qv, qu in q_sizes:
+        q_fams = _size_families(qv, qu)
+        for nv, nu in n_sizes:
+            n_fams = _size_families(nv, nu)
+            for fam, q_base in q_fams.items():
+                if fam in n_fams:
+                    n_base = n_fams[fam]
+                    if q_base > 0 and n_base > 0:
+                        ratio = max(q_base, n_base) / min(q_base, n_base)
+                        if ratio >= 1.5:
+                            return True
+    return False
+
+
 def _match_score(query, product_name):
     """Cheap word-overlap confidence score between a material description
     and a candidate Home Depot product name. Not fuzzy/edit-distance
@@ -904,19 +787,35 @@ def _match_score(query, product_name):
     here is this is a confidence gate on top of a REAL catalog search result,
     not a blind text-similarity match against an unrelated taxonomy, so a
     wrong guess just falls back to the LLM's cost instead of a wrong price).
+
+    TIGHTENED (Jul 2026, after reviewing a real job's catalog matches):
+    (1) widened the stopword list to also drop bare unit words (gal, qt, oz,
+    lb, ft, in, etc.) so two products that both happen to be sold "per
+    gallon" don't get credit for that as if it were a real word match; (2)
+    added a size-mismatch penalty — if the query and candidate both name a
+    size in the same unit but at very different quantities, cap the score
+    well below any reasonable auto-apply threshold so a wrong-size product
+    never gets auto-substituted, only ever offered (or not) as a candidate.
     """
     stop = {"a", "an", "the", "of", "for", "with", "in", "to", "and", "or",
-            "1", "1x", "each", "per"}
+            "1", "1x", "each", "per", "or", "similar", "equiv", "equivalent",
+            "standard", "approx", "gal", "gallon", "gallons", "qt", "quart",
+            "quarts", "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds",
+            "ft", "feet", "foot", "inch", "inches"}
     q_words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if w not in stop and len(w) > 2}
     n_words = {w for w in re.findall(r"[a-z0-9]+", product_name.lower()) if w not in stop and len(w) > 2}
     if not q_words:
         return 0.0
     overlap = q_words & n_words
-    return len(overlap) / len(q_words)
+    score = len(overlap) / len(q_words)
+    if _size_mismatch(query, product_name):
+        score = min(score, 0.3)
+    return score
 
 
 def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
-                                         auto_apply_threshold=0.5, top_n=3):
+                                         auto_apply_threshold=0.5, top_n=3,
+                                         min_candidate_score=0.2):
     """Resolve each material_line's LLM-guessed cost against the live Home
     Depot Global Catalog (search_home_depot_catalog), so the estimate has
     real live-priced products where a confident match exists instead of a
@@ -924,17 +823,25 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
 
     For each material line:
       - Search the catalog using the line's "item" description.
-      - Score candidates by word overlap with the description.
+      - Score candidates by word overlap with the description (see
+        _match_score — tightened Jul 2026 with a stopword list that drops
+        bare unit words and a size-mismatch penalty).
       - If the best match scores >= auto_apply_threshold: REPLACE unit_cost
         with the real catalog unitCost, and attach "catalog_match" (name,
         sku, link) to the line so Jason's team can see what was substituted.
-      - Otherwise: leave the LLM's guessed unit_cost untouched, but attach
-        "catalog_candidates" (top N real matches with real prices) so the
-        team has real options to pick from manually instead of a blind
-        guess with nothing to check it against.
-      - If the search itself fails or returns nothing: leave the line as-is,
-        unchanged, no crash — this must never block an estimate from going
-        out just because a catalog lookup had a bad day.
+      - Else if at least one candidate scores >= min_candidate_score: leave
+        the LLM's guessed unit_cost untouched, but attach "catalog_candidates"
+        (only the candidates that clear this floor, so the team sees plausible
+        options, not noise) so there's something real to check the guess
+        against.
+      - Else (search returned results, but none of them are even plausibly
+        related — e.g. searching a mortar mix and getting back cement dye and
+        pool filter sand, a real case caught reviewing job 12 Tall Tree Lane):
+        treat it the same as a true no-match (catalog_no_match flag) instead
+        of showing 3 irrelevant products as if they were real options.
+      - If the search itself fails or returns nothing at all: leave the line
+        as-is, unchanged, no crash — this must never block an estimate from
+        going out just because a catalog lookup had a bad day.
 
     Mutates and returns `estimate` in place. Returns (estimate, stats) where
     stats = {"searched": N, "auto_matched": N, "candidates_only": N, "no_match": N}.
@@ -991,18 +898,38 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                     "link": best_product.get("link"),
                     "matched_score": round(best_score, 2),
                     "llm_guessed_cost": original_cost,
+                    # Home Depot's own product id -- needed to request the
+                    # shared "master" catalog costItem via
+                    # link_catalog_master_item() so the item we create can be
+                    # truly linked (sourceCostItem) instead of just having
+                    # the right price/name. See CLAUDE.md "Home Depot true
+                    # catalog link mechanism" entry (Jul 2026).
+                    "product_id": best_product.get("id"),
                 }
                 stats["auto_matched"] += 1
             else:
-                line["catalog_candidates"] = [
-                    {
-                        "name": p.get("name"), "unit_cost": p.get("unitCost"),
-                        "brand": p.get("brand"), "sku": p.get("storeSkuNumber"),
-                        "imageUrl": p.get("imageUrl"), "link": p.get("link"),
-                    }
-                    for _, p in scored[:top_n]
-                ]
-                stats["candidates_only"] += 1
+                plausible = [(sc, p) for sc, p in scored[:top_n] if sc >= min_candidate_score]
+                if plausible:
+                    line["catalog_candidates"] = [
+                        {
+                            "name": p.get("name"), "unit_cost": p.get("unitCost"),
+                            "brand": p.get("brand"), "sku": p.get("storeSkuNumber"),
+                            "imageUrl": p.get("imageUrl"), "link": p.get("link"),
+                        }
+                        for _, p in plausible
+                    ]
+                    stats["candidates_only"] += 1
+                else:
+                    # Search came back with results, but none of them are
+                    # even plausibly related to what was asked for (e.g. a
+                    # mortar mix search returning cement dye and pool filter
+                    # sand — a real case found reviewing job 12 Tall Tree
+                    # Lane). Showing those as "possible matches" is worse
+                    # than showing nothing — treat this the same as a true
+                    # no-match so the team gets the verify-manually flag
+                    # instead of 3 irrelevant products to sort through.
+                    line["catalog_no_match"] = True
+                    stats["no_match"] += 1
 
     return estimate, stats
 
@@ -1246,28 +1173,41 @@ def _attach_catalog_image(jobtread_query_fn, org_id, cost_item_id, image_url, na
     """Best-effort: attach a Home Depot product photo to a cost item, using
     the same createUploadRequest -> createFile(targetType, targetId, url)
     pattern app.py's attach_files() already uses successfully at the job
-    level. NOT independently confirmed to work at targetType="costItem" —
-    my research API key only has read access (creates return "You don't
-    have permission"), so this couldn't be live-tested end to end. If it
-    turns out targetType="costItem" isn't supported, this just fails
-    silently (caller wraps it in try/except) and the estimate is unaffected
-    either way — worth checking Render logs after the next real submission
-    to confirm whether "Photo attach skipped" ever prints.
+    level.
+
+    CONFIRMED BROKEN (Jul 2026) — real job 22PbLsLedmNR's log showed this
+    failing with "HTTP Error 400: Bad Request" on ALL 17 auto-matched
+    material lines, 17/17, no exceptions. That's no longer "unconfirmed,"
+    it's a real, consistent failure — but which of the two calls below is
+    actually rejected was NOT distinguishable from that log, since the
+    caller only ever saw one generic wrapped error message no matter which
+    step raised it. Split into two try/excepts here so the NEXT real run's
+    log pinpoints the actual failing call (createUploadRequest vs.
+    createFile/targetType=costItem) instead of just "something failed."
+    Still fully non-fatal either way — caller also wraps this in try/except
+    so a photo miss never blocks the cost item itself from being created.
     """
-    upload_resp = jobtread_query_fn({
-        "createUploadRequest": {
-            "$": {"organizationId": org_id, "url": image_url},
-            "createdUploadRequest": {"id": {}}
-        }
-    })
-    upload_id = upload_resp["createUploadRequest"]["createdUploadRequest"]["id"]
-    jobtread_query_fn({
-        "createFile": {
-            "$": {"targetType": "costItem", "targetId": cost_item_id,
-                  "name": name, "uploadRequestId": upload_id},
-            "createdFile": {"id": {}}
-        }
-    })
+    try:
+        upload_resp = jobtread_query_fn({
+            "createUploadRequest": {
+                "$": {"organizationId": org_id, "url": image_url},
+                "createdUploadRequest": {"id": {}}
+            }
+        })
+        upload_id = upload_resp["createUploadRequest"]["createdUploadRequest"]["id"]
+    except Exception as e:
+        raise Exception(f"createUploadRequest failed: {e}")
+
+    try:
+        jobtread_query_fn({
+            "createFile": {
+                "$": {"targetType": "costItem", "targetId": cost_item_id,
+                      "name": name, "uploadRequestId": upload_id},
+                "createdFile": {"id": {}}
+            }
+        })
+    except Exception as e:
+        raise Exception(f"createFile (targetType=costItem) failed: {e}")
 
 
 def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
@@ -1419,6 +1359,22 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
                     enriched_args["description"] = item_description
                 if custom_field_values:
                     enriched_args["customFieldValues"] = custom_field_values
+
+                # Attempt TRUE catalog linking (Jul 2026) — only for a
+                # confidently auto-matched line (we need the real Home Depot
+                # product id, only present on catalog_match). This is a
+                # separate API call from createCostItem itself, so a failure
+                # here just means we skip adding sourceCostItem below — it
+                # never affects the cost/price/description/custom fields
+                # that are already going to be written regardless. See
+                # link_catalog_master_item() docstring + CLAUDE.md for the
+                # full mechanism this is based on.
+                catalog_match = line.get("catalog_match") or {}
+                product_id = catalog_match.get("product_id")
+                if product_id and org_id:
+                    master_id = link_catalog_master_item(jobtread_query_fn, org_id, product_id)
+                    if master_id:
+                        enriched_args["sourceCostItem"] = {"id": master_id}
 
                 # Try the enriched write first (description + custom fields).
                 # Neither has been live-write-confirmed against createCostItem
