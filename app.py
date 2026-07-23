@@ -54,9 +54,15 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
   in-house crews); ALL crawlspace work related to moisture mitigation
   (vapor barrier, dehumidifier, clean-out, fungal/mold treatment, sump
   pump, crawlspace insulation repair/replacement) — no small-fix exception,
-  always sub regardless of size.
+  always sub regardless of size; SIGNIFICANT flooring/tile work — full
+  room(s) of carpet, LVP, or hardwood install/replacement, hardwood
+  sand-and-refinish, or tile installation/re-tiling beyond a small crack or
+  grout repair (added Jul 2026 once real vendor pricing was found for Tile
+  with Style, Greer Flooring, and Jordan Lumber — OCC actually subs this
+  scale of flooring/tile work out, it is not done in-house).
 - IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else
-  — drywall, paint, carpentry, trim, flooring, general handyman repairs,
+  — drywall, paint, carpentry, trim, general handyman repairs, small
+  flooring patch/repair (a few boards or tiles, not a full room),
   and minor plumbing/HVAC fixture work such as a sink pop-up assembly,
   securing a loose shower arm/faucet/fixture, clearing a simple
   slow-draining sink or vanity P-trap, exposed HVAC lineset insulation, and
@@ -246,6 +252,70 @@ CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup
   - Well vent install/repair: $210-315 each
   - Sill plate replacement: quote required (highly variable)
 
+FLOORING/TILE (significant scope only) — Sub: Tile with Style (864) 205-3723,
+Greer Flooring (864) 331-3000, or Jordan Lumber Co. (864) 238-4251 (hardwood
+specialist, sub-subs finishing to Greg Porter Floorsanding), apply 45%
+markup. Real per-unit rates pulled from actual quotes/invoices (Jul 2026) —
+small crack/grout patch stays in-house, everything below is sub scope.
+COMPUTE the sub cost from these rates x the affected square/linear footage
+(see STEP 3B) rather than picking a number from the sanity-check totals at
+the bottom — the rates are real and separated by material vs. labor
+specifically so this can be done accurately, not guessed.
+
+  TILE (Tile with Style) — rate already bundles material+labor per sqft:
+    - Shower wall tile install: $12-17/sqft (low end = simple/standard
+      pattern, high end = complex pattern or larger-format tile)
+    - Shower floor tile install: $34-39/sqft (mosaic runs toward the low
+      end, standard tile toward the high end)
+    - Tile demo (tub/shower): $1,800 flat, regardless of sqft
+    - Bullnose/trim tile: $6/linear ft
+    - Niche: $130-140 flat each; Bench: $130 flat each; 72in linear shower
+      drain w/ install: ~$1,105 flat
+    - Setting materials (mortar/thinset/grout for the whole job): $350 flat
+      for a small repair-scale job, $1,100-1,500 flat for a full remodel
+    - In-house-eligible (NOT sub scope): a single small crack/grout patch,
+      ~$250-300; a full corner regrout+crack repair job is borderline and
+      was actually billed sub-scope in one real case at $3,000 labor + $350
+      materials — use judgment on patch size
+
+  CARPET (Greer Flooring) — material and install billed as separate rates:
+    - Material: $2.45/sqft
+    - Pad: $75.12/each (one pad unit covers roughly 200-250 sqft in the real jobs pulled)
+    - Install labor: $0.60/sqft
+    - Take-up of existing carpet/pad/tack strip (if replacing): $0.25/sqft
+    - Disposal: $0.10/sqft
+
+  LVP (Greer Flooring):
+    - Material: $2.48/sqft
+    - Install labor: $1.55/sqft
+    - Threshold (LVT): $40/each
+    - Self-drying cement underlayment: $34.37/each (~1 per 300 sqft in the real job pulled)
+    - Floor prep, if needed: $200-380 flat, scope-dependent
+
+  HARDWOOD (Jordan Lumber for material+install; Greer Flooring also does
+  refinish-only jobs on existing floors):
+    - Material, 2-1/4in select red oak unfinished: $4.01/sqft+tax (Jordan
+      Lumber); #1 grade (cheaper) alt: $3.37/sqft+tax
+    - Nail-down install labor: $2.25/sqft
+    - Sand/stain/finish: $3.00/sqft on an EXISTING floor refinish (Greer
+      Flooring), $4.00/sqft as part of a new material+install+finish job
+      (Jordan Lumber's finishing sub, Greg Porter Floorsanding) — use the
+      $4/sqft rate when finishing is bundled with new material+install
+    - Move & reset furniture, if needed during install: $425 flat
+    - Take-up of existing carpet/pad + disposal, if replacing with hardwood: $540 flat
+
+  TRIM (any of the above):
+    - Quarter round/shoe molding material: $0.44-0.55/linear ft
+    - Quarter round/shoe molding install: $1.00/linear ft
+
+  SANITY-CHECK JOB TOTALS ONLY (real full jobs — use to gut-check a computed
+  number, do NOT pick from this list as the primary method):
+    - Full-room carpet + hardwood-refinish combo (~700 sqft carpet + ~800 sqft refinish): ~$5,400
+    - Full-room LVP + carpet combo (~600-700 sqft each): ~$6,100
+    - Full-room hardwood material+install+finish (~1,200 sqft): ~$14,800
+    - Full master bath tile remodel (~140 sqft walls + 30 sqft floor): ~$8,600
+    - Mid-size bath tile job (~90 sqft walls + 12 sqft floor, mosaic): ~$2,900
+
 INSULATION — mostly sub work:
   - Attic insulation (add/replace): quote per sqft
   - Bathroom exhaust fan (install/repair): $178-290
@@ -309,7 +379,7 @@ DESCRIPTION FORMATTING RULES:
 - For any repair that involves painting or finishing to match existing surfaces, always include this note at the end of the description:
   "NOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation."
 
-LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out) or "in_house" for everything else.
+LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out; significant flooring/tile install, refinish, or re-tile work per the FLOORING/TILE section above) or "in_house" for everything else.
 
 OUTPUT: Respond with ONLY valid JSON, no markdown:
 {
