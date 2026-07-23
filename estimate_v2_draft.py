@@ -662,6 +662,27 @@ def search_home_depot_catalog(search_query, jobtread_query_fn, org_id, page=1):
 # support another one of these vendors, "type" is the field to change.
 GLOBAL_CATALOG_PRODUCT_TYPE = "homeDepot"
 
+# REAL FIX FOUND (Jul 2026) — re-enabled. createCostItem really does reject
+# a nested `sourceCostItem: {id: "..."}` relation object ('no value is ever
+# expected there', confirmed on a real production run, job 22PbQqvNG268).
+# But that's not because the relation can't be set at all — it's because
+# the wrong SHAPE was used. Found by fetching JobTread's own loaded frontend
+# JS bundle straight out of the browser (no login/permission needed beyond
+# what's already loaded on the budget page) and grepping it for
+# "sourceCostItem": the app's own src/functions/get-line-item-args.js —
+# the exact function JobTread's UI calls to build its own createCostItem
+# args — flattens the relation to a plain scalar before sending:
+# `sourceCostItemId: j && j.id` (same flattening pattern used for
+# organizationCostItemId/jobCostItemId). So the real arg is `sourceCostItemId`
+# (a flat id string), not a nested `sourceCostItem` object. Re-enabled with
+# the corrected arg name — see the material-line loop in add_cost_groups_v2,
+# which now also keeps this in its OWN retry tier (link_args) separate from
+# description/customFieldValues (enriched_args), so a bad link attempt can
+# never again wipe out the real product detail the way the old nested-object
+# attempt did. NOT yet confirmed against a real live job — needs one more
+# real submission to know for sure this is right.
+ATTEMPT_TRUE_CATALOG_LINK = True
+
 
 def link_catalog_master_item(jobtread_query_fn, org_id, product_id, store_id=None):
     """Get (or idempotently create) the shared "master" costItem record for
@@ -1369,37 +1390,60 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
                 if custom_field_values:
                     enriched_args["customFieldValues"] = custom_field_values
 
-                # Attempt TRUE catalog linking (Jul 2026) — only for a
-                # confidently auto-matched line (we need the real Home Depot
-                # product id, only present on catalog_match). This is a
-                # separate API call from createCostItem itself, so a failure
-                # here just means we skip adding sourceCostItem below — it
-                # never affects the cost/price/description/custom fields
-                # that are already going to be written regardless. See
-                # link_catalog_master_item() docstring + CLAUDE.md for the
-                # full mechanism this is based on.
-                catalog_match = line.get("catalog_match") or {}
-                product_id = catalog_match.get("product_id")
-                if product_id and org_id:
-                    master_id = link_catalog_master_item(jobtread_query_fn, org_id, product_id)
-                    if master_id:
-                        enriched_args["sourceCostItem"] = {"id": master_id}
+                # TRUE catalog linking — REAL ARG NAME FOUND (Jul 2026),
+                # not a guess this time. The two-step recipe's step 1
+                # (link_catalog_master_item / createGlobalOrganizationCostItem)
+                # was already confirmed working once GLOBAL_CATALOG_PRODUCT_TYPE
+                # was fixed to "homeDepot". Step 2 kept failing with
+                # createCostItem rejecting a nested `sourceCostItem: {id:...}`
+                # relation object ('no value is ever expected there'). Root
+                # cause found by reading JobTread's own frontend bundle
+                # (src/functions/get-line-item-args.js, fetched directly from
+                # the loaded JS and grepped for "sourceCostItem" — this is the
+                # exact function JobTread's own UI calls to build its
+                # createCostItem args): it flattens the relation to a plain
+                # scalar before sending — `sourceCostItemId: j && j.id` (same
+                # pattern used for organizationCostItemId/jobCostItemId). So
+                # the real arg is a flat `sourceCostItemId` string, not a
+                # nested `sourceCostItem` object. This is a separate tier from
+                # description/customFieldValues (see the 3-tier retry below)
+                # so a bad link attempt can never again cost us the real
+                # product detail the way the old nested-object attempt did.
+                link_args = dict(enriched_args)
+                if ATTEMPT_TRUE_CATALOG_LINK:
+                    catalog_match = line.get("catalog_match") or {}
+                    product_id = catalog_match.get("product_id")
+                    if product_id and org_id:
+                        master_id = link_catalog_master_item(jobtread_query_fn, org_id, product_id)
+                        if master_id:
+                            link_args["sourceCostItemId"] = master_id
 
-                # Try the enriched write first (description + custom fields).
-                # Neither has been live-write-confirmed against createCostItem
-                # specifically (description is a confirmed-real READ field;
-                # customFieldValues is a confirmed-real WRITE arg on createJob,
-                # not independently proven on createCostItem). If the enriched
-                # call fails for ANY reason, fall back to the bare-minimum args
-                # already proven to work in the first successful live run
-                # (job 22PbETG4esX5) — so a bad new field costs us the extra
-                # detail on that one line, never the line item itself.
+                # 3-tier retry: (1) full args including the true-catalog-link
+                # scalar, (2) enriched args (description/customFieldValues,
+                # no link) if the link tier fails, (3) bare args if THAT also
+                # fails. Each tier only drops what actually caused the
+                # failure — a bad link never again costs the real product
+                # detail, and a bad custom field never costs the line item
+                # itself.
                 try:
                     resp = jobtread_query_fn({
-                        "createCostItem": {"$": enriched_args, "createdCostItem": {"id": {}}}
+                        "createCostItem": {"$": link_args, "createdCostItem": {"id": {}}}
                     })
-                except Exception as enriched_err:
-                    if enriched_args != base_args:
+                except Exception as link_err:
+                    if link_args != enriched_args:
+                        print(f"  Linked material create failed for '{item[:50]}' "
+                              f"({link_err}) — retrying without sourceCostItemId")
+                        try:
+                            resp = jobtread_query_fn({
+                                "createCostItem": {"$": enriched_args, "createdCostItem": {"id": {}}}
+                            })
+                        except Exception as enriched_err:
+                            resp = None
+                    else:
+                        enriched_err = link_err
+                        resp = None
+
+                    if resp is None and enriched_args != base_args:
                         print(f"  Enriched material create failed for '{item[:50]}' "
                               f"({enriched_err}) — retrying with bare args (no description/custom fields)")
                         try:
@@ -1409,9 +1453,8 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
                         except Exception as e:
                             print(f"  Failed to add material line for '{title[:50]}' (bare retry also failed): {e}")
                             resp = None
-                    else:
+                    elif resp is None:
                         print(f"  Failed to add material line for '{title[:50]}': {enriched_err}")
-                        resp = None
 
                 if resp is not None:
                     items_added_this_group += 1
