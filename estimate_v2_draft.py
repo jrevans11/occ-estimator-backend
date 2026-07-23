@@ -650,15 +650,17 @@ def search_home_depot_catalog(search_query, jobtread_query_fn, org_id, page=1):
 #
 # Call #1's mutation shape (type/storeId/productId args, costGroup comes
 # back null since it's a shared record not attached to any one job) was
-# confirmed live in an earlier session. The exact string value "type" wants
-# for a Home Depot product specifically was NOT captured verbatim at the
-# time — GLOBAL_CATALOG_PRODUCT_TYPE below is a best guess based on
-# JobTread's own _type naming convention seen elsewhere in this project
-# (lowercase-first camelCase, e.g. "costItem", "costGroup", "customField").
-# If it's wrong, link_catalog_master_item() just returns None and the
-# material line is created exactly as it is today (real price, description,
-# custom fields) — this is a pure best-effort addition, never a blocker.
-GLOBAL_CATALOG_PRODUCT_TYPE = "HomeDepotProduct"
+# confirmed live in an earlier session. The "type" value was a guess
+# ("HomeDepotProduct") until a real production run (Jul 2026, job
+# 22PbQbX4bfWm) surfaced the actual API validation error, which names every
+# valid option: 'The value {...} at "createGlobalOrganizationCostItem"."$"
+# does not resolve to "heritage", "homeDepot", "poolcorp", "qxo", or "srs"'.
+# So JobTread supports Global Catalog linking for (at least) 5 vendor
+# integrations, and the real value for Home Depot is the camelCase
+# "homeDepot" (matching the homeDepotProducts query field's own casing) —
+# not the guessed "HomeDepotProduct". Fixed below. If this ever needs to
+# support another one of these vendors, "type" is the field to change.
+GLOBAL_CATALOG_PRODUCT_TYPE = "homeDepot"
 
 
 def link_catalog_master_item(jobtread_query_fn, org_id, product_id, store_id=None):
@@ -1169,23 +1171,30 @@ def _build_material_description(line):
     return ""
 
 
+# DEFINITIVELY CONFIRMED UNSUPPORTED (Jul 2026, real production run, job
+# 22PbQbX4bfWm): createFile's own validation error names the full valid
+# enum for "targetType" — "dailyLog", "document", "task", "job", "location",
+# "contact", "account", "organization". "costItem" is not in that list and
+# never will resolve, no matter how the args are shaped. This isn't a bug
+# in our call, it's a real gap in what createFile can target. Set to False
+# so every material line stops making a guaranteed-fail API call and
+# cluttering the log — flip back to True only if JobTread ever adds
+# costItem as a valid createFile target.
+ATTEMPT_CATALOG_PHOTO_ATTACH = False
+
+
 def _attach_catalog_image(jobtread_query_fn, org_id, cost_item_id, image_url, name):
     """Best-effort: attach a Home Depot product photo to a cost item, using
     the same createUploadRequest -> createFile(targetType, targetId, url)
     pattern app.py's attach_files() already uses successfully at the job
     level.
 
-    CONFIRMED BROKEN (Jul 2026) — real job 22PbLsLedmNR's log showed this
-    failing with "HTTP Error 400: Bad Request" on ALL 17 auto-matched
-    material lines, 17/17, no exceptions. That's no longer "unconfirmed,"
-    it's a real, consistent failure — but which of the two calls below is
-    actually rejected was NOT distinguishable from that log, since the
-    caller only ever saw one generic wrapped error message no matter which
-    step raised it. Split into two try/excepts here so the NEXT real run's
-    log pinpoints the actual failing call (createUploadRequest vs.
-    createFile/targetType=costItem) instead of just "something failed."
-    Still fully non-fatal either way — caller also wraps this in try/except
-    so a photo miss never blocks the cost item itself from being created.
+    CONFIRMED UNSUPPORTED (Jul 2026) — see ATTEMPT_CATALOG_PHOTO_ATTACH
+    above. Left in place (dead code path, gated off by default) rather than
+    deleted, in case createFile ever adds costItem support. Split into two
+    try/excepts below so if it's ever re-enabled, a failure log pinpoints
+    which call (createUploadRequest vs. createFile) is the problem instead
+    of one generic wrapped message.
     """
     try:
         upload_resp = jobtread_query_fn({
@@ -1406,21 +1415,26 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
 
                 if resp is not None:
                     items_added_this_group += 1
-                    # Best-effort: attach the real Home Depot product photo to
-                    # the cost item, same way app.py's attach_files() already
-                    # attaches job-level files (createUploadRequest -> createFile
-                    # by URL). Never lets a failure here block the estimate —
-                    # this is a nice-to-have, not confirmed with a live write
-                    # test yet (see estimate_v2_draft.py module docstring).
-                    catalog_match = line.get("catalog_match") or {}
-                    image_url = catalog_match.get("imageUrl")
-                    if image_url and org_id:
-                        try:
-                            created_id = resp["createCostItem"]["createdCostItem"]["id"]
-                            _attach_catalog_image(jobtread_query_fn, org_id, created_id,
-                                                   image_url, item[:100])
-                        except Exception as e:
-                            print(f"  Photo attach skipped for '{item[:50]}' (non-fatal): {e}")
+                    # Photo attachment via createFile(targetType="costItem")
+                    # is CONFIRMED UNSUPPORTED (Jul 2026, real production run,
+                    # job 22PbQbX4bfWm) — the API's own validation error names
+                    # the full valid enum for targetType: "dailyLog",
+                    # "document", "task", "job", "location", "contact",
+                    # "account", "organization". "costItem" simply isn't one
+                    # of them — this was never a shape bug we could fix, it's
+                    # a real gap in what createFile can target. Disabled via
+                    # ATTEMPT_CATALOG_PHOTO_ATTACH below rather than deleted,
+                    # in case JobTread adds costItem support later.
+                    if ATTEMPT_CATALOG_PHOTO_ATTACH:
+                        catalog_match = line.get("catalog_match") or {}
+                        image_url = catalog_match.get("imageUrl")
+                        if image_url and org_id:
+                            try:
+                                created_id = resp["createCostItem"]["createdCostItem"]["id"]
+                                _attach_catalog_image(jobtread_query_fn, org_id, created_id,
+                                                       image_url, item[:100])
+                            except Exception as e:
+                                print(f"  Photo attach skipped for '{item[:50]}' (non-fatal): {e}")
 
         if items_added_this_group > 0:
             added_groups += 1
