@@ -145,6 +145,20 @@ DEFAULT_HISTORICAL_CSV = os.path.join(
     _MODULE_DIR, "historical_home_and_closing_repairs_budget_detail_dedup.csv"
 )
 
+# Redland Electric (OCC's electrical sub) real invoice/estimate history —
+# rebuilt Jul 2026 by pulling 46 real Redland email threads (invoices,
+# estimates, receipts) directly from Jason's Gmail via the Housecall Pro
+# notification emails, which embed the actual line-item table (services,
+# qty, unit price, amount, scope description) right in the email HTML for
+# invoices — no PDF parsing needed. 21 unique jobs / 36 line items kept
+# (Oct 2024-Jul 2026), replacing the earlier CSV of the same name that went
+# missing from this repo. See redland_electric_invoice_history.csv itself
+# for the full real scope text per line — this is the calibration source
+# for STEP 3B's sub_scope_price reasoning (see load_redland_reference_examples()).
+DEFAULT_REDLAND_CSV = os.path.join(
+    _MODULE_DIR, "redland_electric_invoice_history.csv"
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Real 3-digit cost codes (Jason's chosen set — see cost_codes_3digit.csv).
@@ -493,17 +507,97 @@ def load_historical_reference_examples(
     return "\n".join(lines)
 
 
-def build_full_estimating_prompt(csv_path=None):
+# Diverse subset of real Redland job_numbers picked from
+# redland_electric_invoice_history.csv for STEP 3B few-shot calibration —
+# covers the full range a real closing-repair/sub-scope decision needs to
+# span: trip-fee-only visit, several small single-fixture repairs in one
+# invoice, per-unit code-correction pricing, a harder-access per-unit repair,
+# a quote-that-changed-based-on-field-conditions example, a full day-rate
+# multi-item punch-list job, a flat-price fixture-bundle job, and a
+# big custom-quoted panel/feeder job (the "quote required" category).
+REDLAND_REFERENCE_JOB_KEYS = [
+    "INV-2086",  # minimum service-call trip charge, single small item
+    "INV-1841",  # several small single-fixture repairs in one visit ($25-$175 each)
+    "INV-1915",  # per-unit code-correction pricing + one harder-access repair
+    "INV-1908",  # per-unit garage door opener rewiring
+    "INV-1889",  # quote ($1,000) revised down to actual ($600) based on field conditions
+    "INV-2036",  # full day-rate multi-item whole-house punch list + real materials
+    "INV-2052",  # flat-price fixture-bundle job (exterior lighting), no materials line
+    "EST-281",   # big custom-quoted panel/feeder rewire — "quote required" category anchor
+]
+
+
+def load_redland_reference_examples(csv_path=None, job_keys=None):
+    """Pull a diverse subset of real Redland Electric jobs out of
+    redland_electric_invoice_history.csv and format them as a compact
+    few-shot text block for STEP 3B (sub-scope electrical pricing).
+
+    Same graceful-degradation pattern as load_historical_reference_examples():
+    returns "" instead of raising if the CSV isn't present, so a deploy that's
+    missing this file just quietly falls back to the static REAL SUB COST
+    REFERENCE ranges already in ESTIMATING_LOGIC_SECTION instead of crashing.
+    """
+    import csv as _csv
+
+    csv_path = csv_path if csv_path is not None else DEFAULT_REDLAND_CSV
+    job_keys = job_keys if job_keys is not None else REDLAND_REFERENCE_JOB_KEYS
+    if not os.path.exists(csv_path):
+        print(f"  WARNING: Redland reference CSV not found at '{csv_path}' — "
+              f"prompt will build WITHOUT real Redland examples (falls back to "
+              f"the static REAL SUB COST REFERENCE ranges only).")
+        return ""
+
+    wanted = set(job_keys)
+    by_job = {}
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            if row["job_number"] in wanted:
+                by_job.setdefault(row["job_number"], []).append(row)
+
+    lines = ["REAL_REDLAND_ELECTRIC_EXAMPLES (actual past invoices/estimates "
+             "from OCC's electrical sub — real scope text, real billed prices "
+             "= OCC's real cost before the 45% sub markup; calibration only, "
+             "do not copy verbatim):"]
+    for key in job_keys:
+        items = by_job.get(key, [])
+        if not items:
+            continue
+        addr = items[0]["service_address"]
+        total = items[0]["job_total_billed"]
+        lines.append(f"\n- {key} ({addr}) — job total billed by Redland: ${total}")
+        for it in items:
+            desc = it["line_item_description"].strip()
+            qty = it["quantity"].strip() or "1"
+            price = it["unit_price"].strip()
+            amt = it["line_amount"].strip()
+            lines.append(f"    {desc} — qty {qty} @ ${price} = ${amt}")
+            notes = it["scope_notes"].strip()
+            if notes:
+                lines.append(f"      scope: {notes}")
+    return "\n".join(lines)
+
+
+def build_full_estimating_prompt(csv_path=None, redland_csv_path=None):
     """Assemble the piece of the system prompt that replaces the old flat
     price-lookup section: the estimating method/logic + real historical
     reference examples. This is what actually wires the historical data into
     the live prompt (Task #8) — everything above this point defines the
     pieces, this is where they get glued together.
+
+    Also splices in real Redland Electric examples (load_redland_reference_
+    examples()) right after the in-house historical examples, so STEP 3B's
+    sub_scope_price reasoning has real scope-to-price anchors to work from,
+    not just the static numeric ranges already in ESTIMATING_LOGIC_SECTION.
     """
     examples_text = load_historical_reference_examples(csv_path)
+    redland_text = load_redland_reference_examples(redland_csv_path)
+
+    prompt = ESTIMATING_LOGIC_SECTION
     if examples_text:
-        return ESTIMATING_LOGIC_SECTION + "\n\n" + examples_text
-    return ESTIMATING_LOGIC_SECTION
+        prompt += "\n\n" + examples_text
+    if redland_text:
+        prompt += "\n\n" + redland_text
+    return prompt
 
 
 # ─────────────────────────────────────────────────────────────────────────
