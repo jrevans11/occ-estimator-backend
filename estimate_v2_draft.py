@@ -159,6 +159,29 @@ DEFAULT_REDLAND_CSV = os.path.join(
     _MODULE_DIR, "redland_electric_invoice_history.csv"
 )
 
+# Four more sub/vendor invoice-history CSVs (Jul 2026), pulled the same way as
+# Redland — real Gmail invoices/estimates opened via Chrome (Gmail's inline
+# PDF viewer, since none of these vendors embed line items directly in the
+# email HTML the way Housecall Pro/Redland does — CSM uses Vonigo, Tile with
+# Style/Jordan Lumber send plain PDFs, Greer Flooring sends its own PDF
+# quote format). See each CSV's own header comment / CLAUDE.md for the pull
+# details. Jason's call (Jul 2026): treat significant flooring/tile work
+# performed by Tile with Style, Greer Flooring, or Jordan Lumber as SUB work
+# (45% markup), same as Crawlspace Medic — see the FLOORING/TILE section
+# added to app.py's SYSTEM_PROMPT.
+DEFAULT_CRAWLSPACE_MEDIC_CSV = os.path.join(
+    _MODULE_DIR, "crawlspace_medic_invoice_history.csv"
+)
+DEFAULT_TILE_WITH_STYLE_CSV = os.path.join(
+    _MODULE_DIR, "tile_with_style_invoice_history.csv"
+)
+DEFAULT_GREER_FLOORING_CSV = os.path.join(
+    _MODULE_DIR, "greer_flooring_invoice_history.csv"
+)
+DEFAULT_JORDAN_LUMBER_CSV = os.path.join(
+    _MODULE_DIR, "jordan_lumber_invoice_history.csv"
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Real 3-digit cost codes (Jason's chosen set — see cost_codes_3digit.csv).
@@ -329,7 +352,8 @@ STEP 3A — IF IN-HOUSE: break the work into
   girder repair or headered joist repair that needs a permanent support
   point, not just for replacing bad temporary shoring.
 
-STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace):
+STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace /
+significant flooring or tile install-refinish-retile work):
   do NOT itemize hours or materials — subs bill OCC scope-based or day-rate
   per visit, not itemized labor+materials, so a granular breakdown here
   would be fake precision. Instead reason to a single "sub_scope_price"
@@ -354,9 +378,44 @@ STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace):
         $1,800-4,650 — highly scope-dependent, treat as "quote required"
         if the addendum/report doesn't give enough detail to size it
     Crawlspace/Foundation (Crawlspace Medic): use the ranges already listed
-    in the CRAWLSPACE/FOUNDATION section of this prompt — those came from
-    real quotes, not invoices, so treat them as reasonable but softer
-    anchors than the electrical numbers above.
+    in the CRAWLSPACE/FOUNDATION section of this prompt. As of Jul 2026 these
+    are backed by real CSM invoices (not just quotes) — see
+    REAL_CRAWLSPACE_MEDIC_EXAMPLES below for the actual itemized jobs.
+    Flooring/Tile (Tile with Style / Greer Flooring / Jordan Lumber): a small
+    crack/grout patch or a few replacement boards/tiles stays IN-HOUSE
+    (STEP 3A) — only treat this as sub scope (and use sub_scope_price) for
+    full-room-or-larger install/refinish/re-tile work.
+
+    UNLIKE electrical/HVAC/plumbing/crawlspace above, this category has real,
+    clean per-sqft (or per-linear-ft) rates with material and install labor
+    broken out SEPARATELY — see the FLOORING/TILE rate table in this prompt.
+    That means you should COMPUTE sub_scope_price rather than anchor-picking
+    a number from a historical job total:
+      1. Determine the affected square footage (or linear footage for trim)
+         from the report/addendum — room dimensions if given, otherwise a
+         reasonable estimate from photos/context. State this assumption in
+         "quantity_note" exactly like STEP 3A does (e.g. "~140 sqft of
+         shower wall tile based on a 5x7 shower stall, floor to ceiling") —
+         do NOT put dollar amounts or rate math in quantity_note, only the
+         quantity assumption itself (see the CUSTOMER-FACING OUTPUT RULES —
+         quantity_note flows into the same description field a client may see).
+      2. Multiply that quantity by the real material rate AND the real
+         install labor rate for the flooring/tile type involved (both are
+         listed separately in the rate table).
+      3. Add any applicable flat-fee lines that apply to the scope — demo,
+         floor prep, take-up/disposal of existing flooring, setting
+         materials, trim, thresholds, underlayment, niche/bench/drain, etc.
+      4. Sum steps 2 and 3 into a single sub_scope_price number.
+    Use REAL_TILE_WITH_STYLE_EXAMPLES, REAL_GREER_FLOORING_EXAMPLES, and
+    REAL_JORDAN_LUMBER_EXAMPLES below, and the SANITY-CHECK JOB TOTALS in the
+    rate table, only as a gut-check on your computed number (if you're
+    wildly outside the range for a comparable scope, reconsider your
+    quantity assumption) — not as the primary way to arrive at the price.
+    This computed approach will be materially more accurate than picking
+    from a blended range, since the real rate data supports it. If the
+    report doesn't give enough detail to estimate square footage responsibly
+    (no dimensions, no photos to gauge scale), treat it as a quote-required
+    item instead of guessing a quantity.
 
   QUOTE-REQUIRED CATEGORIES — do not guess a sub_scope_price for these if
   the addendum/report doesn't give enough detail to size them responsibly;
@@ -577,7 +636,95 @@ def load_redland_reference_examples(csv_path=None, job_keys=None):
     return "\n".join(lines)
 
 
-def build_full_estimating_prompt(csv_path=None, redland_csv_path=None):
+# Diverse job_number subsets for the four Jul 2026 vendor CSVs — same
+# hand-picked-diversity approach as REDLAND_REFERENCE_JOB_KEYS. None of
+# these CSVs are big enough to need trimming for token budget the way the
+# 5,353-row historical CSV does, so these lists mostly just fix the display
+# order; None -> loader falls back to "every job_number in the CSV".
+CRAWLSPACE_MEDIC_REFERENCE_JOB_KEYS = [
+    "Q-80764",     # multi-item moisture/insulation job (vapor barrier, insulation, vents)
+    "INV-925664",  # large basement French drain job + real field-condition change order
+    "Q-64247",     # sump pump + dehumidifier + vent seal + outlets, mid-size
+    "INV-927598",  # vapor barrier + vent seal + fungal treatment, mid-size
+    "Q-64895",     # big structural sill/joist repair job (top of the range)
+    "Q-79246",     # dehumidifier-only, most current (2026) single-item price
+]
+TILE_WITH_STYLE_REFERENCE_JOB_KEYS = [
+    "EST-2525",  # full bath tile remodel, top of the range, per-sqft rates
+    "EST-2301",  # real closing-repair-scale crack/regrout job, flat lump price
+    "INV-2740",  # small real paid invoice, bottom of the range
+    "EST-2412",  # mid-size bath job, mosaic vs standard per-sqft rate contrast
+]
+GREER_FLOORING_REFERENCE_JOB_KEYS = [
+    "ES406605",     # carpet + hardwood refinish combo, full material/services/tax split
+    "ES406275",     # LVP + carpet combo, most line-item variety
+    "CONVO-GROUT",  # small verbal tile/grout repair quote, bottom of the range
+]
+JORDAN_LUMBER_REFERENCE_JOB_KEYS = None  # only one real job on file — use all of it
+
+
+def load_vendor_reference_examples(csv_path, job_keys, label, note):
+    """Generic version of load_redland_reference_examples() for the other
+    four vendor CSVs (Jul 2026) — same file shape (job_number/doc_date/
+    service_address/line_item_description/line_amount/job_total_billed/
+    scope_notes), with optional quantity/unit/unit_price columns that get
+    included in the formatted line when present. Same graceful-degradation
+    pattern: returns "" instead of raising if the CSV is missing, so a
+    deploy without these files just quietly falls back to the static ranges
+    already in ESTIMATING_LOGIC_SECTION / app.py's SYSTEM_PROMPT.
+
+    job_keys=None means "use every job in the file, in file order" instead
+    of a hand-picked subset.
+    """
+    import csv as _csv
+
+    if not os.path.exists(csv_path):
+        print(f"  WARNING: reference CSV not found at '{csv_path}' for "
+              f"{label} — prompt will build WITHOUT these real examples.")
+        return ""
+
+    by_job = {}
+    order = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            key = row["job_number"]
+            if job_keys is not None and key not in job_keys:
+                continue
+            if key not in by_job:
+                by_job[key] = []
+                order.append(key)
+            by_job[key].append(row)
+
+    keys_in_order = job_keys if job_keys is not None else order
+    lines = [f"REAL_{label}_EXAMPLES ({note}):"]
+    for key in keys_in_order:
+        items = by_job.get(key, [])
+        if not items:
+            continue
+        addr = items[0]["service_address"]
+        total = items[0]["job_total_billed"]
+        lines.append(f"\n- {key} ({addr}) — job total: ${total}")
+        for it in items:
+            desc = it["line_item_description"].strip()
+            amt = it["line_amount"].strip()
+            qty = (it.get("quantity") or "").strip()
+            unit = (it.get("unit") or "").strip()
+            unit_price = (it.get("unit_price") or "").strip()
+            if qty and unit and unit_price:
+                lines.append(f"    {desc} — qty {qty} {unit} @ ${unit_price} = ${amt}")
+            else:
+                lines.append(f"    {desc} — ${amt}")
+            notes = (it.get("scope_notes") or "").strip()
+            if notes:
+                lines.append(f"      note: {notes}")
+    return "\n".join(lines)
+
+
+def build_full_estimating_prompt(csv_path=None, redland_csv_path=None,
+                                  crawlspace_medic_csv_path=None,
+                                  tile_with_style_csv_path=None,
+                                  greer_flooring_csv_path=None,
+                                  jordan_lumber_csv_path=None):
     """Assemble the piece of the system prompt that replaces the old flat
     price-lookup section: the estimating method/logic + real historical
     reference examples. This is what actually wires the historical data into
@@ -585,18 +732,46 @@ def build_full_estimating_prompt(csv_path=None, redland_csv_path=None):
     pieces, this is where they get glued together.
 
     Also splices in real Redland Electric examples (load_redland_reference_
+    examples()) plus, as of Jul 2026, real Crawlspace Medic, Tile with Style,
+    Greer Flooring, and Jordan Lumber examples (load_vendor_reference_
     examples()) right after the in-house historical examples, so STEP 3B's
-    sub_scope_price reasoning has real scope-to-price anchors to work from,
-    not just the static numeric ranges already in ESTIMATING_LOGIC_SECTION.
+    sub_scope_price reasoning has real scope-to-price anchors for all five
+    sub categories to work from, not just the static numeric ranges already
+    in ESTIMATING_LOGIC_SECTION / app.py's SYSTEM_PROMPT.
     """
     examples_text = load_historical_reference_examples(csv_path)
     redland_text = load_redland_reference_examples(redland_csv_path)
+    csm_text = load_vendor_reference_examples(
+        crawlspace_medic_csv_path or DEFAULT_CRAWLSPACE_MEDIC_CSV,
+        CRAWLSPACE_MEDIC_REFERENCE_JOB_KEYS, "CRAWLSPACE_MEDIC",
+        "OCC's crawlspace/foundation sub — real cost before 45% markup")
+    tws_text = load_vendor_reference_examples(
+        tile_with_style_csv_path or DEFAULT_TILE_WITH_STYLE_CSV,
+        TILE_WITH_STYLE_REFERENCE_JOB_KEYS, "TILE_WITH_STYLE",
+        "OCC's tile sub — real cost before 45% markup")
+    greer_text = load_vendor_reference_examples(
+        greer_flooring_csv_path or DEFAULT_GREER_FLOORING_CSV,
+        GREER_FLOORING_REFERENCE_JOB_KEYS, "GREER_FLOORING",
+        "OCC's carpet/LVP/hardwood-refinish sub — real cost before 45% markup")
+    jordan_text = load_vendor_reference_examples(
+        jordan_lumber_csv_path or DEFAULT_JORDAN_LUMBER_CSV,
+        JORDAN_LUMBER_REFERENCE_JOB_KEYS, "JORDAN_LUMBER",
+        "OCC's hardwood flooring sub — real cost before 45% markup; finishing "
+        "line items are billed separately by Greg Porter Floorsanding, not Jordan Lumber")
 
     prompt = ESTIMATING_LOGIC_SECTION
     if examples_text:
         prompt += "\n\n" + examples_text
     if redland_text:
         prompt += "\n\n" + redland_text
+    if csm_text:
+        prompt += "\n\n" + csm_text
+    if tws_text:
+        prompt += "\n\n" + tws_text
+    if greer_text:
+        prompt += "\n\n" + greer_text
+    if jordan_text:
+        prompt += "\n\n" + jordan_text
     return prompt
 
 
