@@ -948,6 +948,70 @@ def create_location_record(account_id, address):
         raise
 
 
+# JobTread's "Notes" job custom field has a real, confirmed hard limit
+# (Jul 2026): a real submission's createJob call failed outright with
+# "Unable to save custom field 'Notes': Value cannot be more than 1024
+# characters" -- this crashed job creation completely, before ANY of the
+# rest of the pipeline (estimate, cost groups, files) ever ran. Separately,
+# Jason confirmed the old assumption in the comment below ("internal-only,
+# not shown on customer documents") was WRONG -- Notes actually does show
+# up on customer-facing order documents. So long text (sometimes literally
+# a realtor's full repair list, pasted into a Wufoo text field instead of
+# a separate PDF) shouldn't go in this field at all, not just when it's
+# over the hard limit. See _split_notes_for_job() / create_job_daily_log().
+JOB_NOTES_FIELD_SAFE_LIMIT = 1000  # real cap is 1024; leave a little headroom
+
+
+def _split_notes_for_job(notes_text):
+    """Split submission notes into (job_field_notes, overflow_notes).
+
+    If notes_text fits safely within JobTread's real ~1024-char cap on the
+    job-level "Notes" custom field, it's used as-is and overflow_notes is
+    None (nothing else to do). If it's too long, job_field_notes becomes a
+    short pointer (not the real content -- avoids the customer-facing-
+    document problem too), and overflow_notes carries the FULL original
+    text so the caller can post it somewhere internal instead (see
+    create_job_daily_log) — nothing is ever silently dropped.
+    """
+    notes_text = notes_text or ""
+    if len(notes_text) <= JOB_NOTES_FIELD_SAFE_LIMIT:
+        return notes_text, None
+    return ("See Daily Log for full submission notes "
+            "(too long for this field)."), notes_text
+
+
+def create_job_daily_log(job_id, notes_text, log_date=None):
+    """Post an internal Daily Log entry on a job.
+
+    Confirmed real mutation (Jul 2026, live-tested on a real job — posted a
+    clearly-labeled test entry, verified the exact request via network
+    capture, then deleted it): createDailyLog takes jobId/date/notes/notify
+    directly, no targetType/targetId indirection like createTask/createFile
+    use. Daily Logs default to nobody having explicit access ("Daily Log
+    Access: Nobody has been given direct access to this Daily Log" in the
+    UI) and notify=False suppresses any notification — unlike the job-level
+    "Notes" custom field, this does NOT show up on customer-facing order
+    documents. Best-effort: never blocks job creation if this fails.
+    """
+    from datetime import date as _date
+    log_date = log_date or _date.today().isoformat()
+    try:
+        jobtread_query({
+            "createDailyLog": {
+                "$": {
+                    "jobId": job_id,
+                    "date": log_date,
+                    "notes": notes_text,
+                    "notify": False,
+                },
+                "createdDailyLog": {"id": {}}
+            }
+        })
+        print(f"  Daily Log created for job {job_id} (full notes, {len(notes_text)} chars)")
+    except Exception as e:
+        print(f"  Daily Log creation failed for job {job_id} (non-fatal): {e}")
+
+
 def create_job_record(location_id, cfg):
     """Create the job. cfg: job_type, status_field, status_value, pm, projected_budget (opt),
     job_name (opt → None for auto Job #####), notes_text."""
@@ -960,10 +1024,12 @@ def create_job_record(location_id, cfg):
     if cfg.get("projected_budget"):
         job_cfv["Projected Budget"] = cfg["projected_budget"]
     if cfg.get("notes_text"):
-        # Job "description" is customer-facing (shows at the top of Customer
-        # Orders), so inquiry notes go in the "Notes" custom field instead —
-        # internal-only, not shown on customer documents.
-        job_cfv["Notes"] = cfg["notes_text"]
+        # See JOB_NOTES_FIELD_SAFE_LIMIT / _split_notes_for_job() above —
+        # only the safe, short portion (or a pointer, if the real notes are
+        # too long) goes in this customer-visible field. create_job_full()
+        # posts the full text as a Daily Log separately when it's too long.
+        job_field_notes, _ = _split_notes_for_job(cfg["notes_text"])
+        job_cfv["Notes"] = job_field_notes
 
     job_input = {
         "locationId": location_id,
@@ -2683,6 +2749,13 @@ def create_job_stub(cfg):
     print(f"  Location: {location_id}")
     job_id = create_job_record(location_id, cfg)
     print(f"  Job created: {job_id}")
+
+    # See create_job_full()'s matching comment — same overflow handling
+    # applies here since this path also runs create_job_record().
+    _, overflow_notes = _split_notes_for_job(cfg.get("notes_text", ""))
+    if overflow_notes:
+        create_job_daily_log(job_id, overflow_notes)
+
     attach_files(job_id, cfg.get("file_urls", []))
     return job_id
 
@@ -2704,6 +2777,16 @@ def create_job_full(cfg):
     print(f"  Location: {location_id}")
     job_id = create_job_record(location_id, cfg)
     print(f"  Job created: {job_id}")
+
+    # If the real submission notes were too long for the job-level "Notes"
+    # custom field, create_job_record() only wrote a short pointer there —
+    # the full text was held back and needs to go somewhere now that we
+    # have a job_id. Daily Log, not the customer-facing Notes field (see
+    # _split_notes_for_job() / create_job_daily_log() above for why).
+    _, overflow_notes = _split_notes_for_job(cfg.get("notes_text", ""))
+    if overflow_notes:
+        create_job_daily_log(job_id, overflow_notes)
+
     add_cost_groups(job_id, cfg.get("estimate"))
     attach_files(job_id, cfg.get("file_urls", []))
     return job_id
