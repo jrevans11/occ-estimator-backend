@@ -1,0 +1,19 @@
+job_number,doc_type,doc_date,service_address,line_item_description,quantity,unit,unit_price,line_amount,job_total_billed,scope_notes
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),Demolition (tub/tile),1,EA,1800.00,1800.00,8628.39,"Full master bath tile remodel, not a small closing repair. Good anchor for per-SF tile labor rates."
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),"Shower walls, 24x48 straight stack layout",138.50,SF,17.00,2354.50,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),"Shower floor, 24x48",30,SF,39.00,1170.00,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),Bullnose trim,55,LF,6.00,330.00,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),"Niche (12x20)",1,EA,140.00,140.00,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),"Bench (BB30)",1,EA,130.00,130.00,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),Window (tile trim-out),1,EA,120.00,120.00,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),Setting materials,1,EA,1479.00,1479.00,8628.39,
+EST-2525,estimate,2026-02-12,Campobello SC (Jason Evans job),"Linear drain (72in tileable drain with installation)",1,EA,1104.89,1104.89,8628.39,
+EST-2301,estimate,2025-05-06,224 Grove Rd Greenville SC,"Clean up and regrout, repair cracked tile, fill in shower corner",1,LOT,3000.00,3000.00,3350.00,"Real closing-repair-scale tile crack/grout repair job - flat lump price for the repair labor, not per-SF."
+EST-2301,estimate,2025-05-06,224 Grove Rd Greenville SC,Setting material,1,LOT,350.00,350.00,3350.00,
+INV-2740,invoice,2025-08-13,245 Chickadee Trail Easley SC 29642,"Shower floor installation (over existing tile)",1,EA,900.00,900.00,945.00,"Small real paid invoice - good closing-repair-scale anchor."
+INV-2740,invoice,2025-08-13,245 Chickadee Trail Easley SC 29642,Setting materials,1,EA,45.00,45.00,945.00,
+EST-2412,estimate,2025-09-24,246 Water Rd Taylors SC 29687,"Shower floor (mosaic, pattern TBD)",12,SF,34.00,408.00,2901.00,"Mid-size bath job. Note mosaic floor rate ($34/SF) is lower than the 2525 job's shower floor rate ($39/SF) - rates vary by tile size/pattern."
+EST-2412,estimate,2025-09-24,246 Water Rd Taylors SC 29687,"Shower walls (pattern TBD)",88,SF,12.00,1056.00,2901.00,
+EST-2412,estimate,2025-09-24,246 Water Rd Taylors SC 29687,"Bullnose (Schluter)",32,LF,6.00,192.00,2901.00,
+EST-2412,estimate,2025-09-24,246 Water Rd Taylors SC 29687,"Niche (12x20)",1,EA,130.00,130.00,2901.00,
+EST-2412,estimate,2025-09-24,246 Water Rd Taylors SC 29687,Setting materials,1,EA,1115.00,1115.00,2901.00,
