@@ -1,0 +1,9 @@
+job_number,doc_type,doc_date,service_address,line_item_description,quantity,unit,unit_price,line_amount,job_total_billed,scope_notes
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"1209 SF 2-1/4in Select Red Oak Unfinished hardwood - material (plus tax)",1209,SF,4.01,5138.98,14803.98,"Hardwood-specific flooring specialist ('Wood Flooring Specialists since 1934'). #1 Grade alt at $3.37/SF+tax=$4318.79 also quoted. Finishing subbed to Greg Porter Floorsanding as a courtesy line, not billed by Jordan Lumber."
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"Take up carpet, pad & disposal - labor",1,LOT,540.00,540.00,14803.98,
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"Install nail-down hardwood - labor",1209,SF,2.25,2720.00,14803.98,"$2720 / 1209 SF = ~$2.25/SF install labor rate."
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"Move & reset furniture (during install only) - labor",1,LOT,425.00,425.00,14803.98,
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"Subfloor prep/leveling - labor (TBD pending site review)",1,LOT,380.00,380.00,14803.98,
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"[Subcontracted to Greg Porter Floorsanding] Sand, stain & finish 1120 SF hardwood",1120,SF,4.00,4480.00,14803.98,"Courtesy line item only - billed separately by Greg Porter Floorsanding LLC, not part of Jordan Lumber's own invoice."
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"[Subcontracted to Greg Porter Floorsanding] Sand, stain & finish floating set of stairs (TBD if needed)",1,LOT,0.00,0.00,14803.98,"TBD - no price given, contingent on scope."
+WOODVALE-3-4-26,estimate,2026-03-04,74 Woodvale,"[Subcontracted to Greg Porter Floorsanding] Provide & install new shoe molding (TBD if needed)",1,LOT,1120.00,1120.00,14803.98,
