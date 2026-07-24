@@ -325,11 +325,31 @@ STEP 3A — IF IN-HOUSE: break the work into
 
 STEP 3B — IF SUB (electrical / major HVAC / major plumbing / crawlspace):
   do NOT itemize hours or materials — subs bill OCC scope-based or day-rate
-  per visit, not itemized labor+materials, so a granular breakdown here
-  would be fake precision. Instead reason to a single "sub_scope_price"
-  (OCC's cost from the sub, before markup) using the real historical
-  reference ranges below. Set both labor_lines and material_lines to empty
-  arrays when using sub_scope_price.
+  per visit, not itemized labor+materials, so an hours+materials breakdown
+  here would be fake precision. Set both labor_lines and material_lines to
+  empty arrays for sub work. Then price the sub scope one of two ways:
+
+  - SINGLE-SCOPE sub work (one distinct task — e.g. one GFCI swap, one
+    water heater TPRV extension): use a single "sub_scope_price" (OCC's
+    cost from the sub, before markup), as before.
+  - MULTI-SCOPE sub work (one sub visit covering several distinct scopes —
+    most common with crawlspace moisture remediation, but applies to any
+    trade): instead of one lump sum, break the visit into
+    "sub_scope_lines": a list of {{"item": "...", "cost": N}} entries, one
+    per distinct scope, each cost being OCC's cost from the sub for that
+    scope before markup. Example — a crawlspace remediation visit should
+    come through as separate lines like: fungal/mold treatment; crawlspace
+    cleanout (always include a cleanout line whenever a new vapor barrier
+    is being installed); vapor barrier install; dehumidifier supply +
+    install; seal foundation vents; electrical circuit for the dehumidifier.
+    This is still scope-based sub pricing (per-scope flat costs, NOT
+    hours+materials) — it just shows the logic per scope instead of hiding
+    it in one number, which is how OCC's own historical crawlspace budgets
+    were written (see the real "Crawl Space and Moisture Control" example:
+    clean-out / vapor barrier / dehumidifier / vent sealing as separate
+    flat items). Use sub_scope_lines whenever the sub visit has 2+ distinct
+    scopes; never use both sub_scope_price and sub_scope_lines in the same
+    group.
 
   REAL SUB COST REFERENCE (from actual invoices — use as anchors, adjust for
   described scope/severity, do not just pick the midpoint blindly):
@@ -554,6 +574,26 @@ EXAMPLE_OUTPUT_SCHEMA = """
       "material_lines": [],
       "sub_scope_price": 750.00,
       "notes": null
+    },
+    {
+      "title": "9.2 - Crawlspace Moisture Remediation",
+      "description": "- Treat fungal growth, clean out crawlspace, install new vapor barrier, install dehumidifier, and seal foundation vents...",
+      "labor": "sub",
+      "cost_code": "Crawlspace Work",
+      "quantity_note": "~1,800 sq ft crawlspace per report; visible fungal growth on joists in photos",
+      "confidence": "medium",
+      "labor_lines": [],
+      "material_lines": [],
+      "sub_scope_price": null,
+      "sub_scope_lines": [
+        {"item": "Fungal/mold treatment", "cost": 1200.00},
+        {"item": "Crawlspace cleanout (required for new barrier)", "cost": 500.00},
+        {"item": "Vapor barrier install (~1,800 sq ft)", "cost": 2070.00},
+        {"item": "Dehumidifier supply and install", "cost": 1800.00},
+        {"item": "Seal foundation vents", "cost": 350.00},
+        {"item": "Electrical circuit for dehumidifier", "cost": 400.00}
+      ],
+      "notes": "multi-scope sub visit — itemized per scope (sub_scope_lines) instead of one lump sum, per STEP 3B"
     },
     {
       "title": "6.4 - Plumbing Leak and Resulting Drywall Damage",
@@ -1289,9 +1329,19 @@ def compute_estimate_total(estimate):
         # of data are actually present, rather than branching on the
         # "labor" tag — a "mixed" group has both a real sub_scope_price AND
         # real labor_lines/material_lines, and both need to count.
-        sub_cost = float(group.get("sub_scope_price", 0) or 0)
-        if sub_cost > 0:
-            total += round(sub_cost * SUB_MARKUP, 2)
+        # Itemized sub scope lines take precedence over the lump-sum
+        # sub_scope_price when both exist (mirrors add_cost_groups_v2 —
+        # counting both would double-charge the same visit).
+        sub_lines = group.get("sub_scope_lines") or []
+        if sub_lines:
+            for line in sub_lines:
+                line_cost = float(line.get("cost", 0) or 0)
+                if line_cost > 0:
+                    total += round(line_cost * SUB_MARKUP, 2)
+        else:
+            sub_cost = float(group.get("sub_scope_price", 0) or 0)
+            if sub_cost > 0:
+                total += round(sub_cost * SUB_MARKUP, 2)
         for line in group.get("labor_lines", []) or []:
             hours = float(line.get("hours", 0) or 0)
             rate = float(line.get("rate", 89.00) or 89.00)
@@ -1427,6 +1477,91 @@ def _attach_catalog_image(jobtread_query_fn, org_id, cost_item_id, image_url, na
         raise Exception(f"createFile (targetType=costItem) failed: {e}")
 
 
+def build_estimate_snapshot_csv(estimate):
+    """Render the AI-generated estimate as a CSV snapshot — the pre-edit
+    baseline for the estimate feedback loop (Jason's request, Jul 2026).
+
+    Written to the job's Files as "Original AI Estimate.csv" immediately
+    after add_cost_groups_v2() succeeds, BEFORE any human edits, so a later
+    diff sweep can compare what the AI originally produced against what the
+    budget looks like after Jason's team reviewed/corrected it. Mirrors the
+    exact same pricing math add_cost_groups_v2() uses when writing the real
+    cost items (labor: qty=hours, cost=$55, price=billed rate; materials:
+    cost*1.65; sub: cost*1.45), so the snapshot rows are directly comparable
+    to the budget rows JobTread shows.
+
+    One row per cost item plus one row per skipped item. Returns the CSV as
+    a string.
+    """
+    import csv as _csv
+    import io as _io
+
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["group", "cost_code", "labor_type", "line_type", "item",
+                "quantity", "unit_cost", "unit_price", "extended_price",
+                "catalog_sku", "catalog_product", "confidence", "quantity_note"])
+
+    for group in (estimate or {}).get("cost_groups", []) or []:
+        title = (group.get("title", "") or "").strip() or "Repair Item"
+        cost_code = (group.get("cost_code", "") or "").strip()
+        labor_tag = (group.get("labor", "") or "").strip()
+        confidence = (group.get("confidence", "") or "").strip()
+        quantity_note = (group.get("quantity_note", "") or "").strip()
+
+        sub_lines = group.get("sub_scope_lines") or []
+        if sub_lines:
+            for line in sub_lines:
+                line_cost = float(line.get("cost", 0) or 0)
+                if line_cost <= 0:
+                    continue
+                line_item = (line.get("item", "") or "").strip() or "Subcontractor scope"
+                line_price = round(line_cost * SUB_MARKUP, 2)
+                w.writerow([title, cost_code, labor_tag, "sub", line_item, 1,
+                            line_cost, line_price, line_price, "", "",
+                            confidence, quantity_note])
+        else:
+            sub_cost = float(group.get("sub_scope_price", 0) or 0)
+            if sub_cost > 0:
+                sub_price = round(sub_cost * SUB_MARKUP, 2)
+                w.writerow([title, cost_code, labor_tag, "sub",
+                            "Subcontractor scope", 1, sub_cost, sub_price,
+                            sub_price, "", "", confidence, quantity_note])
+
+        for line in group.get("labor_lines", []) or []:
+            hours = float(line.get("hours", 0) or 0)
+            rate = float(line.get("rate", 89.00) or 89.00)
+            if hours <= 0:
+                continue
+            trade = (line.get("trade", "") or "Labor").strip()
+            w.writerow([title, cost_code, labor_tag, "labor",
+                        f"{trade.capitalize()} labor", hours, LABOR_COST_RATE,
+                        rate, round(hours * rate, 2), "", "",
+                        confidence, quantity_note])
+
+        for line in group.get("material_lines", []) or []:
+            qty = float(line.get("qty", 0) or 0)
+            unit_cost = float(line.get("unit_cost", 0) or 0)
+            if qty <= 0 or unit_cost <= 0:
+                continue
+            item = (line.get("item", "") or "Material").strip()
+            unit_price = round(unit_cost * MATERIAL_MARKUP, 2)
+            catalog_match = line.get("catalog_match") or {}
+            w.writerow([title, cost_code, labor_tag, "material", item, qty,
+                        unit_cost, unit_price, round(qty * unit_price, 2),
+                        catalog_match.get("sku", ""),
+                        catalog_match.get("name", ""),
+                        confidence, quantity_note])
+
+    for raw in (estimate or {}).get("skipped_items", []) or []:
+        raw = (raw or "").strip()
+        if raw:
+            w.writerow(["Not Included In This Estimate", "", "", "skipped",
+                        raw, "", "", "", "", "", "", "", ""])
+
+    return buf.getvalue()
+
+
 def _build_skipped_items_note(skipped_items):
     """Turn Claude's raw "skipped_items" list (each entry written as
     "item - reason", meant for internal reasoning — e.g. "Radon testing -
@@ -1539,8 +1674,43 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
         # every sub line item, while also writing a fabricated, too-low
         # "cost" into JobTread. Correct direction: sub_scope_price IS the
         # cost; multiply UP by SUB_MARKUP to get the billed price.
+        # Sub work: either itemized per-scope lines (sub_scope_lines — one
+        # cost item per distinct scope, Jason's request Jul 2026 reviewing
+        # 12 Tall Tree Ln's lump-sum crawlspace group: "I would prefer the
+        # pricing be broken up into multiple items based on the scope of
+        # work... easier for me to see the logic when its broken up") or the
+        # original single lump-sum sub_scope_price. Both are scope-based sub
+        # pricing at 1.45x markup — sub_scope_lines just shows the per-scope
+        # logic instead of hiding it in one number. If Claude ever returns
+        # both, the itemized lines win and the lump sum is skipped (they'd
+        # double-count otherwise).
+        sub_lines = group.get("sub_scope_lines") or []
         sub_cost = float(group.get("sub_scope_price", 0) or 0)
-        if sub_cost > 0:
+        if sub_lines:
+            if sub_cost > 0:
+                print(f"  NOTE: group '{title[:50]}' has BOTH sub_scope_lines and "
+                      f"sub_scope_price — using the itemized lines, ignoring the lump sum")
+            for line in sub_lines:
+                line_cost = float(line.get("cost", 0) or 0)
+                line_item = (line.get("item", "") or "").strip() or "Subcontractor scope"
+                if line_cost <= 0:
+                    continue
+                line_price = round(line_cost * SUB_MARKUP, 2)
+                try:
+                    jobtread_query_fn({
+                        "createCostItem": {
+                            "$": {
+                                "costGroupId": group_id, "name": line_item[:100], "quantity": 1,
+                                "unitCost": line_cost, "unitPrice": line_price,
+                                "costCodeId": cost_code_id, "costTypeId": COST_TYPE_SUB
+                            },
+                            "createdCostItem": {"id": {}}
+                        }
+                    })
+                    items_added_this_group += 1
+                except Exception as e:
+                    print(f"  Failed to add sub scope line '{line_item[:50]}': {e}")
+        elif sub_cost > 0:
             sub_price = round(sub_cost * SUB_MARKUP, 2)
             item_name = re.sub(r'^[\d\.\s]+[-–]?\s*', '', title).strip() or title
             try:
