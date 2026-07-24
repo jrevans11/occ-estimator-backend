@@ -90,11 +90,12 @@ STILL OPEN / PROVISIONAL (do not treat these numbers as final):
     either (a) auto-replaces the guessed unit_cost with the real catalog
     price when the match is confident (score >= 0.5 by default) and attaches
     catalog_match (name/sku/link/score) so the swap is visible, or (b)
-    leaves the LLM's guess untouched but attaches catalog_candidates (top 3
-    real options with real prices) for manual pick when no match is
-    confident, or (c) leaves the line completely unchanged if the search
-    fails/returns nothing — a bad catalog lookup should never block an
-    estimate. Deliberately NOT the discarded fuzzy-matching approach from
+    leaves the LLM's guess completely untouched (catalog_no_match flag only,
+    no candidate list — simplified Jul 2026, see resolve_material_lines_
+    with_catalog's docstring) when no match is confident, or (c) leaves the
+    line completely unchanged if the search fails/returns nothing — a bad
+    catalog lookup should never block an estimate. Deliberately NOT the
+    discarded fuzzy-matching approach from
     pricing_library.csv — that matched against an unrelated taxonomy with no
     fallback; this gates a REAL catalog search result and always has a safe
     fallback (keep the LLM's number) when confidence is low. Tested with a
@@ -279,6 +280,13 @@ STEP 3A — IF IN-HOUSE: break the work into
     a standard 1x6 PT deck board ~$12-18 each, a tube of exterior sealant
     ~$6-9). unit_cost is COST, not client price — markup is applied
     separately, do not inflate it yourself.
+    For paint, adhesive, or any other material sold in multiple container
+    sizes, always name a SPECIFIC, SMALL, realistic size in "item" (e.g.
+    "1 qt" or "1 gallon" touch-up paint, not just "exterior paint" with no
+    size at all) — OCC's in-house crews never need 5-gallon quantities for
+    closing-repair work (that scope always goes to a subcontractor instead),
+    so an unspecified size risks matching a bulk contractor pail against the
+    live Home Depot catalog.
   Multiple small in-house tasks can share one cost group if the inspection
   report groups them together (e.g. one "Exterior Wood Rot" group with
   separate labor + material lines per location).
@@ -778,27 +786,181 @@ def _size_families(value, unit):
 
 def _size_mismatch(query, product_name):
     """True if both strings mention a size in the same family (volume,
-    weight, or length) but at clearly different quantities (1.5x+ apart
-    after converting to a common base unit) — a strong signal that a
-    word-overlap match found the right product line but the wrong container
-    size (e.g. "1 qt" primer vs. a real "5 gal" bucket of the same primer —
-    different units entirely, but both volume, so a same-unit-only check
-    would miss this). Only flags a real disagreement; doesn't penalize lines
-    that just don't happen to mention a comparable size on both sides.
+    weight, or length) but NONE of the values in that family are within
+    1.5x of each other after converting to a common base unit — a strong
+    signal that a word-overlap match found the right product line but the
+    wrong container size (e.g. "1 qt" primer vs. a real "5 gal" bucket of
+    the same primer — different units entirely, but both volume, so a
+    same-unit-only check would miss this). Only flags a real disagreement;
+    doesn't penalize lines that just don't happen to mention a comparable
+    size on both sides.
+
+    Checks the BEST (closest) pair per family, not just any pair — real bug
+    found reviewing job 765 Hannon Road (Jul 2026): a multi-dimension
+    lumber product ("5/4 in. x 6 in. x 12 ft...") has THREE length-family
+    numbers (4, 6, 144 in base inches), one of which (144) exactly matches
+    the query's "12 ft" (also 144). The old any-pair check compared the
+    query's 12 ft against the board's 4 in. cross-section width first,
+    found a 36x "mismatch", and returned True before ever checking the
+    144-vs-144 pair that actually matches — wrongly capping the score of
+    the exact right product. A real product legitimately has multiple
+    numbers in the same family (thickness, width, length are all
+    "length"); only flag a mismatch if NO pairing in that family is
+    plausible, not merely because some pairing isn't.
     """
     q_sizes = _extract_size_tokens(query)
     n_sizes = _extract_size_tokens(product_name)
-    for qv, qu in q_sizes:
-        q_fams = _size_families(qv, qu)
-        for nv, nu in n_sizes:
-            n_fams = _size_families(nv, nu)
-            for fam, q_base in q_fams.items():
-                if fam in n_fams:
-                    n_base = n_fams[fam]
-                    if q_base > 0 and n_base > 0:
-                        ratio = max(q_base, n_base) / min(q_base, n_base)
-                        if ratio >= 1.5:
-                            return True
+    q_by_fam, n_by_fam = {}, {}
+    for v, u in q_sizes:
+        for fam, base in _size_families(v, u).items():
+            q_by_fam.setdefault(fam, []).append(base)
+    for v, u in n_sizes:
+        for fam, base in _size_families(v, u).items():
+            n_by_fam.setdefault(fam, []).append(base)
+
+    for fam, q_bases in q_by_fam.items():
+        n_bases = n_by_fam.get(fam)
+        if not n_bases:
+            continue
+        best_ratio = min(
+            max(qb, nb) / min(qb, nb)
+            for qb in q_bases for nb in n_bases
+            if qb > 0 and nb > 0
+        )
+        if best_ratio >= 1.5:
+            return True
+    return False
+
+
+# Filler/category adjectives that Home Depot's own search sometimes weighs
+# too heavily against a specific dimension, diluting an otherwise exact
+# match. Real evidence (Jul 2026, job 765 Hannon Road, found while
+# investigating why "Window glazing compound/putty" and "5/4x6
+# pressure-treated deck board, 12 ft" both auto-matched poorly): replaying
+# the exact literal item text through JobTread's own Global Catalog search
+# UI showed the full text "5/4x6 pressure-treated deck board, 12 ft" ranked
+# a *wrong-length* 8 ft board first and buried an unrelated "Pressure-
+# Treated Pine Stair Stringer" (the actual candidate our pipeline surfaced
+# to Jason) ahead of the real product. Dropping just "pressure-treated" --
+# "5/4x6 deck board 12 ft" -- returned the EXACT right product ("5/4 in. x
+# 6 in. x 12 ft. ... Pressure-Treated Lumber") as the #1 result, even though
+# the word "pressure-treated" never appeared in the query at all (Home
+# Depot's own catalog already knows this decking board is pressure-treated).
+# Only ever tried as an ADDITIONAL fallback query variant (see
+# _generate_search_query_variants) -- the original full-text query is
+# always tried too, and scoring is always done against the real full item
+# description, so this can only ever help recall, never silently swap in an
+# untreated product for a treated one.
+_QUERY_FILLER_PHRASES = [
+    "pressure-treated", "pressure treated", "ground contact",
+    "kiln-dried", "kiln dried",
+]
+
+# Matches a slash joining two WORDS (e.g. "compound/putty"), not a dimension
+# fraction like "5/4" or "3/4" -- the digit case is deliberately excluded so
+# "5/4x6" is never split.
+_WORD_SLASH_RE = re.compile(r"\b([A-Za-z]+)/([A-Za-z]+)\b")
+
+
+def _generate_search_query_variants(item_desc):
+    """Build a small, ordered list of search-query strings to try against
+    the live Home Depot catalog for one material line, instead of firing
+    only the LLM's raw item text at the API verbatim.
+
+    Real evidence this matters (Jul 2026, job 765 Hannon Road): the literal
+    text Claude wrote for two real material lines -- "Window glazing
+    compound/putty" and "5/4x6 pressure-treated deck board, 12 ft" -- both
+    returned weak/irrelevant top candidates from the real Home Depot search
+    API, even though the correct product clearly exists in the catalog and
+    ranks #1 or #2 for a shorter/cleaner version of the same query
+    (confirmed by replaying both searches directly through JobTread's own
+    Global Catalog search UI). Two distinct problems, two variant strategies:
+
+    1. Slash-joined word alternatives ("compound/putty") dilute relevance by
+       asking for two different nouns at once -- searching "window glazing
+       compound" alone or "window glazing putty" alone each independently
+       found the real product; searching both together (slash OR space
+       separated) did not. Fix: split a slash that joins two *words* and try
+       each alternative as its own full query.
+    2. Generic treatment/category adjectives ("pressure-treated") can bury
+       an exact dimension match under a flood of other same-adjective
+       products. Fix: also try a version with a short, curated list of these
+       filler phrases stripped out, as a fallback only.
+
+    Returns a de-duplicated, ordered list of query strings (sanitized
+    original text always first).
+    """
+    base = re.sub(r"\s+", " ", (item_desc or "").replace(",", " ")).strip()
+    variants = []
+
+    def add(v):
+        v = re.sub(r"\s+", " ", v).strip()
+        if v and v not in variants:
+            variants.append(v)
+
+    add(base)
+
+    m = _WORD_SLASH_RE.search(base)
+    if m:
+        for alt in (m.group(1), m.group(2)):
+            add(base[:m.start()] + alt + base[m.end():])
+
+    stripped = base
+    for phrase in _QUERY_FILLER_PHRASES:
+        stripped = re.sub(re.escape(phrase), "", stripped, flags=re.IGNORECASE)
+    add(stripped)
+
+    return variants
+
+
+# Collapses "N in. x M in." cross-section notation (how Home Depot writes
+# lumber dimensions) down to "NxM" (how Claude usually writes it, e.g.
+# "5/4x6") so the two forms actually overlap as words once tokenized.
+# Real bug found reviewing job 765 Hannon Road (Jul 2026): the query
+# "5/4x6 pressure-treated deck board, 12 ft" scored only 0.4 against the
+# exact right product, "5/4 in. x 6 in. x 12 ft. ... Pressure-Treated
+# Lumber" -- well below the 0.5 auto-apply threshold -- because "4x6" (one
+# token in the query) never matched "4", "in", "x", "6" (four separate
+# tokens in the product name) under plain word-overlap scoring, even though
+# they describe the identical dimension.
+#
+# The unit after the SECOND number is required (not optional) so this can
+# only collapse a genuine "W in. x H in." cross-section pair -- e.g. it
+# must NOT also swallow "6 in. x 12 ft." (a cross-section width followed by
+# an unrelated LENGTH in feet) into a bogus "6x12".
+_DIMENSION_RE = re.compile(
+    r"(\d+(?:/\d+)?(?:\.\d+)?)\s*(?:in\.?|inch(?:es)?)?\s*x\s*"
+    r"(\d+(?:/\d+)?(?:\.\d+)?)\s*(?:in\.?|inch(?:es)?)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_dimensions(text):
+    return _DIMENSION_RE.sub(r"\1x\2", text)
+
+
+# Jason's stated real business rule (Jul 2026, reviewing a real job): "We
+# will likely never need 5 gallons of anything for in house work. If its
+# that big, we get subcontractor to handle paint or drywall work." Real bug
+# this catches: when Claude's own item text doesn't specify a size at all
+# (e.g. just "exterior paint" with no "1 qt"/"1 gal"), _size_mismatch()
+# never fires -- it only compares sizes when BOTH sides name one -- so a
+# 5-gallon contractor pail can win purely on word overlap and get
+# auto-applied with no sanity check on quantity at all. This is a separate,
+# narrower guard: it only fires when the QUERY has no size opinion of its
+# own, so it can never override a line where Claude (or the addendum)
+# explicitly asked for a specific size -- that case is still handled by
+# _size_mismatch.
+_BULK_VOLUME_OZ_THRESHOLD = 5 * 128.0  # 5 gallons, in fluid oz
+
+
+def _is_bulk_without_size_request(query, product_name):
+    if _extract_size_tokens(query):
+        return False
+    for v, u in _extract_size_tokens(product_name):
+        fams = _size_families(v, u)
+        if fams.get("volume", 0) >= _BULK_VOLUME_OZ_THRESHOLD:
+            return True
     return False
 
 
@@ -818,20 +980,43 @@ def _match_score(query, product_name):
     added a size-mismatch penalty — if the query and candidate both name a
     size in the same unit but at very different quantities, cap the score
     well below any reasonable auto-apply threshold so a wrong-size product
-    never gets auto-substituted, only ever offered (or not) as a candidate.
+    never gets auto-substituted, only ever offered (or not) as a candidate;
+    (3) normalize "N in. x M in." dimension notation to "NxM" before
+    tokenizing (see _normalize_dimensions) so Home Depot's verbose
+    cross-section phrasing lines up with how Claude usually writes it; (4)
+    stopped dropping 2-digit pure-number tokens (e.g. "12" as in "12 ft.")
+    -- these are exactly the kind of size/length detail that distinguishes
+    one real product from another and were being silently discarded by the
+    old length>2 filter, which was tuned for word noise, not numbers; (5)
+    added a bulk-container penalty (Jul 2026, Jason's real feedback: a real
+    job auto-matched a 5-gallon paint pail for what should have been a
+    small touch-up quantity) — when the query names no size at all, a
+    candidate implying 5+ gallons gets capped the same way a size mismatch
+    does, since OCC's in-house crews never buy that volume (that scope goes
+    to a subcontractor instead).
     """
     stop = {"a", "an", "the", "of", "for", "with", "in", "to", "and", "or",
             "1", "1x", "each", "per", "or", "similar", "equiv", "equivalent",
             "standard", "approx", "gal", "gallon", "gallons", "qt", "quart",
             "quarts", "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds",
             "ft", "feet", "foot", "inch", "inches"}
-    q_words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if w not in stop and len(w) > 2}
-    n_words = {w for w in re.findall(r"[a-z0-9]+", product_name.lower()) if w not in stop and len(w) > 2}
+
+    def keep(w):
+        if w in stop:
+            return False
+        if len(w) > 2:
+            return True
+        return w.isdigit() and len(w) == 2
+
+    query_n = _normalize_dimensions(query)
+    product_n = _normalize_dimensions(product_name)
+    q_words = {w for w in re.findall(r"[a-z0-9]+", query_n.lower()) if keep(w)}
+    n_words = {w for w in re.findall(r"[a-z0-9]+", product_n.lower()) if keep(w)}
     if not q_words:
         return 0.0
     overlap = q_words & n_words
     score = len(overlap) / len(q_words)
-    if _size_mismatch(query, product_name):
+    if _size_mismatch(query, product_name) or _is_bulk_without_size_request(query, product_name):
         score = min(score, 0.3)
     return score
 
@@ -845,31 +1030,32 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
     guessed cost everywhere.
 
     For each material line:
-      - Search the catalog using the line's "item" description.
-      - Score candidates by word overlap with the description (see
-        _match_score — tightened Jul 2026 with a stopword list that drops
-        bare unit words and a size-mismatch penalty).
+      - Search the catalog (under several query variants — see
+        _generate_search_query_variants) using the line's "item" text.
+      - Score candidates by word overlap with the real item description
+        (see _match_score).
       - If the best match scores >= auto_apply_threshold: REPLACE unit_cost
         with the real catalog unitCost, and attach "catalog_match" (name,
-        sku, link) to the line so Jason's team can see what was substituted.
-      - Else if at least one candidate scores >= min_candidate_score: leave
-        the LLM's guessed unit_cost untouched, but attach "catalog_candidates"
-        (only the candidates that clear this floor, so the team sees plausible
-        options, not noise) so there's something real to check the guess
-        against.
-      - Else (search returned results, but none of them are even plausibly
-        related — e.g. searching a mortar mix and getting back cement dye and
-        pool filter sand, a real case caught reviewing job 12 Tall Tree Lane):
-        treat it the same as a true no-match (catalog_no_match flag) instead
-        of showing 3 irrelevant products as if they were real options.
-      - If the search itself fails or returns nothing at all: leave the line
-        as-is, unchanged, no crash — this must never block an estimate from
-        going out just because a catalog lookup had a bad day.
+        sku, link, etc.) so add_cost_groups_v2() can write real custom
+        fields (SKU/Product Link/Brand/Model Number) onto the JobTread cost
+        item and attempt a true catalog link.
+      - Otherwise (weak match, no match, or the search itself failed):
+        leave the line's unit_cost exactly as Claude guessed it, and just
+        set "catalog_no_match" so callers can see this was AI-estimated —
+        no candidate list attached. SIMPLIFIED Jul 2026 (Jason's direct
+        feedback reviewing a real job): this used to show up to 3 "possible
+        matches" for a weak-but-plausible result, which he found more
+        clutter than help. Now there's exactly two outcomes — confidently
+        resolved, or left as the AI's own estimate — never a list to sort
+        through. top_n/min_candidate_score are kept as accepted params
+        (now unused) so existing call sites don't need to change.
+      - Never raises or blocks an estimate — a catalog lookup having a bad
+        day just means that one line stays as Claude estimated it.
 
     Mutates and returns `estimate` in place. Returns (estimate, stats) where
-    stats = {"searched": N, "auto_matched": N, "candidates_only": N, "no_match": N}.
+    stats = {"searched": N, "auto_matched": N, "no_match": N}.
     """
-    stats = {"searched": 0, "auto_matched": 0, "candidates_only": 0, "no_match": 0}
+    stats = {"searched": 0, "auto_matched": 0, "no_match": 0}
 
     for group in estimate.get("cost_groups", []) or []:
         for line in group.get("material_lines", []) or []:
@@ -878,13 +1064,36 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                 continue
 
             stats["searched"] += 1
-            try:
-                ok, products = search_home_depot_catalog(item_desc, jobtread_query_fn, org_id)
-            except Exception as e:
-                print(f"  Catalog search failed for '{item_desc[:60]}': {e}")
-                ok, products = False, []
 
-            if not ok or not products:
+            # Search under several query variants (raw text, slash-split
+            # alternatives, filler-phrase-stripped fallback — see
+            # _generate_search_query_variants) rather than just the raw item
+            # text verbatim. Real evidence (job 765 Hannon Road, Jul 2026):
+            # the raw text alone returned weak/irrelevant top candidates for
+            # two real material lines even though the correct product was
+            # readily found by a cleaner variant of the same query. Every
+            # candidate found under ANY variant is still scored against the
+            # real, full item description (never the shortened query text),
+            # so this only ever widens recall — it can't cause a worse match
+            # to be picked over a better one that the raw query already found.
+            query_variants = _generate_search_query_variants(item_desc)
+            products_by_id = {}
+            any_ok = False
+            for q in query_variants:
+                try:
+                    ok, products = search_home_depot_catalog(q, jobtread_query_fn, org_id)
+                except Exception as e:
+                    print(f"  Catalog search failed for '{q[:60]}': {e}")
+                    ok, products = False, []
+                if ok:
+                    any_ok = True
+                for p in products or []:
+                    pid = p.get("id")
+                    key = pid if pid else id(p)
+                    if key not in products_by_id:
+                        products_by_id[key] = (p, q)
+
+            if not any_ok or not products_by_id:
                 stats["no_match"] += 1
                 # Jason's ask (Jul 2026 pricing Q&A): when there's no
                 # catalog match at all, still flag it so his team knows to
@@ -898,10 +1107,13 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                 continue
 
             scored = sorted(
-                ((_match_score(item_desc, p.get("name", "")), p) for p in products),
+                (
+                    (_match_score(item_desc, p.get("name", "")), p, q)
+                    for p, q in products_by_id.values()
+                ),
                 key=lambda t: t[0], reverse=True
             )
-            best_score, best_product = scored[0]
+            best_score, best_product, best_query = scored[0]
 
             if best_score >= auto_apply_threshold and best_product.get("unitCost"):
                 original_cost = line.get("unit_cost")
@@ -929,30 +1141,28 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                     # catalog link mechanism" entry (Jul 2026).
                     "product_id": best_product.get("id"),
                 }
+                # Only noted when the winning result came from a fallback
+                # variant rather than the raw item text, so a reviewer can
+                # see why the matched product name doesn't share every word
+                # with the line item (see _generate_search_query_variants).
+                if best_query != re.sub(r"\s+", " ", item_desc.replace(",", " ")).strip():
+                    line["catalog_match"]["matched_via_query"] = best_query
                 stats["auto_matched"] += 1
             else:
-                plausible = [(sc, p) for sc, p in scored[:top_n] if sc >= min_candidate_score]
-                if plausible:
-                    line["catalog_candidates"] = [
-                        {
-                            "name": p.get("name"), "unit_cost": p.get("unitCost"),
-                            "brand": p.get("brand"), "sku": p.get("storeSkuNumber"),
-                            "imageUrl": p.get("imageUrl"), "link": p.get("link"),
-                        }
-                        for _, p in plausible
-                    ]
-                    stats["candidates_only"] += 1
-                else:
-                    # Search came back with results, but none of them are
-                    # even plausibly related to what was asked for (e.g. a
-                    # mortar mix search returning cement dye and pool filter
-                    # sand — a real case found reviewing job 12 Tall Tree
-                    # Lane). Showing those as "possible matches" is worse
-                    # than showing nothing — treat this the same as a true
-                    # no-match so the team gets the verify-manually flag
-                    # instead of 3 irrelevant products to sort through.
-                    line["catalog_no_match"] = True
-                    stats["no_match"] += 1
+                # SIMPLIFIED (Jul 2026, Jason's direct feedback): this used
+                # to show a "possible matches" list of up to 3 weak
+                # candidates when nothing cleared the auto-apply threshold.
+                # Jason found that list more clutter than help ("a lot of
+                # info thats hard to sort through") and would rather the
+                # estimate just carry the AI's own guessed cost when the
+                # catalog can't confidently resolve an item, with no extra
+                # review burden. So there's no more middle tier — anything
+                # that doesn't clear auto_apply_threshold is treated the
+                # same simple way, and top_n/min_candidate_score are no
+                # longer used for a shown list (kept as no-op params so
+                # existing callers don't break).
+                line["catalog_no_match"] = True
+                stats["no_match"] += 1
 
     return estimate, stats
 
@@ -1152,43 +1362,20 @@ def _build_material_custom_field_values(line):
 
 
 def _build_material_description(line):
-    """Build a short free-text description for a material cost item.
-    Confirmed via the Pave API (Jul 2026) that costItem.description is a
-    real, currently-unused field (queried an existing item, got back null).
-
-    For a confident catalog_match, the STRUCTURED detail (SKU, link, brand,
-    model) now goes into real custom fields instead (see
-    _build_material_custom_field_values) — this just adds the real product
-    name as a one-line description, so the item reads clearly at a glance.
-    For a weak match (multiple candidates, nothing auto-selected), there's
-    no single clean value to put in a structured field, so the candidate
-    list stays here as free text.
+    """Intentionally returns "" always — REMOVED (Jul 2026, Jason's direct
+    feedback): this used to write a free-text description onto every
+    material cost item (the real product name for a confident match, a
+    "possible matches" list for a weak one, or a no-match warning). Jason
+    found that text more clutter than help ("Im really struggling with the
+    amount of item description to look at... lets not bring over the item
+    descriptions at all"). The item's own Name field already shows what it
+    is, and a confident catalog match still gets its real SKU/Product
+    Link/Brand/Model Number written into proper custom fields (see
+    _build_material_custom_field_values) — this function (and the
+    "description" arg it used to produce) is kept only so add_cost_groups_v2
+    doesn't need a structural change if a short description is ever wanted
+    again later.
     """
-    catalog_match = line.get("catalog_match")
-    if catalog_match:
-        return catalog_match.get("name") or ""
-
-    candidates = line.get("catalog_candidates")
-    if candidates:
-        lines = ["Possible Home Depot matches (not auto-selected — confirm before ordering):"]
-        for c in candidates:
-            bits = [c.get("name") or "Unnamed product"]
-            if c.get("unit_cost"):
-                bits.append(f"${c['unit_cost']}")
-            if c.get("link"):
-                bits.append(c["link"])
-            lines.append("  - " + " | ".join(bits))
-        return "\n".join(lines)
-
-    if line.get("catalog_no_match"):
-        # Jason's ask (Jul 2026 pricing Q&A): flag unmatched materials so
-        # the team knows to manually verify price rather than trusting an
-        # unlabeled AI guess. Standard 65% markup is still applied to the
-        # guessed cost per his answer ("standard markup but flag it so I
-        # can check") — this note is the visible check-flag, not a price
-        # change.
-        return "⚠️ No Home Depot catalog match found — cost is AI-estimated, please verify pricing before ordering."
-
     return ""
 
 
@@ -1238,6 +1425,40 @@ def _attach_catalog_image(jobtread_query_fn, org_id, cost_item_id, image_url, na
         })
     except Exception as e:
         raise Exception(f"createFile (targetType=costItem) failed: {e}")
+
+
+def _build_skipped_items_note(skipped_items):
+    """Turn Claude's raw "skipped_items" list (each entry written as
+    "item - reason", meant for internal reasoning — e.g. "Radon testing -
+    not offered by OCC" or "Fireplace inspection - out of scope") into a
+    short, neutral, professional client-facing note for the bottom of the
+    estimate.
+
+    Jason's direct request (Jul 2026): "Anything we cannot quote we can
+    have at the bottom with a note that we are unable to include
+    (professional comment)." Before this, skipped_items was only ever
+    present in the raw JSON Claude returned — never actually written into
+    JobTread anywhere, so Jason's team had no visibility into what got
+    left out of an estimate or why.
+
+    Deliberately drops the internal "reason" half of each entry (phrases
+    like "not offered by OCC" read as internal/technical, not something to
+    show a client) and keeps just the item name, in a single neutral
+    sentence framing rather than Claude's per-item reasoning.
+    """
+    cleaned = []
+    for raw in skipped_items or []:
+        raw = (raw or "").strip()
+        if not raw:
+            continue
+        item_name = raw.split(" - ")[0].strip() if " - " in raw else raw
+        if item_name:
+            cleaned.append(item_name)
+    if not cleaned:
+        return ""
+    lines = ["We are unable to include pricing for the following item(s) in this estimate:"]
+    lines.extend(f"- {name}" for name in cleaned)
+    return "\n".join(lines)
 
 
 def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
@@ -1485,6 +1706,29 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
             print(f"  WARNING: group '{title[:50]}' created with zero cost items — check output schema")
 
     print(f"  {added_groups}/{len(cost_groups)} cost groups added (multi-line)")
+
+    # Surface anything Claude couldn't quote (out-of-scope items, or scope
+    # too vague to size responsibly) as one final, plainly-worded cost
+    # group at the bottom of the budget — see _build_skipped_items_note.
+    # Added last so it lands after every real repair group; zero cost
+    # items is intentional here (it's a note, not billable work), so this
+    # deliberately does NOT go through the same "zero cost items" warning
+    # path as the main loop above.
+    skipped_note = _build_skipped_items_note(estimate.get("skipped_items"))
+    if skipped_note:
+        item_count = skipped_note.count("\n- ")
+        try:
+            jobtread_query_fn({
+                "createCostGroup": {
+                    "$": {"jobId": job_id, "name": "Not Included In This Estimate",
+                          "description": skipped_note},
+                    "createdCostGroup": {"id": {}}
+                }
+            })
+            print(f"  Added 'Not Included In This Estimate' note ({item_count} item(s))")
+        except Exception as e:
+            print(f"  Failed to add skipped-items note group (non-fatal): {e}")
+
     return added_groups
 
 
