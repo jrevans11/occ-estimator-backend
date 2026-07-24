@@ -85,6 +85,9 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
 NEVER ESTIMATE — OUT OF SCOPE (OCC does not offer these):
 - Radon remediation/mitigation
 - Landscaping, grading, or regrading work
+- Driveway crack repair or sealing
+- Fireplace cleaning or chimney/fireplace inspections
+- Pool repairs
 If the requested work includes any out-of-scope item, exclude it from the estimate and list it under "skipped_items" with the reason "not offered by OCC", but still estimate everything else that is in scope.
 
 REPAIR PRICING REFERENCE (36 real OCC estimates + 197 inspection reports)
@@ -92,7 +95,6 @@ Adjust for actual scope/site conditions. Apply $89/hr labor + 65% material marku
 
 EXTERIOR:
   - Secure/repair/replace damaged siding: ~$897
-  - Repair/seal cracks in driveway: ~$152
   - Secure/install handrail or railing: ~$428
   - Seal exterior penetrations, gaps, and holes: ~$319
   - Repair/seal cracks in patio or walkway: ~$226
