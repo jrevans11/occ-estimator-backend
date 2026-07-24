@@ -1596,6 +1596,34 @@ def _build_skipped_items_note(skipped_items):
     return "\n".join(lines)
 
 
+def _build_group_internal_notes(group):
+    """Collect a group's internal reasoning (quantity assumption,
+    non-high confidence flag, notes) into one text block, or "" if the
+    group has nothing to flag.
+
+    Written as a $0 "Internal Notes" line item INSIDE the cost group (see
+    the call in add_cost_groups_v2) rather than on the group description —
+    group descriptions print on client documents, but Jason confirmed
+    (Jul 2026) his client-facing estimate template shows only cost group
+    names/descriptions, never the line items below them, so a notes line
+    item is internal-by-template and sits right in the budget where his
+    team reviews (vs. a Daily Log, which took an extra click — his
+    preference, replacing the Daily-Log approach built earlier the same
+    day).
+    """
+    quantity_note = (group.get("quantity_note", "") or "").strip()
+    confidence = (group.get("confidence", "") or "").strip()
+    notes = (group.get("notes", "") or "").strip()
+    lines = []
+    if quantity_note:
+        lines.append(f"Quantity assumption: {quantity_note}")
+    if confidence and confidence.lower() != "high":
+        lines.append(f"Confidence: {confidence} — spot-check before sending")
+    if notes:
+        lines.append(f"Note: {notes}")
+    return "\n".join(lines)
+
+
 def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
     """
     Create cost groups with MULTIPLE cost items each (labor + material
@@ -1629,13 +1657,16 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
             print(f"  NOTE: '{cost_code_name}' isn't a real cost code name — "
                   f"falling back to Uncategorized for group '{title[:50]}'")
 
+        # CLIENT-FACING: the group description shows up on customer
+        # documents, so it carries ONLY Claude's clean scope description.
+        # Internal reasoning (quantity assumptions, confidence flags,
+        # internal notes) used to be appended here in brackets — Jason was
+        # having to manually delete them from every estimate before sending
+        # (Jul 2026: "it has logic and reasoning notes that are internal
+        # but those are client viewed"). They now go to an internal Daily
+        # Log on the job instead — see _post_internal_review_notes(),
+        # called at the end of this function.
         group_description = description
-        if quantity_note:
-            group_description += f"\n\n[Quantity assumption: {quantity_note}]"
-        if confidence and confidence != "high":
-            group_description += f"\n[Confidence: {confidence} — spot-check before sending]"
-        if notes:
-            group_description += f"\n\nNOTE: {notes}"
 
         try:
             resp = jobtread_query_fn({
@@ -1869,6 +1900,33 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
                                                        image_url, item[:100])
                             except Exception as e:
                                 print(f"  Photo attach skipped for '{item[:50]}' (non-fatal): {e}")
+
+        # Internal review notes as a $0 line item at the bottom of the
+        # group (Jason's preference over a Daily Log — "right in the budget"
+        # vs. an extra click). Safe because his client-facing estimate
+        # template shows only group names/descriptions, never the line
+        # items below them (confirmed Jul 2026). The note text goes in the
+        # item's description; the name is a short fixed label. Never counts
+        # toward items_added_this_group (it's a note, not billable work, so
+        # a group with ONLY a notes item still triggers the zero-items
+        # warning below). Non-fatal on failure.
+        internal_notes = _build_group_internal_notes(group)
+        if internal_notes:
+            try:
+                jobtread_query_fn({
+                    "createCostItem": {
+                        "$": {
+                            "costGroupId": group_id,
+                            "name": "NOTES (internal — not shown on client documents)",
+                            "quantity": 1, "unitCost": 0, "unitPrice": 0,
+                            "description": internal_notes,
+                            "costCodeId": cost_code_id, "costTypeId": COST_TYPE_OTHER
+                        },
+                        "createdCostItem": {"id": {}}
+                    }
+                })
+            except Exception as e:
+                print(f"  Internal notes item failed for '{title[:50]}' (non-fatal): {e}")
 
         if items_added_this_group > 0:
             added_groups += 1
