@@ -236,6 +236,19 @@ low-resolution, or genuinely isn't provided for a given item, say so plainly
 in "quantity_note" instead of inventing visual detail you can't actually
 see — the goal is trustworthy photo-based judgment, not the appearance of it.
 
+STEP 1B — SOURCE PAGES (for reference photos): set "source_pages" to a list
+of the inspection report's PDF page number(s) (1-indexed, counting pages of
+THIS document only — not the repair addendum, if a separate one exists)
+where a photo relevant to this repair appears. If this cost group bundles
+several inspection findings together (e.g. one group covering several
+electrical section numbers), include every page that has a relevant photo
+for ANY of the bundled findings, not just the first one. If no inspection
+report was provided, or you genuinely can't tell which page a photo is on,
+return an empty list — never guess a page number. This is used to attach
+the actual inspection photos to the cost group in JobTread, so accuracy
+matters more than completeness; when unsure whether a page belongs, leave
+it out rather than over-including.
+
 STEP 2 — CLASSIFY LABOR: sub vs in_house per the LABOR CLASSIFICATION rules
 elsewhere in this prompt (including the JOB-WIDE BUNDLING RULE — review the
 WHOLE job's items in a trade together before classifying each one, not item
@@ -286,7 +299,15 @@ STEP 3A — IF IN-HOUSE: break the work into
     size at all) — OCC's in-house crews never need 5-gallon quantities for
     closing-repair work (that scope always goes to a subcontractor instead),
     so an unspecified size risks matching a bulk contractor pail against the
-    live Home Depot catalog.
+    live Home Depot catalog. This applies just as much to COUNT-based
+    packaging, not just volume — for caulk/sealant tubes, fasteners,
+    batteries, or anything else sold as a single piece OR a multi-pack/case,
+    always specify a SINGLE unit (e.g. "1 tube of exterior sealant," not
+    "sealant" or "sealant, 12-pack") and set "qty" to the number of
+    INDIVIDUAL units actually needed for the job (usually 1), never a pack
+    or case size. A real bug this caused: an unspecified sealant line
+    matched a 12-count case on the live catalog and got written to JobTread
+    as qty 12 — i.e. 12 cases — when the job needed one tube.
   Multiple small in-house tasks can share one cost group if the inspection
   report groups them together (e.g. one "Exterior Wood Rot" group with
   separate labor + material lines per location).
@@ -550,6 +571,7 @@ EXAMPLE_OUTPUT_SCHEMA = """
       "description": "- Remove and replace deteriorated wood casing...\\n\\nNOTE: ...",
       "labor": "in_house",
       "cost_code": "Siding & Trim",
+      "source_pages": [4],
       "quantity_note": "~8 linear ft of casing, based on photo showing damage across full door width",
       "confidence": "medium",
       "labor_lines": [
@@ -568,6 +590,7 @@ EXAMPLE_OUTPUT_SCHEMA = """
       "description": "- Install three new GFCI-protected exterior receptacles...",
       "labor": "sub",
       "cost_code": "Electrical",
+      "source_pages": [7, 8],
       "quantity_note": "3 exterior receptacles called out in addendum",
       "confidence": "high",
       "labor_lines": [],
@@ -580,6 +603,7 @@ EXAMPLE_OUTPUT_SCHEMA = """
       "description": "- Treat fungal growth, clean out crawlspace, install new vapor barrier, install dehumidifier, and seal foundation vents...",
       "labor": "sub",
       "cost_code": "Crawlspace Work",
+      "source_pages": [12],
       "quantity_note": "~1,800 sq ft crawlspace per report; visible fungal growth on joists in photos",
       "confidence": "medium",
       "labor_lines": [],
@@ -600,6 +624,7 @@ EXAMPLE_OUTPUT_SCHEMA = """
       "description": "- Repair active supply line leak under kitchen sink (plumber).\\n- Patch and repaint water-damaged drywall below sink (in-house).",
       "labor": "mixed",
       "cost_code": "Plumbing",
+      "source_pages": [9],
       "quantity_note": "~2 sq ft drywall patch based on photo of water staining",
       "confidence": "medium",
       "labor_lines": [
@@ -777,25 +802,41 @@ _SIZE_UNIT_ALIASES = {
     "pound": "lb", "pounds": "lb", "lbs": "lb", "lb": "lb",
     "foot": "ft", "feet": "ft", "ft": "ft",
     "inch": "in", "inches": "in", "in": "in",
+    # Count/pack-size units (added Jul 2026 — real bug: a 12-count case of
+    # sealant tubes auto-matched against a single-tube request with no size
+    # guard at all, since "ct"/"pack"/"case" weren't recognized as sizes,
+    # only volume/weight/length were. See _is_bulk_without_size_request.
+    "ct": "ct", "count": "ct", "counts": "ct",
+    "pack": "ct", "packs": "ct", "pk": "ct",
 }
 
 
 def _extract_size_tokens(text):
-    """Pull (value, normalized_unit) size tokens like (5.0, 'gal') or
-    (1.0, 'qt') out of a product description/name. Best-effort regex, not a
-    real unit parser — only needs to catch the common "N unit" pattern well
-    enough to flag an obvious size conflict, not parse every possible
-    container spec.
+    """Pull (value, normalized_unit) size tokens like (5.0, 'gal'),
+    (1.0, 'qt'), or (12.0, 'ct') out of a product description/name.
+    Best-effort regex, not a real unit parser — only needs to catch the
+    common "N unit" pattern (plus "case/box of N" for count-based
+    packaging) well enough to flag an obvious size conflict, not parse
+    every possible container spec.
     """
     tokens = []
+    text = text.lower()
     for value, unit in re.findall(
         r"(\d+(?:\.\d+)?)\s*[-]?\s*"
-        r"(gallons?|gal|quarts?|qt|ounces?|oz|pounds?|lbs?|feet|foot|ft|inches?|in)\b",
-        text.lower()
+        r"(gallons?|gal|quarts?|qt|ounces?|oz|pounds?|lbs?|feet|foot|ft|inches?|in|"
+        r"ct|counts?|packs?|pk)\b",
+        text
     ):
         norm_unit = _SIZE_UNIT_ALIASES.get(unit, unit)
         try:
             tokens.append((float(value), norm_unit))
+        except ValueError:
+            continue
+    # "case of 12" / "box of 12" — the count comes AFTER the word here, not
+    # in the "N unit" shape the main regex above expects.
+    for value in re.findall(r"(?:case|box)\s+of\s+(\d+(?:\.\d+)?)", text):
+        try:
+            tokens.append((float(value), "ct"))
         except ValueError:
             continue
     return tokens
@@ -809,6 +850,7 @@ def _extract_size_tokens(text):
 _VOLUME_OZ = {"gal": 128.0, "qt": 32.0, "oz": 1.0}
 _WEIGHT_OZ = {"lb": 16.0, "oz": 1.0}
 _LENGTH_IN = {"ft": 12.0, "in": 1.0}
+_COUNT_EACH = {"ct": 1.0}  # count/pack/case — already in "each" units, no conversion
 
 
 def _size_families(value, unit):
@@ -821,6 +863,8 @@ def _size_families(value, unit):
         fams["weight"] = value * _WEIGHT_OZ[unit]
     if unit in _LENGTH_IN:
         fams["length"] = value * _LENGTH_IN[unit]
+    if unit in _COUNT_EACH:
+        fams["count"] = value * _COUNT_EACH[unit]
     return fams
 
 
@@ -993,6 +1037,20 @@ def _normalize_dimensions(text):
 # _size_mismatch.
 _BULK_VOLUME_OZ_THRESHOLD = 5 * 128.0  # 5 gallons, in fluid oz
 
+# Real bug found reviewing a job (Jul 2026): a "12 ct" case of sealant tubes
+# auto-matched and got written to JobTread as qty 12 of the CASE'S unit cost
+# — i.e. 12 cases, when a single tube (or at most a single case, qty 1) was
+# what the job needed. Same root cause as the 5-gallon paint bug above:
+# Claude's own item text named no pack size at all (e.g. just "exterior
+# sealant"), so nothing constrained the match, and a multi-count
+# case/pack/box product won purely on word overlap with zero sanity check.
+# Threshold set at 6+ units — a 2-3 pack is a normal small retail purchase
+# in-house crews might reasonably grab, but a 6+ count case is a contractor-
+# bulk purchase OCC's closing-repair crews don't need (mirrors the same
+# "if it's that big, it's not an in-house quantity" reasoning as the 5-gal
+# paint rule).
+_BULK_COUNT_THRESHOLD = 6
+
 
 def _is_bulk_without_size_request(query, product_name):
     if _extract_size_tokens(query):
@@ -1000,6 +1058,8 @@ def _is_bulk_without_size_request(query, product_name):
     for v, u in _extract_size_tokens(product_name):
         fams = _size_families(v, u)
         if fams.get("volume", 0) >= _BULK_VOLUME_OZ_THRESHOLD:
+            return True
+        if fams.get("count", 0) >= _BULK_COUNT_THRESHOLD:
             return True
     return False
 
@@ -1033,13 +1093,20 @@ def _match_score(query, product_name):
     small touch-up quantity) — when the query names no size at all, a
     candidate implying 5+ gallons gets capped the same way a size mismatch
     does, since OCC's in-house crews never buy that volume (that scope goes
-    to a subcontractor instead).
+    to a subcontractor instead); (6) same bulk-container penalty extended to
+    COUNT-based packaging (Jul 2026, Jason's real feedback: a real job
+    auto-matched a 12-count case of sealant tubes and wrote it to JobTread
+    as qty 12 — i.e. 12 cases — when a single tube was needed) — when the
+    query names no pack size at all, a candidate implying a 6+ count
+    case/pack/box gets capped the same way, since that's a contractor-bulk
+    quantity, not a normal in-house repair purchase.
     """
     stop = {"a", "an", "the", "of", "for", "with", "in", "to", "and", "or",
             "1", "1x", "each", "per", "or", "similar", "equiv", "equivalent",
             "standard", "approx", "gal", "gallon", "gallons", "qt", "quart",
             "quarts", "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds",
-            "ft", "feet", "foot", "inch", "inches"}
+            "ft", "feet", "foot", "inch", "inches",
+            "ct", "count", "counts", "pack", "packs", "pk", "case", "box"}
 
     def keep(w):
         if w in stop:
@@ -1596,6 +1663,31 @@ def _build_skipped_items_note(skipped_items):
     return "\n".join(lines)
 
 
+def _strip_section_prefix(title):
+    """Strip inspection-report section number prefix(es) off a group title
+    to make a clean cost item name — handles MULTI-section prefixes too
+    (real bug found in job 12 Tall Tree Ln's final budget, Jul 2026: the
+    old regex `^[\\d\\.\\s]+[-–]?\\s*` only stripped the FIRST number of
+    "9.3.1 / 9.4.1 / ... / 9.9.1 - Electrical Repairs", leaving a garbage
+    item name starting "/ 9.4.1 / ...").
+
+    The dash must be preceded by whitespace so a title that legitimately
+    starts with a measurement (e.g. "1/2-in. hose bib") isn't eaten — only
+    "sections - Title" patterns are stripped.
+    """
+    title = (title or "").strip()
+    # Section prefixes can be joined by "/", "&", or "and" (real examples:
+    # "9.3.1 / 9.4.1 - ...", "7.2.1 & 7.2.2 - ...") — all must be consumed.
+    cleaned = re.sub(r'^[\d\./&\s]+(?:and\s+[\d\.\s]+)*\s[-–]\s*', '', title).strip()
+    if cleaned == title:
+        # No "sections - " pattern found; fall back to stripping a leading
+        # dotted section number for titles like "2.3.1 Vent Boots" (no
+        # dash). Requires at least one dot-number (\d+.\d+) so a real
+        # measurement like "1/2-in. hose bib" is never eaten.
+        cleaned = re.sub(r'^\d+(?:\.\d+)+\s*[-–]?\s*', '', title).strip()
+    return cleaned or title
+
+
 def _build_group_internal_notes(group):
     """Collect a group's internal reasoning (quantity assumption,
     non-high confidence flag, notes) into one text block, or "" if the
@@ -1624,7 +1716,128 @@ def _build_group_internal_notes(group):
     return "\n".join(lines)
 
 
-def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
+MIN_REFERENCE_PHOTO_DIM_PX = 150  # below this on either side, treat as a
+                                   # logo/icon/decorative graphic, not a real
+                                   # inspection photo
+MAX_REFERENCE_PHOTOS_PER_GROUP = 6
+MIN_REFERENCE_PHOTO_BYTES = 8000  # fallback floor when PIL can't decode an
+                                   # image at all (still filters obvious tiny
+                                   # icons even without real dimensions)
+
+
+def extract_reference_photos(pdf_bytes, page_numbers,
+                              max_photos=MAX_REFERENCE_PHOTOS_PER_GROUP,
+                              min_dim_px=MIN_REFERENCE_PHOTO_DIM_PX):
+    """Pull the actual embedded photo(s) off specific 1-indexed pages of a
+    PDF — for attaching real inspection-report photos to a JobTread cost
+    group (Jason's request, Jul 2026: "just the images from the pdf that
+    the inspector took... not any notes").
+
+    Deliberately uses pypdf's own embedded-image extraction (page.images —
+    the raw raster XObjects/inline images actually embedded in the page)
+    rather than rendering the whole page to a picture. The inspector's
+    typed findings and any handwritten text live in the page's separate
+    text/vector content stream, which this never touches — only the real
+    embedded photo bytes come back. This also means a hand-drawn circle or
+    arrow (usually a vector annotation, not a raster image) is naturally
+    left out, not captured as a "photo."
+
+    Filters:
+      - Drops anything under min_dim_px on either dimension (via Pillow) —
+        catches report-template logos/icons/watermarks that appear on every
+        page. If Pillow can't decode an image at all, falls back to a
+        byte-size floor (MIN_REFERENCE_PHOTO_BYTES) as a weaker signal
+        rather than silently including everything undecodable.
+      - De-dupes identical image bytes seen across requested pages (a
+        repeated header/footer logo shouldn't show up multiple times).
+      - Caps total photos returned at max_photos (first-found order,
+        iterating pages in the order given).
+
+    Multi-finding pages (a page with photos for more than one inspection
+    item) are accepted as-is per Jason's call (Jul 2026) — every real photo
+    on a cited page comes back; an occasional unrelated photo tagging along
+    is low-cost since these are internal reference photos, not client-facing.
+
+    Never raises — a corrupt PDF, an out-of-range page number, or a
+    single bad image just yields fewer/no photos, matching the fail-open
+    pattern used everywhere else in this module. Returns a list of
+    (image_bytes, mime_type) tuples.
+    """
+    photos = []
+    if not pdf_bytes or not page_numbers:
+        return photos
+
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception as e:
+        print(f"  extract_reference_photos: could not read PDF ({e})")
+        return photos
+
+    total_pages = len(reader.pages)
+    seen_hashes = set()
+
+    for page_num in page_numbers:
+        if len(photos) >= max_photos:
+            break
+        try:
+            idx = int(page_num) - 1
+        except (TypeError, ValueError):
+            continue
+        if idx < 0 or idx >= total_pages:
+            print(f"  extract_reference_photos: page {page_num} is out of "
+                  f"range (document has {total_pages} pages) — skipping")
+            continue
+
+        try:
+            images = reader.pages[idx].images
+        except Exception as e:
+            print(f"  extract_reference_photos: could not read images on "
+                  f"page {page_num} ({e})")
+            continue
+
+        for img in images:
+            if len(photos) >= max_photos:
+                break
+            try:
+                data = img.data
+                if not data:
+                    continue
+
+                width = height = None
+                try:
+                    from PIL import Image as _PILImage
+                    with _PILImage.open(io.BytesIO(data)) as im:
+                        width, height = im.size
+                except Exception:
+                    pass
+
+                if width is not None and height is not None:
+                    if width < min_dim_px or height < min_dim_px:
+                        continue
+                elif len(data) < MIN_REFERENCE_PHOTO_BYTES:
+                    continue
+
+                digest = hash(data)
+                if digest in seen_hashes:
+                    continue
+                seen_hashes.add(digest)
+
+                name = (getattr(img, "name", "") or "").lower()
+                ext = name.rsplit(".", 1)[-1] if "." in name else ""
+                mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+                        "png": "image/png", "gif": "image/gif"}.get(ext, "image/jpeg")
+                photos.append((data, mime))
+            except Exception as e:
+                print(f"  extract_reference_photos: skipping one image on "
+                      f"page {page_num} ({e})")
+                continue
+
+    return photos
+
+
+def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
+                        inspection_pdf_bytes=None, photo_uploader=None):
     """
     Create cost groups with MULTIPLE cost items each (labor + material
     lines for in-house work, a single scoped line for sub work) instead of
@@ -1634,9 +1847,34 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
     stays a pure function you can unit test without hitting the real API.
 
     org_id: optional — only needed to attempt attaching a real Home Depot
-    product photo to auto-matched material lines (see _attach_catalog_image).
-    If omitted, materials still get a real text description (SKU/brand/link)
+    product photo to auto-matched material lines (see _attach_catalog_image)
+    and to attach inspection-report reference photos to a cost group. If
+    omitted, materials still get a real text description (SKU/brand/link)
     just no photo attachment attempt.
+
+    inspection_pdf_bytes / photo_uploader: optional — enables attaching real
+    inspection-report photos directly to each cost group (Jason's request,
+    Jul 2026), matched via the "source_pages" field Claude returns per group
+    (see STEP 1B in ESTIMATING_LOGIC_SECTION). When both are provided, each
+    group's cited pages are run through extract_reference_photos() (pulls
+    the actual embedded photo(s) off those pages — never the inspector's
+    text/notes), each photo is uploaded via the injected photo_uploader
+    callable, and the resulting files are attached directly on that group's
+    createCostGroup call via the real "files" argument confirmed to exist on
+    createCostGroup/updateCostGroup (found by reading JobTread's own frontend
+    source — see CLAUDE.md "true inline attachment" entry, Jul 2026; the
+    generic createFile mutation does NOT support costGroup/costItem targets,
+    but createCostGroup/createCostItem accept a "files" array directly).
+    photo_uploader: callable(photo_bytes, mime_type) -> uploadRequestId (or
+    raises on failure). Supplied by app.py, since actually uploading bytes
+    needs a temp URL this module has no business serving (Flask/HTTP-server
+    access) — kept as an injected dependency so this function stays a pure,
+    unit-testable function with a fake uploader, same pattern as
+    jobtread_query_fn. If either inspection_pdf_bytes or photo_uploader is
+    omitted, groups are created exactly as before with no files attached —
+    this feature is fully additive and never blocks group creation on its
+    own (a photo extraction/upload failure falls back to creating the group
+    without photos, never skips the group entirely).
     """
     if not estimate:
         return 0
@@ -1668,17 +1906,62 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
         # called at the end of this function.
         group_description = description
 
+        # Reference photos: extract + upload BEFORE creating the group, so
+        # they can be attached in the SAME createCostGroup call via the real
+        # "files" argument — no separate update round trip needed. Entirely
+        # best-effort: any failure here (bad page number, extraction error,
+        # upload error) just means fewer/no photos, never blocks the group.
+        photo_files_arg = []
+        source_pages = group.get("source_pages") or []
+        if inspection_pdf_bytes and photo_uploader and org_id and source_pages:
+            try:
+                photos = extract_reference_photos(inspection_pdf_bytes, source_pages)
+            except Exception as e:
+                print(f"  Reference photo extraction failed for '{title[:50]}' (non-fatal): {e}")
+                photos = []
+            for photo_bytes, mime in photos:
+                try:
+                    upload_id = photo_uploader(photo_bytes, mime)
+                except Exception as e:
+                    print(f"  Reference photo upload failed for '{title[:50]}' (non-fatal): {e}")
+                    continue
+                if upload_id:
+                    photo_files_arg.append({
+                        "organizationId": org_id, "targetType": "costGroup",
+                        "uploadRequestId": upload_id
+                    })
+
+        create_group_args = {
+            "jobId": job_id, "name": title[:100],
+            "description": group_description or None
+        }
+        if photo_files_arg:
+            create_group_args["files"] = photo_files_arg
+
         try:
             resp = jobtread_query_fn({
-                "createCostGroup": {
-                    "$": {"jobId": job_id, "name": title[:100], "description": group_description or None},
-                    "createdCostGroup": {"id": {}}
-                }
+                "createCostGroup": {"$": create_group_args, "createdCostGroup": {"id": {}}}
             })
             group_id = resp["createCostGroup"]["createdCostGroup"]["id"]
         except Exception as e:
-            print(f"  Skipping group '{title[:50]}' (create group failed): {e}")
-            continue
+            if photo_files_arg:
+                print(f"  createCostGroup with photos failed for '{title[:50]}' "
+                      f"({e}) — retrying without photos")
+                try:
+                    resp = jobtread_query_fn({
+                        "createCostGroup": {
+                            "$": {"jobId": job_id, "name": title[:100],
+                                  "description": group_description or None},
+                            "createdCostGroup": {"id": {}}
+                        }
+                    })
+                    group_id = resp["createCostGroup"]["createdCostGroup"]["id"]
+                except Exception as e2:
+                    print(f"  Skipping group '{title[:50]}' (create group failed): {e2}")
+                    continue
+            else:
+                print(f"  Skipping group '{title[:50]}' (create group failed): {e}")
+                continue
 
         items_added_this_group = 0
 
@@ -1743,7 +2026,7 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
                     print(f"  Failed to add sub scope line '{line_item[:50]}': {e}")
         elif sub_cost > 0:
             sub_price = round(sub_cost * SUB_MARKUP, 2)
-            item_name = re.sub(r'^[\d\.\s]+[-–]?\s*', '', title).strip() or title
+            item_name = _strip_section_prefix(title)
             try:
                 jobtread_query_fn({
                     "createCostItem": {
@@ -2131,7 +2414,25 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
         addendum_pdf_bytes, inspection_pdf_bytes,
         client_name, client_phone, client_email, address, notes
     )
+    return _call_claude_v2_core(content, system_prompt, anthropic_api_key,
+                                 model=model, max_tokens=max_tokens, timeout=timeout,
+                                 caller_label="call_claude_v2")
 
+
+def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
+                          model="claude-sonnet-4-6", max_tokens=24000, timeout=400,
+                          caller_label="call_claude_v2"):
+    """Shared retry/timeout/parsing core behind BOTH call_claude_v2 (closing
+    repairs — two optional PDFs) and call_claude_v2_general (Home Repair /
+    GVL / Remodel / Pre-listing / general sales-tool — one optional PDF
+    and/or photos and/or a plain description). Only the `content` list
+    differs between the two callers; the actual API call, retry policy,
+    and response parsing are identical, so this was pulled out of
+    call_claude_v2 (Jul 2026, migrating the other four job-type flows onto
+    the same v2 labor+material pipeline) rather than duplicated a second
+    time. See call_claude_v2's docstring for the history behind the
+    timeout/max_tokens defaults and the broadened retry exception list.
+    """
     base_payload = {
         "model": model,
         "max_tokens": max_tokens,
@@ -2174,12 +2475,135 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
 
         except (json.JSONDecodeError, ValueError, TimeoutError, OSError, http.client.HTTPException) as e:
             last_error = e
-            print(f"  call_claude_v2 attempt {attempt} failed ({type(e).__name__}): {e}")
+            print(f"  {caller_label} attempt {attempt} failed ({type(e).__name__}): {e}")
             if attempt < 3:
                 print(f"  Retrying ({attempt + 1}/3)...")
                 continue
 
     raise Exception(
-        f"call_claude_v2 failed after 3 attempts. Last error: {last_error}. "
+        f"{caller_label} failed after 3 attempts. Last error: {last_error}. "
         f"This lead needs to be entered manually — check Render logs for the raw Claude output."
     )
+
+
+def build_general_document_content(job_type_label, client_name, client_phone,
+                                    client_email, address, notes, description="",
+                                    pdf_bytes=None, pdf_label="Inspection Report",
+                                    image_blocks=None, best_effort=True):
+    """General-purpose Claude document-content builder for the four
+    non-closing-repair flows (Home Repair, GVL Today, Remodel, Pre-listing
+    Repair) plus the general sales-tool endpoint (Jul 2026 — Jason's
+    request to bring the same labor+material reasoning/catalog-matching
+    pipeline closing repairs already has to these other job types too).
+
+    Each of these flows has a genuinely different real input shape than
+    closing repairs (no repair addendum, often no PDF at all, sometimes
+    just a couple of photos, sometimes just a text description), so this
+    builds whatever combination of (description text, one optional native-
+    PDF document, zero or more photo image blocks) is actually available
+    for the lead, rather than assuming two PDFs the way
+    build_claude_document_content() does for closing repairs.
+
+    image_blocks: a pre-built list of Claude image content blocks (see
+    download_image_block() in app.py) — built by the caller since
+    downloading images needs app.py's network helper; keeps this function
+    pure/unit-testable like build_claude_document_content().
+
+    pdf_label: what to call the PDF in the prompt text (e.g. "Inspection
+    Report" for Pre-listing, which sometimes gets a real inspection report;
+    generic callers can pass whatever's most accurate).
+    """
+    have_pdf = bool(pdf_bytes)
+    have_images = bool(image_blocks)
+    have_description = bool((description or "").strip())
+
+    if have_pdf:
+        doc_instructions = (
+            f"A {pdf_label} PDF is provided below — read its printed text AND "
+            f"any photos or handwritten markups on the pages; photos often "
+            f"show the true extent of an issue that a one-line text finding "
+            f"doesn't capture."
+        )
+    elif have_images:
+        doc_instructions = (
+            "Photo(s) of the property/issue are provided below — look at "
+            "them closely; they're the best available evidence of actual "
+            "scope and severity here, since there's no formal inspection "
+            "report for this lead."
+        )
+    else:
+        doc_instructions = (
+            "No inspection report or photos were provided for this lead — "
+            "this is common for a best-effort inquiry. Base the estimate "
+            "entirely on the client's own description below."
+        )
+
+    content = []
+    best_effort_line = (
+        "This is a best-effort estimate from a homeowner inquiry (no formal "
+        "inspection report)." if best_effort else "This is a full estimate."
+    )
+    consult_line = (
+        "If the information is too vague to estimate responsibly, return an "
+        "empty cost_groups array with needs_consult=true and a short "
+        "consult_reason — do not invent scope."
+        if best_effort else ""
+    )
+    intro = f"""Generate a {job_type_label} estimate for Owners Choice Construction.
+
+Client name: {client_name}
+Client phone: {client_phone}
+Client email: {client_email}
+Property address: {address}
+{f"Intake notes: {notes}" if notes else ""}
+
+{best_effort_line} {doc_instructions}
+{consult_line}
+"""
+    content.append({"type": "text", "text": intro})
+
+    if have_description:
+        content.append({"type": "text",
+                         "text": f"\n=== CLIENT DESCRIPTION OF WORK ===\n{description[:8000]}"})
+
+    if have_pdf:
+        _check_pdf_page_count(pdf_bytes, pdf_label)
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+        content.append({"type": "text",
+                         "text": f"\n=== {pdf_label.upper()} (PDF below — read text, "
+                                 f"photos, and handwritten annotations; may be a scan) ==="})
+        content.append({
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}
+        })
+
+    if have_images:
+        content.append({"type": "text", "text": "\n=== PHOTOS ==="})
+        content.extend(image_blocks)
+
+    content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
+    return content
+
+
+def call_claude_v2_general(job_type_label, client_name, client_phone, client_email,
+                            address, notes, system_prompt, anthropic_api_key,
+                            description="", pdf_bytes=None, pdf_label="Inspection Report",
+                            image_blocks=None, best_effort=True,
+                            model="claude-sonnet-4-6", max_tokens=24000, timeout=400):
+    """v2 entry point for Home Repair / GVL Today / Remodel / Pre-listing
+    Repair / general sales-tool — same underlying labor+material reasoning,
+    real cost codes, historical-example calibration, and Home Depot catalog
+    matching as call_claude_v2() (closing repairs), just built from
+    whatever input shape that job type actually has (see
+    build_general_document_content). Shares call_claude_v2's exact retry/
+    timeout/parsing behavior via _call_claude_v2_core — same defaults, same
+    reasons for those defaults (see call_claude_v2's docstring).
+    """
+    content = build_general_document_content(
+        job_type_label, client_name, client_phone, client_email, address, notes,
+        description=description, pdf_bytes=pdf_bytes, pdf_label=pdf_label,
+        image_blocks=image_blocks, best_effort=best_effort
+    )
+    return _call_claude_v2_core(content, system_prompt, anthropic_api_key,
+                                 model=model, max_tokens=max_tokens, timeout=timeout,
+                                 caller_label="call_claude_v2_general")
