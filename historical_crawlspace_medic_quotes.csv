@@ -1,0 +1,46 @@
+quote_id,date,address,line_item,amount,category,notes
+87392,2026-07-15,"221 Wood River Way, Taylors SC 29687",Interior French drain + 10-mil vapor barrier install (~72 LF),10656.00,drain_and_barrier,"~$148/LF combined drain+barrier scope"
+87392,2026-07-15,"221 Wood River Way, Taylors SC 29687",Sump pump install,1675.00,sump_pump,
+87392,2026-07-15,"221 Wood River Way, Taylors SC 29687",Electrical outlet tie-in for equipment,575.00,electrical,
+79246,2026-02-02,"112 King Arthur Drive",Crawlspace cleanout w/ vapor barrier + debris removal,325.00,cleanout,
+79246,2026-02-02,"112 King Arthur Drive",Remove existing floor insulation + haul off,1670.40,insulation_removal,
+79246,2026-02-02,"112 King Arthur Drive",Install 10-mil Class 1 vapor barrier on soil,2227.20,vapor_barrier,
+79246,2026-02-02,"112 King Arthur Drive",Commercial dehumidifier (Santa Fe Compact70),2095.00,dehumidifier,
+79246,2026-02-02,"112 King Arthur Drive",Seal foundation vents + patch brick hole,483.00,vent_sealing,
+79246,2026-02-02,"112 King Arthur Drive",Electrical outlet for dehumidifier,575.00,electrical,
+79246,2026-02-02,"112 King Arthur Drive",Install ~24ft drop girder w/ PT lumber (3 sections of 8ft) + new 4x4 adjustable piers,4824.00,structural_girder,"~$201/LF girder replacement w/ new piers"
+79246,2026-02-02,"112 King Arthur Drive",Function test both sump pumps,75.00,sump_pump_service,
+81466,2026-03-23,"23 Gardenview Avenue, Greenville SC 29601",Crawlspace cleanout w/ vapor barrier + debris removal,325.00,cleanout,
+81466,2026-03-23,"23 Gardenview Avenue, Greenville SC 29601",Install 10-mil Class 1 vapor barrier,2160.00,vapor_barrier,
+81466,2026-03-23,"23 Gardenview Avenue, Greenville SC 29601",Commercial dehumidifier (Santa Fe Compact70),2095.00,dehumidifier,
+81466,2026-03-23,"23 Gardenview Avenue, Greenville SC 29601",Seal foundation vents + spray foam sealant,120.00,vent_sealing,
+81466,2026-03-23,"23 Gardenview Avenue, Greenville SC 29601",Electrical outlet for dehumidifier (split breaker - full panel),650.00,electrical,"more than normal due to full panel requiring split breaker"
+81466,2026-03-23,"23 Gardenview Avenue, Greenville SC 29601",Repair 3 vent wells w/ masonry fasteners + sealant,255.00,vent_well_repair,"$85/vent well"
+80785,2026-03-10,"108 Mountain Side Way, Greenville SC 29609",Crawlspace cleanout w/ vapor barrier + debris removal,325.00,cleanout,v2 quote
+80785,2026-03-10,"108 Mountain Side Way, Greenville SC 29609",Install 10-mil Class 1 vapor barrier,984.00,vapor_barrier,v2 quote
+80785,2026-03-10,"108 Mountain Side Way, Greenville SC 29609",Remove ~450 SF floor insulation + install new R-19 batt insulation between floor joists,1417.50,insulation_replace,"~$3.15/SF combined remove+replace"
+80785,2026-03-10,"108 Mountain Side Way, Greenville SC 29609",Secure 2 foundation vents + 1 HVAC line set penetration w/ hardware cloth,105.00,vent_sealing,
+80548,2026-03-04,"104 Perry Road, Greenville SC 29609",Fungal treatment (fumigation, non-toxic EPA-registered),975.00,fungal_treatment,
+80548,2026-03-04,"104 Perry Road, Greenville SC 29609",Install R-19 floor insulation between all floor joists,3225.00,insulation_install,
+80008,2026-02-20,"16 Sir Abbott Street, Greenville SC 29607",Crawlspace cleanout w/ vapor barrier + debris removal,350.00,cleanout,
+80008,2026-02-20,"16 Sir Abbott Street, Greenville SC 29607",Install 10-mil Class 1 vapor barrier,1440.00,vapor_barrier,
+80008,2026-02-20,"16 Sir Abbott Street, Greenville SC 29607",Remove existing floor insulation + install new R-19 batt insulation,3540.00,insulation_replace,
+80008,2026-02-20,"16 Sir Abbott Street, Greenville SC 29607",Fungal treatment,780.00,fungal_treatment,
+75536,2025-10-15,"233 Bowen Road, Easley SC 29640",Install 10-mil Class 1 vapor barrier (crawlspace pre-cleaned by others),1536.00,vapor_barrier,"V2 quote; matches paid Invoice 927598 exactly - quotes = actual billed here"
+75536,2025-10-15,"233 Bowen Road, Easley SC 29640",Seal foundation vents for dehumidifier install,340.00,vent_sealing,
+75536,2025-10-15,"233 Bowen Road, Easley SC 29640",Fungal treatment (manual scrub + fumigation for airborne spores),2112.00,fungal_treatment,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Crawlspace cleanout w/ vapor barrier + debris removal,325.00,cleanout,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Fungal treatment,750.00,fungal_treatment,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Install 10-mil Class 1 vapor barrier,1150.00,vapor_barrier,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Commercial dehumidifier (Santa Fe Compact70),2050.00,dehumidifier,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Seal foundation vents for dehumidifier install,114.00,vent_sealing,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Install 1/3HP sump pump w/ basin + discharge plumbing thru exterior wall (up to 18ft),895.00,sump_pump,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Install 2 electrical outlets in crawlspace for equipment,700.00,electrical,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Remove steel support beam + install ~5ft drop girder w/ PT posts + adjustable footing (left corner),875.00,structural_girder,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Remove steel support beam + install ~5ft drop girder w/ PT posts + adjustable footing (right corner),975.00,structural_girder,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Remove pier + replace w/ PT post on proper footing + Simpson Strong-Tie anchor,350.00,structural_pier,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Reinforce 1 floor joist + support post on concrete footing,425.00,structural_joist,
+74456,2025-09-23,"400 Darlington Avenue, Greenville SC 29609",Install 2 well vents around existing foundation vents,315.00,vent_well_install,
+69624,2025-06-26,"109 Babbs Hollow Road, Greenville SC 29607 (basement)",Cut concrete basement slab + install interior French drain w/ channeling system (~38 LF) + dimple mat + vapor barrier integration,5510.00,sub_slab_drain,"~$145/LF sub-slab French drain, basement/sub-slab context (not crawlspace); required cutting back interior stud wall first, OCC prep"
+69624,2025-06-26,"109 Babbs Hollow Road, Greenville SC 29607 (basement)",Demo/excavate for sump basin + install 1/3HP sump pump w/ PVC discharge thru exterior wall (up to 18in),1675.00,sump_pump,
+69624,2025-06-26,"109 Babbs Hollow Road, Greenville SC 29607 (basement)",Electrical outlet for equipment,550.00,electrical,
