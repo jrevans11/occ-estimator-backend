@@ -20,6 +20,11 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # still depends on their original flat-price schema and behavior.
 import estimate_v2_draft as v2
 
+# Feedback loop steps 2-4 (Jul 2026) — diff sweep, Google Sheet corrections
+# log, monthly review to-do. See feedback_loop.py module docstring for the
+# full design and what's proven vs. unverified against the live JobTread API.
+import feedback_loop as fbl
+
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 WUFOO_API_KEY    = os.environ.get("WUFOO_API_KEY", "")
@@ -27,6 +32,23 @@ JOBTREAD_KEY     = os.environ.get("JOBTREAD_API_KEY", "")
 JOBTREAD_ORG     = os.environ.get("JOBTREAD_ORG_ID", "22P9ppHePJKP")
 RENDER_API_KEY   = os.environ.get("RENDER_API_KEY", "")
 RENDER_SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "")
+
+# Feedback loop steps 2-4 (Jul 2026) — see feedback_loop.py. All optional:
+# the sweep still runs and marks jobs swept without these, it just can't
+# persist rows to the sheet or create the monthly to-do until they're set.
+# FEEDBACK_SHEET_ID: the target Google Sheet's ID (from its URL).
+# GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON: the full service-account JSON key
+#   (as a string) — create in Google Cloud Console, then share the target
+#   Sheet with that service account's email as an Editor. No OAuth flow
+#   needed from Jason beyond that one share action.
+# FEEDBACK_ADMIN_JOB_ID: a fixed, non-client JobTread job (Jason creates
+#   this once, e.g. "AI Estimating — Internal") that the monthly review
+#   to-do attaches to, since createTask needs a real targetType/targetId.
+FEEDBACK_SHEET_ID = os.environ.get("FEEDBACK_SHEET_ID", "")
+GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON", "")
+FEEDBACK_ADMIN_JOB_ID = os.environ.get("FEEDBACK_ADMIN_JOB_ID", "")
+FEEDBACK_SHEET_URL = (f"https://docs.google.com/spreadsheets/d/{FEEDBACK_SHEET_ID}"
+                      if FEEDBACK_SHEET_ID else "")
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert estimator for Owners Choice Construction LLC, a residential repair contractor in Greenville/Upstate SC. You create closing repair estimates from home inspection reports and repair addendums.
@@ -44,7 +66,8 @@ PRICING RULES:
 - Subcontractor markup: cost + 45%
 
 LABOR CLASSIFICATION (who performs the work — drives which markup applies;
-refined Jul 2026 from Jason's direct answers on real gray-area cases):
+refined Jul 2026 from Jason's direct answers on real gray-area cases,
+Rounds 1 and 2):
 - SUBCONTRACTOR work (apply 45% markup): all electrical work; MAJOR HVAC
   repairs (system replacement, compressor, refrigerant, major ductwork);
   MAJOR plumbing (re-pipe, sewer/drain line, water heater replacement, slab
@@ -53,34 +76,70 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
   as a shower valve cartridge or valve body — too many variables for
   in-house crews); ALL crawlspace work related to moisture mitigation
   (vapor barrier, dehumidifier, clean-out, fungal/mold treatment, sump
-  pump, crawlspace insulation repair/replacement) — no small-fix exception,
-  always sub regardless of size; ALL masonry work (brick/mortar repointing,
-  brick repair, block work — OCC crews do not do masonry, a masonry sub
-  handles it as flat scope pricing); INSULATION work beyond a few batts —
-  if it's more than adding/replacing a handful of batts (e.g. attic blow-in
-  or top-off, a whole crawlspace floor's worth of batts), an insulation
-  company handles it as flat scope (real reference: crawlspace floor batt
-  replacement ran ~$3.50/sq ft sub cost on a real 2026 job); adding or
-  replacing just a few individual batts stays in-house.
-- CRAWLSPACE LOCATION IS NOT AN AUTOMATIC SUB TRIGGER (except the two
-  explicit rules above: moisture-mitigation work and drain work in the
-  crawlspace are always sub). Crawlspace STRUCTURAL repairs (girders,
-  joists, Ellis jack shoring) and other small crawlspace-located repairs
-  are in-house. For trade-specific crawlspace work like duct repair, use
-  judgment: normally small duct repairs are in-house, but when an HVAC
-  contractor is a better fit for the specific repair (or is already being
-  called to the job), price it as a flat sub scope instead (real
-  reference: a damaged/disconnected crawlspace duct repair priced at ~$350
-  flat sub cost on a real 2026 job).
+  pump) — no small-fix exception, always sub regardless of size; MASONRY
+  work that involves mixing mortar or repairing/replacing cracked or loose
+  bricks/block (or anything more involved than that) — a masonry sub
+  handles it as flat scope pricing. Simple masonry SEALING/CAULKING (e.g.
+  sealing an existing mortar joint with caulk/sealant, no mortar mixing
+  involved) stays IN-HOUSE instead (Jason's Round 2 answer — see "Repoint
+  or seal mortar joints" in the EXTERIOR price reference below). INSULATION
+  beyond OCC's in-house size threshold goes to an insulation company as
+  flat scope — see the dedicated INSULATION BOUNDARY rule right below.
+- INSULATION BOUNDARY (Jason's Round 2 answer — replaces the old vague "a
+  few batts" language with a concrete size cue): crawlspace or attic
+  insulation REPAIR/REPLACEMENT up to roughly 200-300 sq ft stays IN-HOUSE
+  (same threshold for both locations); beyond that size, it goes to an
+  insulation company as flat sub scope (real reference: crawlspace floor
+  batt replacement ran ~$3.50/sq ft sub cost on a real 2026 job).
+  EXCEPTION: whenever the SAME job ALSO has crawlspace moisture-mitigation
+  work (vapor barrier, dehumidifier, clean-out, fungal/mold treatment),
+  route ALL crawlspace insulation work on that job to the crawlspace sub
+  regardless of square footage — Jason prefers the crawlspace sub handle
+  insulation whenever they're already being called out for moisture work,
+  rather than splitting it off as a separate in-house task.
+- CRAWLSPACE LOCATION IS NOT AN AUTOMATIC SUB TRIGGER (except the explicit
+  rules above: moisture-mitigation work, drain work in the crawlspace, and
+  crawlspace insulation bundled with moisture-mitigation work, are always
+  sub). Crawlspace STRUCTURAL repairs (girders, joists, Ellis jack shoring)
+  and other small crawlspace-located repairs are in-house. For
+  trade-specific crawlspace work like duct repair, use judgment: normally
+  small duct repairs are in-house, but when an HVAC contractor is a better
+  fit for the specific repair (or is already being called to the job),
+  price it as a flat sub scope instead (real reference: a damaged/
+  disconnected crawlspace duct repair priced at ~$350 flat sub cost on a
+  real 2026 job).
 - LARGE-SCOPE PROJECT-SIZED ITEMS (e.g. a deck that effectively needs
   rebuilding, a large structural correction): OCC uses a framing sub for
-  these. Estimate them as ONE flat scope line item at sub pricing (45%
-  markup) — a reasonable ballpark is expected, not an itemized
-  hours+materials breakdown and not a skipped line (real reference: a full
-  deck earth-to-wood correction was ballparked at $8,000 sub cost, and a
-  full-deck power wash + water sealant at $1,800 flat, on a real 2026
-  job). State clearly in the internal notes that the number is a ballpark
-  pending a real sub bid.
+  these. Look for report LANGUAGE CUES like "entire deck/roof/siding needs
+  replacing," or a PHOTO showing ground-contact wood damage where repair
+  genuinely isn't possible (e.g. most of a deck resting directly on the
+  ground, not just a support post or two) — that combination is what
+  signals this large-project mode, not a normal itemized repair (Jason's
+  Round 2 answer). Estimate them as ONE flat scope line item at sub
+  pricing (45% markup) — a reasonable ballpark is expected, not an
+  itemized hours+materials breakdown and not a skipped line (real
+  reference: a full deck earth-to-wood correction was ballparked at $8,000
+  sub cost, and a full-deck power wash + water sealant at $1,800 flat, on
+  a real 2026 job). State clearly in the internal notes that the number is
+  a ballpark pending a real sub bid. EXCEPTION — cheaper IN-HOUSE fix for
+  isolated ground-contact posts/stair stringers (Jason's Round 2 answer):
+  if only individual posts or stair stringers have ground contact — not
+  the broader deck structure itself — it's often NOT a full-rebuild
+  situation. OCC can instead cut the affected wood clear of the ground and
+  set a concrete paver (or similar) underneath as a proper base, which
+  stays IN-HOUSE labor + material. Only escalate to the sub-priced
+  full-rebuild line when ground contact affects the broader deck structure,
+  not just a couple of support points.
+- ROOFING BOUNDARY (Jason's Round 2 answer): sealing exposed nail heads,
+  sealing roof vent boots, and a small quantity of loose or missing
+  shingles (10 shingles or fewer) stay IN-HOUSE. More than 10 shingles
+  needing replacement, or a full roof replacement, is SUB work (a roofer).
+  For a full roof replacement specifically, price it as ONE flat scope sub
+  line using this real formula rather than guessing or flagging
+  quote-required: $350 per roofing square, PLUS $10 per linear ft of ridge
+  vent, PLUS $10 per linear ft of valley. This is a large-project-ballpark-
+  style item (see the rule above) — state clearly in internal notes that
+  it's a formula-based ballpark pending a real roofer bid.
 - IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else
   — drywall, paint, carpentry, trim, flooring, general handyman repairs,
   and minor plumbing/HVAC fixture work such as a sink pop-up assembly,
@@ -88,8 +147,12 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
   slow-draining sink or vanity P-trap, exposed HVAC lineset insulation, and
   small/loose duct-work repairs or strapping. ALWAYS in-house regardless of
   what else is happening in the job: exterior wood rot repair, small
-  siding or roofing repairs, window parts replacement, window/door
-  replacement, and other general handyman-type repairs.
+  siding repairs (see ROOFING BOUNDARY above for roofing specifically),
+  window parts replacement, window/door UNIT replacement (confirmed in
+  Jason's Round 2 answer — holds even for large or specialty units, e.g.
+  oversized picture windows or custom exterior doors; OCC never routes a
+  window/door unit swap to a supplier-installed sub), and other general
+  handyman-type repairs.
 - HVAC INSPECTIONS: only add a sub HVAC inspection line item when the
   inspection report specifically calls for an HVAC inspection/diagnostic
   visit. Otherwise, small HVAC items (lineset insulation, minor duct
@@ -242,6 +305,9 @@ ROOFING:
   - Install chimney cap or rain cap: ~$1,184
   - Repair or replace damaged roof decking/sheathing: $586-$792
   - Install or repair drip edge or valley flashing: ~$409
+  - Full roof replacement (SUB — see ROOFING BOUNDARY above): $350/square +
+    $10/linear ft ridge vent + $10/linear ft valley (formula, not a fixed
+    price — depends on roof size)
 
 APPLIANCES:
   - Install dishwasher drain high loop or air gap: ~$44
@@ -261,20 +327,67 @@ ELECTRICAL — Sub: Redland Electric (864) 909-4441, apply 45% markup:
   - Recessed lighting (per fixture): $175-330
   - Breaker/wiring repair: quote required
 
-CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup:
-  - Crawlspace clean-out: $300-350
-  - Vapor barrier install (10 mil): $984-2,227 depending on sqft
+CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup.
+Real calibration data below is drawn from 9 full itemized Crawlspace Medic
+quotes (2025-2026, spanning cleanouts, vapor barriers, dehumidifiers, fungal
+treatment, insulation, vents, sump pumps, structural girder/pier repair, and
+a sub-slab French drain) saved to historical_crawlspace_medic_quotes.csv in
+this repo — use that file for more worked examples if needed. One quote
+(233 Bowen Road, $3,988) was directly cross-checked against Crawlspace
+Medic's own paid invoice for the same job and matched line-for-line, so
+these quoted prices can be treated as real billed prices, not just asks:
+  - Crawlspace clean-out: $300-350 (real anchors: $325 and $350 across
+    multiple confirmed quotes)
+  - Vapor barrier install (10 mil, Class 1): $984-2,227 depending on sqft
+    (real per-sqft anchor: ~$1.20-1.60/sqft; smaller crawlspaces run near
+    the $984-1,536 end, larger ones toward $2,160-2,227)
   - Dehumidifier install (Santa Fe Compact70): $1,895-2,095
-  - Seal/secure foundation vents: $105-483
-  - Crawlspace electrical outlet for dehumidifier: $550-700
-  - Fungal/mold treatment: $750-2,112 depending on severity
-  - R-19 floor insulation (remove + install): $3.15-7.86/sqft
-  - Sump pump install (1/3 HP): $895
-  - Pier/girder repair: $315-975 per location
+  - Seal/secure foundation vents: $105-483 depending on vent count and
+    whether brick patching is also needed
+  - Foundation vent REPLACEMENT (swapping old vents for concreted-in
+    replacements, not just sealing): real quoted anchor ~$125/vent for
+    10-15+ vents needed (better per-unit pricing at 20+ vents); under 10
+    vents, Crawlspace Medic hits their own job-size minimums and may not
+    be cost-effective — factor that in before assuming this sub is the
+    right call for a small vent-count job
+  - Crawlspace electrical outlet for dehumidifier/sump equipment: $550-700
+    (real anchor: can run higher, e.g. $650, when the panel is full and a
+    split breaker is required — note that in quantity_note if apparent
+    from photos/report)
+  - Fungal/mold treatment (manual scrub + non-toxic EPA-registered
+    fumigation): $750-2,112 depending on severity/extent — real anchors
+    span this whole range across confirmed quotes, so lean toward the
+    higher end for visibly heavy growth and the lower end for light/spot
+    treatment
+  - R-19 floor insulation (remove existing + install new): real anchor
+    ~$3.15/sqft combined remove+replace (450 sqft = $1,417.50); insulation
+    install ALONE (no removal) runs higher per sqft than combined
+    remove+replace
+  - Sump pump install (1/3 HP, basin + PVC discharge through exterior
+    wall up to 18in, 3-yr warranty): $895-1,675 (crawlspace vs. basement
+    excavation context affects which end applies)
+  - Structural girder replacement (~5-8ft drop girder section w/
+    pressure-treated posts + adjustable footing base): $875-975 per
+    section for a single ~5ft section; a longer multi-section girder
+    (e.g. 24ft / 3 sections w/ new piers) can run ~$200/linear ft
+    (real anchor: $4,824 for 24ft)
+  - Pier replacement (single pier + PT post on proper footing + Simpson
+    Strong-Tie anchor): $350 real anchor
+  - Floor joist reinforcement (+ support post on concrete footing): $425
+    real anchor
   - Well vent install/repair: $210-315 each
   - Sill plate replacement: quote required (highly variable)
+  - Sub-slab French drain (basement or crawlspace slab cut): real anchor
+    ~$145/linear ft (confirmed: 38 LF = $5,510) — still treat as
+    quote-required for sizing since site access varies a lot, but this is
+    a real, usable per-LF starting point rather than a pure guess. Real
+    jobs have required OCC to prep the space first, e.g. cutting back an
+    interior stud wall, before Crawlspace Medic's visit; coordinate
+    scheduling accordingly
 
-INSULATION — mostly sub work:
+INSULATION — see INSULATION BOUNDARY rule above (in-house up to ~200-300
+sq ft crawlspace/attic repair-or-replacement; beyond that, or any
+crawlspace insulation on a job that also has moisture-mitigation work, sub):
   - Attic insulation (add/replace): quote per sqft
   - Bathroom exhaust fan (install/repair): $178-290
   - Dryer vent cap replacement: $218-260
@@ -3007,6 +3120,12 @@ def _run_v2_estimate_and_write(job_id, estimate, inspection_pdf_bytes=None):
     general sales-tool flow) — those groups simply get created with no
     photos, same as before this feature existed.
 
+    Also builds and saves the feedback-loop baseline (Jul 2026, steps 2-4
+    — see feedback_loop.py) via a BaselineCollector wired into
+    add_cost_groups_v2()'s on_group_created/on_item_created hooks, so a
+    later sweep can diff Jason's team's final edits against exactly what
+    the AI originally proposed, by real JobTread ID.
+
     Returns (added_group_count, computed_total, estimate) — the estimate is
     returned back too since resolve_material_lines_with_catalog() mutates
     and returns it (callers may want the final version, e.g. for logging).
@@ -3032,11 +3151,18 @@ def _run_v2_estimate_and_write(job_id, estimate, inspection_pdf_bytes=None):
     # v2.extract_reference_photos() / the "source_pages" schema field.
     # Non-fatal by construction: omitting inspection_pdf_bytes just means
     # groups get created with no photos.
+    baseline_collector = fbl.BaselineCollector(job_id)
     added = v2.add_cost_groups_v2(
         job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG,
-        inspection_pdf_bytes=inspection_pdf_bytes, photo_uploader=_upload_photo_bytes
+        inspection_pdf_bytes=inspection_pdf_bytes, photo_uploader=_upload_photo_bytes,
+        on_group_created=baseline_collector.on_group_created,
+        on_item_created=baseline_collector.on_item_created,
     )
     print(f"  {added} cost groups added to job {job_id}")
+
+    # Feedback-loop baseline (Step 1.5, feeds the Step 2 diff sweep):
+    # non-fatal by construction, same as the estimate snapshot below.
+    fbl.write_baseline(jobtread_query, job_id, baseline_collector.to_record())
 
     # Feedback-loop baseline: save the untouched AI estimate to the job's
     # Files before anyone can edit the budget (non-fatal).
@@ -4001,6 +4127,10 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_refresh()
         elif path == "/send-followups":
             self._handle_send_followups()
+        elif path == "/review-estimates":
+            self._handle_review_estimates()
+        elif path == "/pricing-review-reminder":
+            self._handle_pricing_review_reminder()
         elif path.startswith("/snapshots/"):
             # Temp URL serving a just-generated AI-estimate CSV so
             # JobTread's createUploadRequest can fetch it — see
@@ -4053,6 +4183,62 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             import traceback
             err = f"Follow-up run failed: {e}\n{traceback.format_exc()}"
+            print(err)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(err.encode("utf-8"))
+
+    def _handle_review_estimates(self):
+        """Feedback-loop Step 2/3 cron endpoint (Jul 2026) — daily-safe: only
+        jobs whose baseline is 7-21 days old and not already swept get
+        processed each run (see feedback_loop.MIN/MAX_SWEEP_AGE_DAYS), so
+        calling this more often than needed is harmless. Add this URL to
+        the same cron-job.org account already driving /send-followups.
+        """
+        try:
+            summary = fbl.run_feedback_sweep(
+                jobtread_query, JOBTREAD_ORG,
+                sheet_id=FEEDBACK_SHEET_ID,
+                service_account_json=GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON,
+            )
+            msg = f"Feedback sweep complete: {summary}"
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(msg.encode("utf-8"))
+        except Exception as e:
+            import traceback
+            err = f"Feedback sweep failed: {e}\n{traceback.format_exc()}"
+            print(err)
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(err.encode("utf-8"))
+
+    def _handle_pricing_review_reminder(self):
+        """Feedback-loop Step 3 monthly cron endpoint (Jul 2026) — creates a
+        JobTread to-do nudging Jason to review the feedback sheet and
+        consider new pricing rules. Add this URL to cron-job.org set to run
+        once a month (e.g. the 1st). Requires FEEDBACK_ADMIN_JOB_ID to be
+        set to a real internal (non-client) JobTread job — see CLAUDE.md
+        for the one-time setup.
+        """
+        try:
+            if not FEEDBACK_ADMIN_JOB_ID:
+                msg = "Skipped: FEEDBACK_ADMIN_JOB_ID is not set."
+                print(f"  Monthly pricing-review reminder: {msg}")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(msg.encode("utf-8"))
+                return
+            ok = fbl.create_monthly_review_todo(
+                jobtread_query, FEEDBACK_ADMIN_JOB_ID, JASON_ID, FEEDBACK_SHEET_URL
+            )
+            msg = "Monthly pricing-review to-do created." if ok else "Monthly pricing-review to-do FAILED (see logs)."
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(msg.encode("utf-8"))
+        except Exception as e:
+            import traceback
+            err = f"Monthly reminder failed: {e}\n{traceback.format_exc()}"
             print(err)
             self.send_response(500)
             self.end_headers()
