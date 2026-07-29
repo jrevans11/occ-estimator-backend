@@ -223,18 +223,28 @@ IMPORTANT — photos are ground truth, the inspector's wording is not. Home
 inspectors are generalists, not tradespeople, and sometimes misdescribe or
 underdiagnose what they're looking at (e.g. calling an active plumbing leak
 "water staining," describing a full missing tile section as "cracked tile,"
-or missing that "wood rot" is actually a pest/termite issue). When a photo
-clearly shows something DIFFERENT from what the report's text says — not
-just a different quantity, but a different actual problem, cause, or
-severity — trust what is visible in the photo and estimate/classify/describe
-based on that, not the inspector's wording. Call this out explicitly in
-"quantity_note" whenever it happens (e.g. "Report says 'minor water
-staining' but photo shows an active supply-line leak — estimated as a
-plumbing repair, not a cosmetic one") so Jason's team can see exactly where
-and why the AI overrode the report's text. If a photo is unclear,
-low-resolution, or genuinely isn't provided for a given item, say so plainly
-in "quantity_note" instead of inventing visual detail you can't actually
-see — the goal is trustworthy photo-based judgment, not the appearance of it.
+or missing that "wood rot" is actually a pest/termite issue). A real example
+Jason caught (Round 2 pricing Q&A): an inspector wrote "sealing at windows"
+but the actual photos clearly showed missing/cracked window GLAZING
+compound around the panes — a real glazing repair, not a simple sealant
+job, and priced/scoped differently (different material, different labor).
+When a photo clearly shows something DIFFERENT from what the report's text
+says — not just a different quantity, but a different actual problem,
+cause, or severity — DO NOT just flag the discrepancy and move on. Actually
+LOOK at the photo, determine the real problem it shows, and scope/estimate
+THAT real problem (correct trade, correct materials, correct quantity) —
+the photo-based read must always win over the inspector's words in what you
+actually estimate. Separately, ALSO call out the discrepancy explicitly in
+"quantity_note" so Jason's team can see exactly where and why the AI
+overrode the report's text (e.g. "Report says 'sealing at windows' but
+photos show missing/cracked glazing compound around multiple panes —
+estimated as a window glazing repair, not a sealant job" or "Report says
+'minor water staining' but photo shows an active supply-line leak —
+estimated as a plumbing repair, not a cosmetic one"). If a photo is
+unclear, low-resolution, or genuinely isn't provided for a given item, say
+so plainly in "quantity_note" instead of inventing visual detail you can't
+actually see — the goal is trustworthy photo-based judgment, not the
+appearance of it.
 
 STEP 1B — SOURCE PAGES (for reference photos): set "source_pages" to a list
 of the inspection report's PDF page number(s) (1-indexed, counting pages of
@@ -331,16 +341,27 @@ STEP 3A — IF IN-HOUSE: break the work into
   safety net — see enforce_minimum_labor_hours() — but estimate it correctly
   yourself first.)
 
-  STRUCTURAL SHORING / ELLIS JACKS: when an inspection report calls out
-  improper temporary foundation support in the crawlspace — e.g. screw jack
-  posts (the adjustable steel posts sold at Home Depot), a dry-stacked CMU
-  block stack, or any other improvised point shoring — this is IN-HOUSE
-  work (OCC's crew replaces these directly; it is not part of the
-  crawlspace-moisture-mitigation sub scope). Always specify a real Ellis
-  jack (search the Home Depot catalog for "Ellis jack" — OCC's own catalog
-  lists them by model number, e.g. "STL 22"-style codes) sized to the
-  span/height needed, paired with a 12x12 base plate (catalog item like
-  "BASE12"). Use the same Ellis-jack-plus-base-plate approach for any drop
+  STRUCTURAL SHORING / ELLIS JACKS (confirmed IN-HOUSE, Jason's Round 2
+  answer): when an inspection report calls out improper temporary
+  foundation support in the crawlspace — e.g. screw jack posts (the
+  adjustable steel posts sold at Home Depot), a dry-stacked CMU block
+  stack, or any other improvised point shoring — this is IN-HOUSE work
+  (OCC's crew replaces these directly; it is not part of the
+  crawlspace-moisture-mitigation sub scope). Budget ~2 man-hours of labor
+  for a SINGLE point-shore replacement (Jason's real number — scale up for
+  multiple shore points in the same crawlspace). Every point-shore
+  replacement needs THREE separate catalog items, not two: (1) an Ellis
+  jack, (2) a 12x12 base plate, and (3) a double U-head bracket — search
+  the Home Depot catalog for each by name ("Ellis jack," "base plate,"
+  "double U head bracket"; OCC's own catalog lists the jack and base plate
+  by model number, e.g. "STL 22"/"BASE12"-style codes). Size the jack to
+  the actual span/height needed using visual clues from the inspection
+  photos (crawlspace clearance height, joist depth, etc.) — Jason's
+  guidance is to cross-reference Ellis Manufacturing's own published height
+  ranges per model number when picking a size, so note in "quantity_note"
+  which model/height range you selected and why (e.g. "~18in crawlspace
+  clearance visible in photo -> sized to Ellis [model]'s stated range").
+  Use the same Ellis-jack-plus-base-plate-plus-bracket approach for any drop
   girder repair or headered joist repair that needs a permanent support
   point, not just for replacing bad temporary shoring.
 
@@ -1837,7 +1858,8 @@ def extract_reference_photos(pdf_bytes, page_numbers,
 
 
 def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
-                        inspection_pdf_bytes=None, photo_uploader=None):
+                        inspection_pdf_bytes=None, photo_uploader=None,
+                        on_group_created=None, on_item_created=None):
     """
     Create cost groups with MULTIPLE cost items each (labor + material
     lines for in-house work, a single scoped line for sub work) instead of
@@ -1875,7 +1897,34 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
     this feature is fully additive and never blocks group creation on its
     own (a photo extraction/upload failure falls back to creating the group
     without photos, never skips the group entirely).
+
+    on_group_created / on_item_created: optional callables for the
+    feedback-loop baseline (Jul 2026 — see feedback_loop.py). Invoked with
+    on_group_created(group_id, title, cost_code_name) right after a group
+    is created, and on_item_created(group_id, item_id, name, cost_type_id,
+    qty, unit_cost, unit_price) right after each REAL billable cost item is
+    created (labor/material/sub lines only — the internal $0 NOTES item and
+    the "Not Included In This Estimate" skipped-items group are
+    deliberately excluded, since they're not billable work worth diffing
+    later). Both are wrapped in try/except so a callback bug can never
+    break estimate creation itself — this stays fully additive, same
+    fail-open philosophy as the photo attachment above. Omit both (the
+    default) and behavior is byte-for-byte unchanged from before this
+    param existed.
     """
+    def _safe_group_cb(group_id, title, cost_code_name):
+        if on_group_created:
+            try:
+                on_group_created(group_id, title, cost_code_name)
+            except Exception as e:
+                print(f"  on_group_created callback failed (non-fatal): {e}")
+
+    def _safe_item_cb(group_id, item_id, name, cost_type_id, qty, unit_cost, unit_price):
+        if on_item_created and item_id:
+            try:
+                on_item_created(group_id, item_id, name, cost_type_id, qty, unit_cost, unit_price)
+            except Exception as e:
+                print(f"  on_item_created callback failed (non-fatal): {e}")
     if not estimate:
         return 0
 
@@ -1963,6 +2012,7 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
                 print(f"  Skipping group '{title[:50]}' (create group failed): {e}")
                 continue
 
+        _safe_group_cb(group_id, title[:100], cost_code_name)
         items_added_this_group = 0
 
         # NOTE (Jul 2026 pricing Q&A): sub and in-house are no longer
@@ -2011,7 +2061,7 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
                     continue
                 line_price = round(line_cost * SUB_MARKUP, 2)
                 try:
-                    jobtread_query_fn({
+                    resp = jobtread_query_fn({
                         "createCostItem": {
                             "$": {
                                 "costGroupId": group_id, "name": line_item[:100], "quantity": 1,
@@ -2022,13 +2072,15 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
                         }
                     })
                     items_added_this_group += 1
+                    item_id = (resp or {}).get("createCostItem", {}).get("createdCostItem", {}).get("id")
+                    _safe_item_cb(group_id, item_id, line_item[:100], COST_TYPE_SUB, 1, line_cost, line_price)
                 except Exception as e:
                     print(f"  Failed to add sub scope line '{line_item[:50]}': {e}")
         elif sub_cost > 0:
             sub_price = round(sub_cost * SUB_MARKUP, 2)
             item_name = _strip_section_prefix(title)
             try:
-                jobtread_query_fn({
+                resp = jobtread_query_fn({
                     "createCostItem": {
                         "$": {
                             "costGroupId": group_id, "name": item_name[:100], "quantity": 1,
@@ -2039,6 +2091,8 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
                     }
                 })
                 items_added_this_group += 1
+                item_id = (resp or {}).get("createCostItem", {}).get("createdCostItem", {}).get("id")
+                _safe_item_cb(group_id, item_id, item_name[:100], COST_TYPE_SUB, 1, sub_cost, sub_price)
             except Exception as e:
                 print(f"  Failed to add sub cost item for '{title[:50]}': {e}")
 
@@ -2054,12 +2108,13 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
                 trade = (line.get("trade", "") or "Labor").strip()
                 if hours <= 0:
                     continue
+                labor_item_name = f"{trade.capitalize()} labor"[:100]
                 try:
-                    jobtread_query_fn({
+                    resp = jobtread_query_fn({
                         "createCostItem": {
                             "$": {
                                 "costGroupId": group_id,
-                                "name": f"{trade.capitalize()} labor"[:100],
+                                "name": labor_item_name,
                                 "quantity": hours,
                                 "unitCost": LABOR_COST_RATE,  # real internal cost ($55/hr)
                                 "unitPrice": rate,             # billed rate (89.00)
@@ -2069,6 +2124,9 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
                         }
                     })
                     items_added_this_group += 1
+                    item_id = (resp or {}).get("createCostItem", {}).get("createdCostItem", {}).get("id")
+                    _safe_item_cb(group_id, item_id, labor_item_name, COST_TYPE_LABOR,
+                                  hours, LABOR_COST_RATE, rate)
                 except Exception as e:
                     print(f"  Failed to add labor line for '{title[:50]}': {e}")
 
@@ -2163,6 +2221,9 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
 
                 if resp is not None:
                     items_added_this_group += 1
+                    item_id = (resp or {}).get("createCostItem", {}).get("createdCostItem", {}).get("id")
+                    _safe_item_cb(group_id, item_id, item[:100], COST_TYPE_MATERIALS,
+                                  qty, unit_cost, unit_price)
                     # Photo attachment via createFile(targetType="costItem")
                     # is CONFIRMED UNSUPPORTED (Jul 2026, real production run,
                     # job 22PbQbX4bfWm) — the API's own validation error names
