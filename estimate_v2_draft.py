@@ -2328,34 +2328,299 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None,
 # inspection findings, instead of assuming something is missing.
 # ─────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────
+# LARGE-DOCUMENT HANDLING (Aug 2026 — Candler / 102 Tuscany Way failure)
+# ─────────────────────────────────────────────────────────────────────────
+# BUG FIX #3: a submission came in with a 7,671,618-byte inspection report
+# uploaded into BOTH the addendum and inspection slots (the Wufoo form
+# requires a file in each slot, so when a realtor has no separate repair
+# addendum they just upload the inspection report twice — in this case the
+# submission notes also explicitly asked for every item in the report to be
+# quoted, so estimating off the report alone was correct). All three
+# attempts died with "The read operation timed out", ~20 minutes wasted
+# before the lead got flagged for manual entry.
+#
+# Three separate things were wrong, and all three are fixed here:
+#
+#   1. THE SAME 7.6MB FILE WAS SENT TWICE. base64 inflates it ~33%, so the
+#      request body carried ~20.4MB of duplicated PDF. Fixed by comparing
+#      the two byte strings — if they're identical, only one copy is sent
+#      and build_claude_document_content()'s existing "inspection report
+#      only" prompt branch takes over (which already tells Claude that
+#      single document carries BOTH the scope-of-work and the findings).
+#      Nothing about photo/markup vision changes — it's still a native PDF
+#      document block, Claude still reads the photos and handwritten
+#      annotations, it just isn't asked to read the same 7.6MB twice.
+#
+#   2. THE CALL WASN'T STREAMED. urlopen()'s timeout is a per-socket-read
+#      timeout, and a non-streamed request sends NOTHING back until the
+#      whole generation finishes. With max_tokens=24000 and a big
+#      photo-heavy report, total generation time ran past the 400s ceiling,
+#      so the socket timed out even though the API was working fine. Fixed
+#      by streaming (stream=true + SSE parsing in _stream_claude_message):
+#      tokens arrive continuously, the socket never sits idle, and the
+#      timeout now means "the API went quiet for N seconds" instead of
+#      "the whole job took longer than N seconds". This is the real fix —
+#      it removes read-timeout as a failure mode at ANY document size.
+#
+#   3. THE RETRIES COULDN'T HAVE WORKED. json.dumps() of the full payload
+#      ran INSIDE the retry loop, so each attempt re-serialized ~20MB of
+#      base64 (expensive on Render Starter's 0.5 CPU / 512MB) and then hit
+#      the exact same deterministic timeout. Fixed: the payload is built
+#      once outside the loop, and truncation now escalates max_tokens
+#      instead of retrying into the same wall (see BUG FIX #2's note that
+#      that failure mode is not transient either).
+#
+# Plus, for genuinely large files, the Files API (upload once, reference by
+# file_id) replaces inline base64 — see _upload_pdf_to_files_api below.
+#
+# Deliberately NOT done: stripping or downscaling the images to shrink the
+# PDF. The photos are the point — inspection photos routinely show extent
+# that the inspector's one-line text finding doesn't, and the system prompt
+# already tells Claude how to reconcile the two when they disagree.
+# Degrading them to save bytes would trade away the most valuable signal
+# in the document.
+
+# Above this size, a PDF is uploaded to the Files API and referenced by
+# file_id instead of being inlined as base64 in the request body. Inline
+# base64 is kept for normal-sized files because it's one fewer network
+# round-trip and it's the path that's been running in production all year.
+INLINE_PDF_MAX_BYTES = 4 * 1024 * 1024   # 4MB
+
+# Anthropic's Files API beta header (files-api-2025-04-14). Files persist
+# until explicitly deleted; we delete ours in call_claude_v2's finally
+# block so OCC's org storage doesn't accumulate a PDF per submission.
+_FILES_API_BETA = "files-api-2025-04-14"
+
+
+class NonRetryableEstimateError(Exception):
+    """Raised for failures where retrying is provably pointless — e.g. a
+    PDF over Claude's 100-page cap. _call_claude_v2_core lets these escape
+    the retry loop immediately instead of burning three attempts (and, on
+    a big file, several minutes) re-proving the same thing.
+    """
+    pass
+
+
+def _upload_pdf_to_files_api(pdf_bytes, filename, anthropic_api_key, timeout=300):
+    """Upload a PDF to the Anthropic Files API and return its file_id.
+
+    Written against http.client rather than urllib so the multipart body
+    can be sent in 256KB chunks off a memoryview instead of concatenated
+    into one giant bytes object first. On Render Starter (512MB) that
+    matters: the naive version would hold the original 7.6MB PDF, a 7.6MB
+    copy inside the multipart blob, and urllib's own copy of the request
+    body all at once.
+
+    Why the Files API at all, when inline base64 already worked?
+      - No base64 step, so no ~33% inflation and no second full-size copy
+        of the document sitting in memory as a str.
+      - A retry re-sends a ~30-character file_id instead of re-uploading
+        and re-serializing megabytes.
+      - It sidesteps the 32MB total request-size cap that inline documents
+        count against (the 100-page-per-PDF cap still applies — that's
+        what _check_pdf_page_count guards).
+    """
+    boundary = "----OCCFormBoundary" + os.urandom(16).hex()
+    preamble = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: application/pdf\r\n\r\n"
+    ).encode("utf-8")
+    epilogue = f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    conn = http.client.HTTPSConnection("api.anthropic.com", timeout=timeout)
+    try:
+        conn.putrequest("POST", "/v1/files")
+        conn.putheader("x-api-key", anthropic_api_key)
+        conn.putheader("anthropic-version", "2023-06-01")
+        conn.putheader("anthropic-beta", _FILES_API_BETA)
+        conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+        conn.putheader("Content-Length", str(len(preamble) + len(pdf_bytes) + len(epilogue)))
+        conn.endheaders()
+
+        conn.send(preamble)
+        view = memoryview(pdf_bytes)
+        chunk = 256 * 1024
+        for offset in range(0, len(view), chunk):
+            conn.send(view[offset:offset + chunk])
+        conn.send(epilogue)
+
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", errors="replace")
+        if resp.status not in (200, 201):
+            raise Exception(f"Files API upload failed: HTTP {resp.status} — {body[:400]}")
+        file_id = json.loads(body).get("id")
+        if not file_id:
+            raise Exception(f"Files API upload returned no id: {body[:400]}")
+        return file_id
+    finally:
+        conn.close()
+
+
+def _delete_files_api_file(file_id, anthropic_api_key, timeout=30):
+    """Best-effort cleanup of an uploaded file. Never raises — a leaked
+    file costs a little org storage, a raised exception here would throw
+    away an estimate that already succeeded.
+    """
+    try:
+        req = urllib.request.Request(
+            f"https://api.anthropic.com/v1/files/{file_id}",
+            headers={
+                "x-api-key": anthropic_api_key,
+                "anthropic-version": "2023-06-01",
+                "anthropic-beta": _FILES_API_BETA,
+            },
+            method="DELETE",
+        )
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
+    except Exception as e:
+        print(f"  (non-fatal) could not delete uploaded file {file_id}: {e}")
+
+
+def _stream_claude_message(payload_bytes, anthropic_api_key, timeout, beta_headers=None):
+    """POST to /v1/messages with stream=true and reassemble the SSE events
+    into (full_text, stop_reason).
+
+    The timeout passed to urlopen() applies to each individual socket read,
+    not to the request as a whole. Because a streaming response emits text
+    deltas (and periodic `ping` events) the entire time the model is
+    generating, the socket is never idle for long — so `timeout` now means
+    "the API stopped responding for this many seconds", which is what we
+    actually wanted to detect all along. A long-but-healthy generation no
+    longer trips it, which is exactly the failure that killed the Candler
+    submission three times in a row.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": anthropic_api_key,
+        "anthropic-version": "2023-06-01",
+        "accept": "text/event-stream",
+    }
+    if beta_headers:
+        headers["anthropic-beta"] = ",".join(beta_headers)
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload_bytes,
+        headers=headers,
+        method="POST",
+    )
+
+    text_parts = []
+    stop_reason = None
+
+    try:
+        stream = urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:600]
+        except Exception:
+            pass
+        # A malformed request (bad block shape, expired/unknown file_id,
+        # document over a hard limit) fails identically on all three
+        # attempts. Only 429/5xx are worth retrying.
+        if e.code in (400, 401, 403, 404, 413, 422):
+            raise NonRetryableEstimateError(
+                f"Anthropic API rejected the request: HTTP {e.code} — {body}")
+        raise Exception(f"Anthropic API error: HTTP {e.code} — {body}")
+
+    with stream as r:
+        for raw_line in r:                      # iterates the stream line by line
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or not line.startswith("data:"):
+                continue                        # blank lines and `event:` lines
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            etype = event.get("type")
+            if etype == "content_block_delta":
+                delta = event.get("delta", {})
+                if delta.get("type") == "text_delta":
+                    text_parts.append(delta.get("text", ""))
+            elif etype == "message_delta":
+                stop_reason = event.get("delta", {}).get("stop_reason") or stop_reason
+            elif etype == "error":
+                raise Exception(f"Claude stream error: {event.get('error')}")
+
+    return "".join(text_parts), stop_reason
+
+
 def _check_pdf_page_count(pdf_bytes, label, max_pages=100):
-    """Raise ValueError if a PDF exceeds Claude's page cap. Best-effort —
-    if the page count can't be determined (missing pypdf, corrupt header,
-    etc.) this just logs and lets the API call itself be the real check.
+    """Raise NonRetryableEstimateError if a PDF exceeds Claude's page cap.
+    Best-effort — if the page count can't be determined (missing pypdf,
+    corrupt header, etc.) this just logs and lets the API call itself be
+    the real check.
+
+    Aug 2026: this used to raise ValueError, which _call_claude_v2_core's
+    except clause caught and retried twice more. A 140-page report is
+    still 140 pages on attempt 3, so that only delayed the inevitable —
+    on a large file, by several minutes of re-serialization. It now raises
+    a NonRetryableEstimateError that skips straight past the retry loop to
+    the manual-review to-do, where a human can split the file.
     """
     try:
         from pypdf import PdfReader
         page_count = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
         if page_count > max_pages:
-            raise ValueError(
+            raise NonRetryableEstimateError(
                 f"{label} has {page_count} pages — Claude's PDF support caps "
                 f"at {max_pages} pages per document. Split the file and try again."
             )
-    except ValueError:
+    except NonRetryableEstimateError:
         raise
     except Exception as e:
         print(f"  Could not pre-check {label} page count: {e}")
 
 
+def _pdf_document_block(pdf_bytes, file_id, cache=False):
+    """Build one native-PDF document block, either as a Files API reference
+    (file_id) or as inline base64. Identical to Claude either way — it's a
+    full native PDF in both cases, with photos and handwritten markups
+    intact. Only the transport differs.
+
+    cache=True stamps a prompt-caching breakpoint on the block so a retry
+    within the cache window re-reads the document from cache instead of
+    re-processing every page of a large report from scratch.
+    """
+    if file_id:
+        source = {"type": "file", "file_id": file_id}
+    else:
+        source = {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": base64.b64encode(pdf_bytes).decode("utf-8"),
+        }
+    block = {"type": "document", "source": source}
+    if cache:
+        block["cache_control"] = {"type": "ephemeral"}
+    return block
+
+
 def build_claude_document_content(addendum_pdf_bytes, inspection_pdf_bytes,
                                    client_name, client_phone, client_email,
-                                   address, notes):
+                                   address, notes,
+                                   addendum_file_id=None, inspection_file_id=None):
     """Build the `content` list for the Claude messages API call: intro text
     plus native PDF document blocks for whichever of (addendum, inspection)
     are actually present. Both are vision (native PDF), never text-extracted.
+
+    addendum_file_id / inspection_file_id (Aug 2026): when set, that
+    document is referenced by Files API id instead of inlined as base64.
+    call_claude_v2 decides which path per file based on size. This changes
+    nothing about what Claude sees — same native PDF, same photo and
+    markup reading — it just keeps multi-megabyte reports out of the
+    request body (and out of Render's 512MB of RAM).
     """
-    have_addendum = bool(addendum_pdf_bytes)
-    have_inspection = bool(inspection_pdf_bytes)
+    have_addendum = bool(addendum_pdf_bytes) or bool(addendum_file_id)
+    have_inspection = bool(inspection_pdf_bytes) or bool(inspection_file_id)
 
     if have_addendum and have_inspection:
         doc_instructions = (
@@ -2407,22 +2672,22 @@ Property address: {address}
     content.append({"type": "text", "text": intro})
 
     if have_addendum:
-        _check_pdf_page_count(addendum_pdf_bytes, "Repair addendum")
-        addendum_b64 = base64.b64encode(addendum_pdf_bytes).decode("utf-8")
+        if addendum_pdf_bytes:
+            _check_pdf_page_count(addendum_pdf_bytes, "Repair addendum")
         content.append({"type": "text", "text": "\n=== REPAIR ADDENDUM (PDF below — read text, photos, and handwritten annotations; may be a scan) ==="})
-        content.append({
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": addendum_b64}
-        })
+        content.append(_pdf_document_block(
+            addendum_pdf_bytes, addendum_file_id,
+            cache=not have_inspection,          # cache breakpoint on the LAST document
+        ))
 
     if have_inspection:
-        _check_pdf_page_count(inspection_pdf_bytes, "Inspection report")
-        inspection_b64 = base64.b64encode(inspection_pdf_bytes).decode("utf-8")
+        if inspection_pdf_bytes:
+            _check_pdf_page_count(inspection_pdf_bytes, "Inspection report")
         content.append({"type": "text", "text": "\n=== INSPECTION REPORT (PDF below — read text, photos, and handwritten annotations) ==="})
-        content.append({
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": inspection_b64}
-        })
+        content.append(_pdf_document_block(
+            inspection_pdf_bytes, inspection_file_id,
+            cache=True,
+        ))
 
     content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
     return content
@@ -2431,7 +2696,7 @@ Property address: {address}
 def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
                     client_phone, client_email, address, notes,
                     system_prompt, anthropic_api_key,
-                    model="claude-sonnet-4-6", max_tokens=24000, timeout=400):
+                    model="claude-sonnet-4-6", max_tokens=24000, timeout=180):
     """Replaces call_claude() in app.py. Same retry/parsing behavior, but:
       - addendum is now native PDF (vision), not extract_pdf_text
       - both documents are optional independently (see build_claude_document_content)
@@ -2471,18 +2736,94 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
     tokens that a single truncated/hung generation eats an excessive amount
     of time before failing.
     """
-    content = build_claude_document_content(
-        addendum_pdf_bytes, inspection_pdf_bytes,
-        client_name, client_phone, client_email, address, notes
-    )
-    return _call_claude_v2_core(content, system_prompt, anthropic_api_key,
-                                 model=model, max_tokens=max_tokens, timeout=timeout,
-                                 caller_label="call_claude_v2")
+    addendum_pdf_bytes = addendum_pdf_bytes or b""
+    inspection_pdf_bytes = inspection_pdf_bytes or b""
+
+    # ── Dedupe (BUG FIX #3) ────────────────────────────────────────────────
+    # The Wufoo form requires a file in both the addendum and the inspection
+    # slot. When a realtor has no separate repair addendum they upload the
+    # inspection report into both — so the two downloads come back
+    # byte-identical. Sending it twice doubled the payload for no added
+    # information and contributed directly to the Candler timeout.
+    #
+    # bytes.__eq__ is a length check followed by memcmp, so this costs
+    # essentially nothing and allocates nothing (no hashing needed).
+    if addendum_pdf_bytes and inspection_pdf_bytes and addendum_pdf_bytes == inspection_pdf_bytes:
+        print(
+            f"  Addendum and inspection report are byte-identical "
+            f"({len(inspection_pdf_bytes):,} bytes) — realtor uploaded the same "
+            f"file to both slots (normal when there's no separate addendum). "
+            f"Sending ONE copy; prompt switches to inspection-report-only mode."
+        )
+        addendum_pdf_bytes = b""
+
+    # ── Files API for large documents ──────────────────────────────────────
+    # Anything over INLINE_PDF_MAX_BYTES is uploaded once and referenced by
+    # id, so retries don't re-serialize megabytes and the request body stays
+    # small. Falls back to inline base64 if the upload fails for any reason
+    # — a slow path that works beats a fast path that doesn't.
+    addendum_file_id = None
+    inspection_file_id = None
+    uploaded_ids = []
+
+    try:
+        if len(addendum_pdf_bytes) > INLINE_PDF_MAX_BYTES:
+            try:
+                print(f"  Addendum is {len(addendum_pdf_bytes):,} bytes — uploading via Files API...")
+                addendum_file_id = _upload_pdf_to_files_api(
+                    addendum_pdf_bytes, "repair_addendum.pdf", anthropic_api_key)
+                uploaded_ids.append(addendum_file_id)
+                print(f"  Addendum uploaded: {addendum_file_id}")
+            except Exception as e:
+                print(f"  Files API upload failed for addendum ({e}) — falling back to inline base64")
+                addendum_file_id = None
+
+        if len(inspection_pdf_bytes) > INLINE_PDF_MAX_BYTES:
+            try:
+                print(f"  Inspection report is {len(inspection_pdf_bytes):,} bytes — uploading via Files API...")
+                inspection_file_id = _upload_pdf_to_files_api(
+                    inspection_pdf_bytes, "inspection_report.pdf", anthropic_api_key)
+                uploaded_ids.append(inspection_file_id)
+                print(f"  Inspection report uploaded: {inspection_file_id}")
+            except Exception as e:
+                print(f"  Files API upload failed for inspection report ({e}) — falling back to inline base64")
+                inspection_file_id = None
+
+        content = build_claude_document_content(
+            addendum_pdf_bytes if not addendum_file_id else b"",
+            inspection_pdf_bytes if not inspection_file_id else b"",
+            client_name, client_phone, client_email, address, notes,
+            addendum_file_id=addendum_file_id,
+            inspection_file_id=inspection_file_id,
+        )
+
+        # Page-count pre-check still has to run against the real bytes even
+        # when the document went up via the Files API — build_claude_document
+        # _content can only check what it was handed, and the 100-page cap
+        # applies to Files API documents exactly the same way.
+        if addendum_file_id:
+            _check_pdf_page_count(addendum_pdf_bytes, "Repair addendum")
+        if inspection_file_id:
+            _check_pdf_page_count(inspection_pdf_bytes, "Inspection report")
+
+        return _call_claude_v2_core(
+            content, system_prompt, anthropic_api_key,
+            model=model, max_tokens=max_tokens, timeout=timeout,
+            caller_label="call_claude_v2",
+            beta_headers=[_FILES_API_BETA] if uploaded_ids else None,
+        )
+    finally:
+        # Uploaded files persist until deleted. One PDF per submission would
+        # accumulate forever against OCC's org storage, and we have no reason
+        # to keep them — the estimate is already written to JobTread and the
+        # originals still live in Wufoo and on the JobTread job.
+        for fid in uploaded_ids:
+            _delete_files_api_file(fid, anthropic_api_key)
 
 
 def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
-                          model="claude-sonnet-4-6", max_tokens=24000, timeout=400,
-                          caller_label="call_claude_v2"):
+                          model="claude-sonnet-4-6", max_tokens=24000, timeout=180,
+                          caller_label="call_claude_v2", beta_headers=None):
     """Shared retry/timeout/parsing core behind BOTH call_claude_v2 (closing
     repairs — two optional PDFs) and call_claude_v2_general (Home Repair /
     GVL / Remodel / Pre-listing / general sales-tool — one optional PDF
@@ -2494,45 +2835,67 @@ def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
     time. See call_claude_v2's docstring for the history behind the
     timeout/max_tokens defaults and the broadened retry exception list.
     """
-    base_payload = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": content}]
-    }
+    # The system prompt is large and identical on every call (full estimating
+    # logic + price tables + historical reference examples). Sending it as a
+    # cached text block lets repeat calls inside the cache window skip
+    # re-processing it — which mostly matters for retries, where the whole
+    # point is to not pay full freight a second and third time.
+    system_blocks = [{
+        "type": "text",
+        "text": system_prompt,
+        "cache_control": {"type": "ephemeral"},
+    }]
 
+    current_max_tokens = max_tokens
     last_error = None
+
     for attempt in range(1, 4):
         try:
-            payload = json.dumps(base_payload).encode("utf-8")
-            req = urllib.request.Request(
-                "https://api.anthropic.com/v1/messages",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": anthropic_api_key,
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "pdfs-2024-09-25"
-                },
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                result = json.loads(r.read().decode("utf-8"))
+            # Serialized INSIDE the loop only because max_tokens can change
+            # between attempts (see the truncation branch below) — but the
+            # `content` list itself is built once by the caller, and with the
+            # Files API path a large document is a ~30-char id here rather
+            # than megabytes of base64. This is no longer the 20MB-per-attempt
+            # re-serialization that made the Candler retries so expensive.
+            payload = json.dumps({
+                "model": model,
+                "max_tokens": current_max_tokens,
+                "system": system_blocks,
+                "stream": True,
+                "messages": [{"role": "user", "content": content}],
+            }).encode("utf-8")
 
-            stop_reason = result.get("stop_reason")
-            raw = "".join(block.get("text", "") for block in result.get("content", []))
+            raw, stop_reason = _stream_claude_message(
+                payload, anthropic_api_key, timeout, beta_headers=beta_headers)
 
             if stop_reason == "max_tokens":
+                # Not transient — retrying with the same ceiling truncates at
+                # exactly the same place (BUG FIX #2 learned this the hard
+                # way). Escalate instead, up to the model's 64k output cap.
+                bumped = min(64000, int(current_max_tokens * 1.5))
+                if bumped > current_max_tokens and attempt < 3:
+                    print(f"  Response truncated at max_tokens={current_max_tokens} "
+                          f"({len(raw)} chars) — raising to {bumped} for the next attempt")
+                    current_max_tokens = bumped
                 raise ValueError(
                     f"Claude response truncated by max_tokens (attempt {attempt}), "
                     f"got {len(raw)} chars before cutoff"
                 )
+
+            if not raw.strip():
+                raise ValueError("Claude returned an empty response")
 
             match = re.search(r"\{[\s\S]*\}", raw)
             if not match:
                 raise ValueError(f"No JSON object found in Claude response: {raw[:500]}")
 
             return json.loads(match.group(0))
+
+        except NonRetryableEstimateError:
+            # Page cap and friends — retrying proves nothing. Straight to the
+            # manual-review to-do so a human can act on it now, not in twenty
+            # minutes.
+            raise
 
         except (json.JSONDecodeError, ValueError, TimeoutError, OSError, http.client.HTTPException) as e:
             last_error = e
@@ -2650,7 +3013,7 @@ def call_claude_v2_general(job_type_label, client_name, client_phone, client_ema
                             address, notes, system_prompt, anthropic_api_key,
                             description="", pdf_bytes=None, pdf_label="Inspection Report",
                             image_blocks=None, best_effort=True,
-                            model="claude-sonnet-4-6", max_tokens=24000, timeout=400):
+                            model="claude-sonnet-4-6", max_tokens=24000, timeout=180):
     """v2 entry point for Home Repair / GVL Today / Remodel / Pre-listing
     Repair / general sales-tool — same underlying labor+material reasoning,
     real cost codes, historical-example calibration, and Home Depot catalog
