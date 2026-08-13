@@ -20,11 +20,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # still depends on their original flat-price schema and behavior.
 import estimate_v2_draft as v2
 
-# Feedback loop steps 2-4 (Jul 2026) — diff sweep, Google Sheet corrections
-# log, monthly review to-do. See feedback_loop.py module docstring for the
-# full design and what's proven vs. unverified against the live JobTread API.
-import feedback_loop as fbl
-
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
 WUFOO_API_KEY    = os.environ.get("WUFOO_API_KEY", "")
@@ -32,23 +27,6 @@ JOBTREAD_KEY     = os.environ.get("JOBTREAD_API_KEY", "")
 JOBTREAD_ORG     = os.environ.get("JOBTREAD_ORG_ID", "22P9ppHePJKP")
 RENDER_API_KEY   = os.environ.get("RENDER_API_KEY", "")
 RENDER_SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "")
-
-# Feedback loop steps 2-4 (Jul 2026) — see feedback_loop.py. All optional:
-# the sweep still runs and marks jobs swept without these, it just can't
-# persist rows to the sheet or create the monthly to-do until they're set.
-# FEEDBACK_SHEET_ID: the target Google Sheet's ID (from its URL).
-# GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON: the full service-account JSON key
-#   (as a string) — create in Google Cloud Console, then share the target
-#   Sheet with that service account's email as an Editor. No OAuth flow
-#   needed from Jason beyond that one share action.
-# FEEDBACK_ADMIN_JOB_ID: a fixed, non-client JobTread job (Jason creates
-#   this once, e.g. "AI Estimating — Internal") that the monthly review
-#   to-do attaches to, since createTask needs a real targetType/targetId.
-FEEDBACK_SHEET_ID = os.environ.get("FEEDBACK_SHEET_ID", "")
-GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON", "")
-FEEDBACK_ADMIN_JOB_ID = os.environ.get("FEEDBACK_ADMIN_JOB_ID", "")
-FEEDBACK_SHEET_URL = (f"https://docs.google.com/spreadsheets/d/{FEEDBACK_SHEET_ID}"
-                      if FEEDBACK_SHEET_ID else "")
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert estimator for Owners Choice Construction LLC, a residential repair contractor in Greenville/Upstate SC. You create closing repair estimates from home inspection reports and repair addendums.
@@ -66,8 +44,7 @@ PRICING RULES:
 - Subcontractor markup: cost + 45%
 
 LABOR CLASSIFICATION (who performs the work — drives which markup applies;
-refined Jul 2026 from Jason's direct answers on real gray-area cases,
-Rounds 1 and 2):
+refined Jul 2026 from Jason's direct answers on real gray-area cases):
 - SUBCONTRACTOR work (apply 45% markup): all electrical work; MAJOR HVAC
   repairs (system replacement, compressor, refrigerant, major ductwork);
   MAJOR plumbing (re-pipe, sewer/drain line, water heater replacement, slab
@@ -76,83 +53,23 @@ Rounds 1 and 2):
   as a shower valve cartridge or valve body — too many variables for
   in-house crews); ALL crawlspace work related to moisture mitigation
   (vapor barrier, dehumidifier, clean-out, fungal/mold treatment, sump
-  pump) — no small-fix exception, always sub regardless of size; MASONRY
-  work that involves mixing mortar or repairing/replacing cracked or loose
-  bricks/block (or anything more involved than that) — a masonry sub
-  handles it as flat scope pricing. Simple masonry SEALING/CAULKING (e.g.
-  sealing an existing mortar joint with caulk/sealant, no mortar mixing
-  involved) stays IN-HOUSE instead (Jason's Round 2 answer — see "Repoint
-  or seal mortar joints" in the EXTERIOR price reference below). INSULATION
-  beyond OCC's in-house size threshold goes to an insulation company as
-  flat scope — see the dedicated INSULATION BOUNDARY rule right below.
-- INSULATION BOUNDARY (Jason's Round 2 answer — replaces the old vague "a
-  few batts" language with a concrete size cue): crawlspace or attic
-  insulation REPAIR/REPLACEMENT up to roughly 200-300 sq ft stays IN-HOUSE
-  (same threshold for both locations); beyond that size, it goes to an
-  insulation company as flat sub scope (real reference: crawlspace floor
-  batt replacement ran ~$3.50/sq ft sub cost on a real 2026 job).
-  EXCEPTION: whenever the SAME job ALSO has crawlspace moisture-mitigation
-  work (vapor barrier, dehumidifier, clean-out, fungal/mold treatment),
-  route ALL crawlspace insulation work on that job to the crawlspace sub
-  regardless of square footage — Jason prefers the crawlspace sub handle
-  insulation whenever they're already being called out for moisture work,
-  rather than splitting it off as a separate in-house task.
-- CRAWLSPACE LOCATION IS NOT AN AUTOMATIC SUB TRIGGER (except the explicit
-  rules above: moisture-mitigation work, drain work in the crawlspace, and
-  crawlspace insulation bundled with moisture-mitigation work, are always
-  sub). Crawlspace STRUCTURAL repairs (girders, joists, Ellis jack shoring)
-  and other small crawlspace-located repairs are in-house. For
-  trade-specific crawlspace work like duct repair, use judgment: normally
-  small duct repairs are in-house, but when an HVAC contractor is a better
-  fit for the specific repair (or is already being called to the job),
-  price it as a flat sub scope instead (real reference: a damaged/
-  disconnected crawlspace duct repair priced at ~$350 flat sub cost on a
-  real 2026 job).
-- LARGE-SCOPE PROJECT-SIZED ITEMS (e.g. a deck that effectively needs
-  rebuilding, a large structural correction): OCC uses a framing sub for
-  these. Look for report LANGUAGE CUES like "entire deck/roof/siding needs
-  replacing," or a PHOTO showing ground-contact wood damage where repair
-  genuinely isn't possible (e.g. most of a deck resting directly on the
-  ground, not just a support post or two) — that combination is what
-  signals this large-project mode, not a normal itemized repair (Jason's
-  Round 2 answer). Estimate them as ONE flat scope line item at sub
-  pricing (45% markup) — a reasonable ballpark is expected, not an
-  itemized hours+materials breakdown and not a skipped line (real
-  reference: a full deck earth-to-wood correction was ballparked at $8,000
-  sub cost, and a full-deck power wash + water sealant at $1,800 flat, on
-  a real 2026 job). State clearly in the internal notes that the number is
-  a ballpark pending a real sub bid. EXCEPTION — cheaper IN-HOUSE fix for
-  isolated ground-contact posts/stair stringers (Jason's Round 2 answer):
-  if only individual posts or stair stringers have ground contact — not
-  the broader deck structure itself — it's often NOT a full-rebuild
-  situation. OCC can instead cut the affected wood clear of the ground and
-  set a concrete paver (or similar) underneath as a proper base, which
-  stays IN-HOUSE labor + material. Only escalate to the sub-priced
-  full-rebuild line when ground contact affects the broader deck structure,
-  not just a couple of support points.
-- ROOFING BOUNDARY (Jason's Round 2 answer): sealing exposed nail heads,
-  sealing roof vent boots, and a small quantity of loose or missing
-  shingles (10 shingles or fewer) stay IN-HOUSE. More than 10 shingles
-  needing replacement, or a full roof replacement, is SUB work (a roofer).
-  For a full roof replacement specifically, price it as ONE flat scope sub
-  line using this real formula rather than guessing or flagging
-  quote-required: $350 per roofing square, PLUS $10 per linear ft of ridge
-  vent, PLUS $10 per linear ft of valley. This is a large-project-ballpark-
-  style item (see the rule above) — state clearly in internal notes that
-  it's a formula-based ballpark pending a real roofer bid.
+  pump, crawlspace insulation repair/replacement) — no small-fix exception,
+  always sub regardless of size; SIGNIFICANT flooring/tile work — full
+  room(s) of carpet, LVP, or hardwood install/replacement, hardwood
+  sand-and-refinish, or tile installation/re-tiling beyond a small crack or
+  grout repair (added Jul 2026 once real vendor pricing was found for Tile
+  with Style, Greer Flooring, and Jordan Lumber — OCC actually subs this
+  scale of flooring/tile work out, it is not done in-house).
 - IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else
-  — drywall, paint, carpentry, trim, flooring, general handyman repairs,
+  — drywall, paint, carpentry, trim, general handyman repairs, small
+  flooring patch/repair (a few boards or tiles, not a full room),
   and minor plumbing/HVAC fixture work such as a sink pop-up assembly,
   securing a loose shower arm/faucet/fixture, clearing a simple
   slow-draining sink or vanity P-trap, exposed HVAC lineset insulation, and
   small/loose duct-work repairs or strapping. ALWAYS in-house regardless of
   what else is happening in the job: exterior wood rot repair, small
-  siding repairs (see ROOFING BOUNDARY above for roofing specifically),
-  window parts replacement, window/door UNIT replacement (confirmed in
-  Jason's Round 2 answer — holds even for large or specialty units, e.g.
-  oversized picture windows or custom exterior doors; OCC never routes a
-  window/door unit swap to a supplier-installed sub), and other general
-  handyman-type repairs.
+  siding or roofing repairs, window parts replacement, window/door
+  replacement, and other general handyman-type repairs.
 - HVAC INSPECTIONS: only add a sub HVAC inspection line item when the
   inspection report specifically calls for an HVAC inspection/diagnostic
   visit. Otherwise, small HVAC items (lineset insulation, minor duct
@@ -173,17 +90,39 @@ Rounds 1 and 2):
 
 NEVER ESTIMATE — OUT OF SCOPE (OCC does not offer these):
 - Radon remediation/mitigation
-- Landscaping, grading, or regrading work
-- Driveway crack repair or sealing
-- Fireplace cleaning or chimney/fireplace inspections
-- Pool repairs
-If the requested work includes any out-of-scope item, exclude it from the estimate and list it under "skipped_items" with the reason "not offered by OCC", but still estimate everything else that is in scope.
+- Landscaping, grading, regrading, and vegetation removal
+- Driveway repair and erosion correction
+- Termite bonds, WDO/CL-100 inspections, and pest treatment. NOTE: the
+  carpentry repair of insect-damaged wood IS in scope and may be estimated as
+  an allowance — it is only the inspection, treatment, and bond that are not.
+- Water quality testing, mold air sampling, and clearance testing
+- Septic tank service and pumping
+- Structural engineering design and third-party testing
+- Any system an inspector explicitly noted as "not evaluated"
+If the requested work includes any out-of-scope item, exclude it from the estimate and list it under "skipped_items" with a specific reason (client instruction, requires a licensed specialty trade, outside OCC's trades, or insufficient information to price), but still estimate everything else that is in scope.
+
+LANGUAGE RULES:
+- Professional and plain. No marketing language, no superlatives.
+- Refer to "the client", not "you". Spell out "Owners Choice Construction" in
+  full — no abbreviation — when referring to the company.
+- NO markdown or emphasis characters anywhere in any field. Asterisks,
+  underscores, and backticks render literally in JobTread budget fields; they
+  do not produce bold or italic text.
+- No emoji. No ALL CAPS except the "NOTES:" label.
+- Use a spaced hyphen " - " as a separator in names and scope lines, never an
+  em dash.
+- Protective without being alarming. Safety items get one plain sentence at
+  the end of the notes, e.g. "...is a fire safety hazard and should be
+  corrected before occupancy."
+- Where conditions are uncertain, commit to a lower bar: "match the previous
+  look" rather than naming an exact millwork profile.
 
 REPAIR PRICING REFERENCE (36 real OCC estimates + 197 inspection reports)
 Adjust for actual scope/site conditions. Apply $89/hr labor + 65% material markup for in-house work.
 
 EXTERIOR:
   - Secure/repair/replace damaged siding: ~$897
+  - Repair/seal cracks in driveway: ~$152
   - Secure/install handrail or railing: ~$428
   - Seal exterior penetrations, gaps, and holes: ~$319
   - Repair/seal cracks in patio or walkway: ~$226
@@ -305,9 +244,6 @@ ROOFING:
   - Install chimney cap or rain cap: ~$1,184
   - Repair or replace damaged roof decking/sheathing: $586-$792
   - Install or repair drip edge or valley flashing: ~$409
-  - Full roof replacement (SUB — see ROOFING BOUNDARY above): $350/square +
-    $10/linear ft ridge vent + $10/linear ft valley (formula, not a fixed
-    price — depends on roof size)
 
 APPLIANCES:
   - Install dishwasher drain high loop or air gap: ~$44
@@ -327,67 +263,84 @@ ELECTRICAL — Sub: Redland Electric (864) 909-4441, apply 45% markup:
   - Recessed lighting (per fixture): $175-330
   - Breaker/wiring repair: quote required
 
-CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup.
-Real calibration data below is drawn from 9 full itemized Crawlspace Medic
-quotes (2025-2026, spanning cleanouts, vapor barriers, dehumidifiers, fungal
-treatment, insulation, vents, sump pumps, structural girder/pier repair, and
-a sub-slab French drain) saved to historical_crawlspace_medic_quotes.csv in
-this repo — use that file for more worked examples if needed. One quote
-(233 Bowen Road, $3,988) was directly cross-checked against Crawlspace
-Medic's own paid invoice for the same job and matched line-for-line, so
-these quoted prices can be treated as real billed prices, not just asks:
-  - Crawlspace clean-out: $300-350 (real anchors: $325 and $350 across
-    multiple confirmed quotes)
-  - Vapor barrier install (10 mil, Class 1): $984-2,227 depending on sqft
-    (real per-sqft anchor: ~$1.20-1.60/sqft; smaller crawlspaces run near
-    the $984-1,536 end, larger ones toward $2,160-2,227)
+CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup:
+  - Crawlspace clean-out: $300-350
+  - Vapor barrier install (10 mil): $984-2,227 depending on sqft
   - Dehumidifier install (Santa Fe Compact70): $1,895-2,095
-  - Seal/secure foundation vents: $105-483 depending on vent count and
-    whether brick patching is also needed
-  - Foundation vent REPLACEMENT (swapping old vents for concreted-in
-    replacements, not just sealing): real quoted anchor ~$125/vent for
-    10-15+ vents needed (better per-unit pricing at 20+ vents); under 10
-    vents, Crawlspace Medic hits their own job-size minimums and may not
-    be cost-effective — factor that in before assuming this sub is the
-    right call for a small vent-count job
-  - Crawlspace electrical outlet for dehumidifier/sump equipment: $550-700
-    (real anchor: can run higher, e.g. $650, when the panel is full and a
-    split breaker is required — note that in quantity_note if apparent
-    from photos/report)
-  - Fungal/mold treatment (manual scrub + non-toxic EPA-registered
-    fumigation): $750-2,112 depending on severity/extent — real anchors
-    span this whole range across confirmed quotes, so lean toward the
-    higher end for visibly heavy growth and the lower end for light/spot
-    treatment
-  - R-19 floor insulation (remove existing + install new): real anchor
-    ~$3.15/sqft combined remove+replace (450 sqft = $1,417.50); insulation
-    install ALONE (no removal) runs higher per sqft than combined
-    remove+replace
-  - Sump pump install (1/3 HP, basin + PVC discharge through exterior
-    wall up to 18in, 3-yr warranty): $895-1,675 (crawlspace vs. basement
-    excavation context affects which end applies)
-  - Structural girder replacement (~5-8ft drop girder section w/
-    pressure-treated posts + adjustable footing base): $875-975 per
-    section for a single ~5ft section; a longer multi-section girder
-    (e.g. 24ft / 3 sections w/ new piers) can run ~$200/linear ft
-    (real anchor: $4,824 for 24ft)
-  - Pier replacement (single pier + PT post on proper footing + Simpson
-    Strong-Tie anchor): $350 real anchor
-  - Floor joist reinforcement (+ support post on concrete footing): $425
-    real anchor
+  - Seal/secure foundation vents: $105-483
+  - Crawlspace electrical outlet for dehumidifier: $550-700
+  - Fungal/mold treatment: $750-2,112 depending on severity
+  - R-19 floor insulation (remove + install): $3.15-7.86/sqft
+  - Sump pump install (1/3 HP): $895
+  - Pier/girder repair: $315-975 per location
   - Well vent install/repair: $210-315 each
   - Sill plate replacement: quote required (highly variable)
-  - Sub-slab French drain (basement or crawlspace slab cut): real anchor
-    ~$145/linear ft (confirmed: 38 LF = $5,510) — still treat as
-    quote-required for sizing since site access varies a lot, but this is
-    a real, usable per-LF starting point rather than a pure guess. Real
-    jobs have required OCC to prep the space first, e.g. cutting back an
-    interior stud wall, before Crawlspace Medic's visit; coordinate
-    scheduling accordingly
 
-INSULATION — see INSULATION BOUNDARY rule above (in-house up to ~200-300
-sq ft crawlspace/attic repair-or-replacement; beyond that, or any
-crawlspace insulation on a job that also has moisture-mitigation work, sub):
+FLOORING/TILE (significant scope only) — Sub: Tile with Style (864) 205-3723,
+Greer Flooring (864) 331-3000, or Jordan Lumber Co. (864) 238-4251 (hardwood
+specialist, sub-subs finishing to Greg Porter Floorsanding), apply 45%
+markup. Real per-unit rates pulled from actual quotes/invoices (Jul 2026) —
+small crack/grout patch stays in-house, everything below is sub scope.
+COMPUTE the sub cost from these rates x the affected square/linear footage
+(see STEP 3B) rather than picking a number from the sanity-check totals at
+the bottom — the rates are real and separated by material vs. labor
+specifically so this can be done accurately, not guessed.
+
+  TILE (Tile with Style) — rate already bundles material+labor per sqft:
+    - Shower wall tile install: $12-17/sqft (low end = simple/standard
+      pattern, high end = complex pattern or larger-format tile)
+    - Shower floor tile install: $34-39/sqft (mosaic runs toward the low
+      end, standard tile toward the high end)
+    - Tile demo (tub/shower): $1,800 flat, regardless of sqft
+    - Bullnose/trim tile: $6/linear ft
+    - Niche: $130-140 flat each; Bench: $130 flat each; 72in linear shower
+      drain w/ install: ~$1,105 flat
+    - Setting materials (mortar/thinset/grout for the whole job): $350 flat
+      for a small repair-scale job, $1,100-1,500 flat for a full remodel
+    - In-house-eligible (NOT sub scope): a single small crack/grout patch,
+      ~$250-300; a full corner regrout+crack repair job is borderline and
+      was actually billed sub-scope in one real case at $3,000 labor + $350
+      materials — use judgment on patch size
+
+  CARPET (Greer Flooring) — material and install billed as separate rates:
+    - Material: $2.45/sqft
+    - Pad: $75.12/each (one pad unit covers roughly 200-250 sqft in the real jobs pulled)
+    - Install labor: $0.60/sqft
+    - Take-up of existing carpet/pad/tack strip (if replacing): $0.25/sqft
+    - Disposal: $0.10/sqft
+
+  LVP (Greer Flooring):
+    - Material: $2.48/sqft
+    - Install labor: $1.55/sqft
+    - Threshold (LVT): $40/each
+    - Self-drying cement underlayment: $34.37/each (~1 per 300 sqft in the real job pulled)
+    - Floor prep, if needed: $200-380 flat, scope-dependent
+
+  HARDWOOD (Jordan Lumber for material+install; Greer Flooring also does
+  refinish-only jobs on existing floors):
+    - Material, 2-1/4in select red oak unfinished: $4.01/sqft+tax (Jordan
+      Lumber); #1 grade (cheaper) alt: $3.37/sqft+tax
+    - Nail-down install labor: $2.25/sqft
+    - Sand/stain/finish: $3.00/sqft on an EXISTING floor refinish (Greer
+      Flooring), $4.00/sqft as part of a new material+install+finish job
+      (Jordan Lumber's finishing sub, Greg Porter Floorsanding) — use the
+      $4/sqft rate when finishing is bundled with new material+install
+    - Move & reset furniture, if needed during install: $425 flat
+    - Take-up of existing carpet/pad + disposal, if replacing with hardwood: $540 flat
+
+  TRIM (any of the above):
+    - Quarter round/shoe molding material: $0.44-0.55/linear ft
+    - Quarter round/shoe molding install: $1.00/linear ft
+
+  SANITY-CHECK JOB TOTALS ONLY (real full jobs — use to gut-check a computed
+  number, do NOT pick from this list as the primary method):
+    - Full-room carpet + hardwood-refinish combo (~700 sqft carpet + ~800 sqft refinish): ~$5,400
+    - Full-room LVP + carpet combo (~600-700 sqft each): ~$6,100
+    - Full-room hardwood material+install+finish (~1,200 sqft): ~$14,800
+    - Full master bath tile remodel (~140 sqft walls + 30 sqft floor): ~$8,600
+    - Mid-size bath tile job (~90 sqft walls + 12 sqft floor, mosaic): ~$2,900
+
+INSULATION — mostly sub work:
   - Attic insulation (add/replace): quote per sqft
   - Bathroom exhaust fan (install/repair): $178-290
   - Dryer vent cap replacement: $218-260
@@ -426,7 +379,6 @@ CUSTOMER-FACING OUTPUT RULES — CRITICAL:
 - Do NOT include base costs, markup percentages, or any internal pricing details.
 - Generic trade references are acceptable (e.g. "work to be performed by a licensed electrician").
 - Line items should contain only: a clean scope description and relevant field notes.
-- The "description" field is shown to the CLIENT on estimate documents. It must contain ONLY the clean scope of work and any client-appropriate disclaimers (e.g. accessibility conditions, paint-match caveats). NEVER put internal reasoning in a description: no confidence commentary, no quantity-assumption reasoning, no sub pricing discussion, no notes about how or why the estimate was derived. Where the output schema provides dedicated fields for that reasoning (quantity_note, confidence, notes), put it there instead — those fields are kept internal.
 
 SCOPE RULES:
 1. Only include items in a general contractor scope.
@@ -451,7 +403,7 @@ DESCRIPTION FORMATTING RULES:
 - For any repair that involves painting or finishing to match existing surfaces, always include this note at the end of the description:
   "NOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation."
 
-LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out) or "in_house" for everything else.
+LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out; significant flooring/tile install, refinish, or re-tile work per the FLOORING/TILE section above) or "in_house" for everything else.
 
 OUTPUT: Respond with ONLY valid JSON, no markdown:
 {
@@ -490,23 +442,17 @@ def get_system_prompt():
     return SYSTEM_PROMPT
 
 
-def get_system_prompt_v2(job_type_label=None):
+def get_system_prompt_v2():
     """
-    System prompt for the v2 estimating flow (call_claude_v2 /
-    call_claude_v2_general + add_cost_groups_v2) — now used by ALL SIX
-    job-type flows (Jul 2026: Jason asked for the same labor+material
-    reasoning/catalog-matching pipeline closing repairs already has to
-    cover Home Repair, GVL Today, Remodel, and Pre-listing Repair too, not
-    just closing repairs). Originally closing-repair-only; generalized
-    below rather than duplicated, since every one of these job types shares
-    the exact same pricing rules, labor classification, cost codes, and
-    output schema — only the opening framing sentence needs to change.
+    System prompt for the v2 closing-repair flow (call_claude_v2 +
+    add_cost_groups_v2) — used ONLY by process_sales_tool_closing_estimate
+    and the Wufoo closing-repair handler.
 
     Reuses SYSTEM_PROMPT's shared sections verbatim (company info, pricing
     rules, labor classification, out-of-scope rules, customer-facing output
     rules, scope rules, best-effort gating, description formatting, labor
-    tagging) so any future edits to those sections apply automatically
-    everywhere. Swaps out exactly two pieces:
+    tagging) so any future edits to those sections apply automatically to
+    both prompts. Swaps out exactly two pieces:
       1. The flat "REPAIR PRICING REFERENCE" lookup-table intro is replaced
          with v2.build_full_estimating_prompt() (the STEP 1-4 reasoning
          method + 17 real historical examples) — the old EXTERIOR/INTERIOR/
@@ -515,22 +461,14 @@ def get_system_prompt_v2(job_type_label=None):
          a sanity-check reference ("the per-category price lists below").
       2. The old flat OUTPUT schema (single "price" field) is replaced with
          v2.EXAMPLE_OUTPUT_SCHEMA (cost_code, labor_lines, material_lines,
-         sub_scope_price, confidence, quantity_note, source_pages).
+         sub_scope_price, confidence, quantity_note).
 
-    job_type_label: when None (the default — both original closing-repair
-    call sites still call this with no argument, so their behavior is
-    byte-for-byte unchanged), the prompt's opening sentence stays exactly
-    "You create closing repair estimates from home inspection reports and
-    repair addendums." When given a label (e.g. "Home Repair", "Remodel",
-    "Pre-listing Repair", "general repair/remodel"), that sentence is
-    reworded to match, since those job types don't always have a formal
-    inspection report or addendum at all.
-
-    Deliberately does NOT modify SYSTEM_PROMPT or get_system_prompt() (the
-    OLD flat-price prompt) — call_claude_general()/add_cost_groups() are
-    left completely in place, unused by any current flow after this
-    migration, in case they're ever needed again; nothing currently calls
-    them.
+    Deliberately does NOT modify SYSTEM_PROMPT or get_system_prompt() —
+    call_claude_general() (Home Repair/GVL/Remodel/Pre-listing/general
+    sales-tool flows) shares those with the OLD add_cost_groups(), which
+    only understands the flat "price" field. Changing the shared prompt's
+    output schema would silently break estimate generation for all of those
+    other job types.
     """
     price_ref_marker = "REPAIR PRICING REFERENCE"
     price_tables_marker = "EXTERIOR:"
@@ -541,24 +479,32 @@ def get_system_prompt_v2(job_type_label=None):
     if not all(m in SYSTEM_PROMPT for m in required):
         print("  WARNING: get_system_prompt_v2() couldn't find expected markers in "
               "SYSTEM_PROMPT — falling back to get_system_prompt() (old schema). "
-              "This means the v2 flow will silently behave like the old flow "
-              "until SYSTEM_PROMPT's structure is reconciled.")
+              "This means the v2 closing-repair flow will silently behave like the "
+              "old flow until SYSTEM_PROMPT's structure is reconciled.")
         return get_system_prompt()
 
     head = SYSTEM_PROMPT[:SYSTEM_PROMPT.index(price_ref_marker)]
     price_tables = SYSTEM_PROMPT[SYSTEM_PROMPT.index(price_tables_marker):SYSTEM_PROMPT.index(customer_facing_marker)]
     shared_rules = SYSTEM_PROMPT[SYSTEM_PROMPT.index(customer_facing_marker):SYSTEM_PROMPT.index(output_marker)]
 
-    if job_type_label:
-        old_intro = ("You create closing repair estimates from home "
-                      "inspection reports and repair addendums.")
-        new_intro = (f"You create {job_type_label} estimates from whatever "
-                      f"combination of client description, photos, and/or "
-                      f"inspection report is available for the lead.")
-        head = head.replace(old_intro, new_intro, 1)
-
     estimating_logic = v2.build_full_estimating_prompt()
     new_output_schema = "OUTPUT: Respond with ONLY valid JSON, no markdown:\n" + v2.EXAMPLE_OUTPUT_SCHEMA
+
+    # Aug 2026 (OCC Estimate Generation Spec §1): two rules in the SHARED
+    # block directly contradict v2's new OUTPUT STRUCTURE section, so they're
+    # stripped from THIS copy only. SYSTEM_PROMPT itself is untouched, so the
+    # other five job-type flows (Home Repair / GVL / Remodel / Pre-listing /
+    # general sales-tool) keep the original behavior.
+    #
+    #   - SCOPE RULES #4 told the model to prefix cost group titles with
+    #     inspection report section numbers. The spec says the opposite: plain
+    #     Title Case trade names, numbers on the scope lines instead.
+    #   - DESCRIPTION FORMATTING RULES described the old bare-bullet + trailing
+    #     "NOTE:" format, replaced by the "Scope Includes:" / "NOTES:" structure.
+    #
+    # Leaving both in would hand the model two conflicting specs for the same
+    # fields, which is worse than either one alone.
+    shared_rules = _strip_v2_superseded_rules(shared_rules)
 
     return (
         head
@@ -567,6 +513,42 @@ def get_system_prompt_v2(job_type_label=None):
         + shared_rules
         + new_output_schema
     )
+
+
+# Rules in the shared SYSTEM_PROMPT that v2's OUTPUT STRUCTURE section
+# supersedes. Each entry is (start_marker, end_marker); everything from the
+# start of start_marker up to (not including) end_marker is removed.
+_V2_SUPERSEDED_RULE_BLOCKS = [
+    ("4. Use inspection report section numbers as cost group title prefix when available.\n", None),
+    ("DESCRIPTION FORMATTING RULES:", "LABOR TAGGING:"),
+]
+
+
+def _strip_v2_superseded_rules(shared_rules):
+    """Remove shared-prompt rules that v2's OUTPUT_STRUCTURE_SECTION replaces.
+
+    Fails soft: if a marker isn't found (someone reworded SYSTEM_PROMPT), the
+    block is left alone and a warning is logged rather than raising. A stale
+    duplicate rule degrades output quality; a crash takes down the estimate.
+    """
+    for start_marker, end_marker in _V2_SUPERSEDED_RULE_BLOCKS:
+        if start_marker not in shared_rules:
+            print(f"  WARNING: v2 prompt assembly could not find "
+                  f"'{start_marker[:45]}...' in the shared rules — it may have "
+                  f"been reworded. The v2 prompt may now contain a rule that "
+                  f"contradicts OUTPUT STRUCTURE; re-check get_system_prompt_v2().")
+            continue
+        start = shared_rules.index(start_marker)
+        if end_marker is None:
+            end = start + len(start_marker)
+        elif end_marker in shared_rules:
+            end = shared_rules.index(end_marker)
+        else:
+            print(f"  WARNING: end marker '{end_marker}' not found while "
+                  f"stripping superseded v2 rules — skipping this block.")
+            continue
+        shared_rules = shared_rules[:start] + shared_rules[end:]
+    return shared_rules
 
 
 # ── PDF helpers ───────────────────────────────────────────────────────────────
@@ -751,23 +733,8 @@ def jobtread_query(query):
         headers={"Content-Type": "application/json"},
         method="POST"
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        # Real bug found Jul 2026: a createJob 400 on a real submission
-        # (Ashley Swann, 8 Hidden Hills Ct.) left nothing but "HTTP Error
-        # 400: Bad Request" in the log, with NO indication of which field
-        # JobTread actually rejected -- urlopen's default error handling
-        # discards the response body. The Pave API returns a real JSON
-        # error body (e.g. field-level validation messages) on a 400; read
-        # and surface it here so the next failure is actually diagnosable
-        # instead of a blind "Bad Request."
-        try:
-            body = e.read().decode("utf-8", errors="replace")
-        except Exception:
-            body = "<could not read error response body>"
-        raise Exception(f"JobTread API error {e.code}: {body}") from e
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
 
 
 # JobTread cost item constants
@@ -1112,70 +1079,6 @@ def create_location_record(account_id, address):
         raise
 
 
-# JobTread's "Notes" job custom field has a real, confirmed hard limit
-# (Jul 2026): a real submission's createJob call failed outright with
-# "Unable to save custom field 'Notes': Value cannot be more than 1024
-# characters" -- this crashed job creation completely, before ANY of the
-# rest of the pipeline (estimate, cost groups, files) ever ran. Separately,
-# Jason confirmed the old assumption in the comment below ("internal-only,
-# not shown on customer documents") was WRONG -- Notes actually does show
-# up on customer-facing order documents. So long text (sometimes literally
-# a realtor's full repair list, pasted into a Wufoo text field instead of
-# a separate PDF) shouldn't go in this field at all, not just when it's
-# over the hard limit. See _split_notes_for_job() / create_job_daily_log().
-JOB_NOTES_FIELD_SAFE_LIMIT = 1000  # real cap is 1024; leave a little headroom
-
-
-def _split_notes_for_job(notes_text):
-    """Split submission notes into (job_field_notes, overflow_notes).
-
-    If notes_text fits safely within JobTread's real ~1024-char cap on the
-    job-level "Notes" custom field, it's used as-is and overflow_notes is
-    None (nothing else to do). If it's too long, job_field_notes becomes a
-    short pointer (not the real content -- avoids the customer-facing-
-    document problem too), and overflow_notes carries the FULL original
-    text so the caller can post it somewhere internal instead (see
-    create_job_daily_log) — nothing is ever silently dropped.
-    """
-    notes_text = notes_text or ""
-    if len(notes_text) <= JOB_NOTES_FIELD_SAFE_LIMIT:
-        return notes_text, None
-    return ("See Daily Log for full submission notes "
-            "(too long for this field)."), notes_text
-
-
-def create_job_daily_log(job_id, notes_text, log_date=None):
-    """Post an internal Daily Log entry on a job.
-
-    Confirmed real mutation (Jul 2026, live-tested on a real job — posted a
-    clearly-labeled test entry, verified the exact request via network
-    capture, then deleted it): createDailyLog takes jobId/date/notes/notify
-    directly, no targetType/targetId indirection like createTask/createFile
-    use. Daily Logs default to nobody having explicit access ("Daily Log
-    Access: Nobody has been given direct access to this Daily Log" in the
-    UI) and notify=False suppresses any notification — unlike the job-level
-    "Notes" custom field, this does NOT show up on customer-facing order
-    documents. Best-effort: never blocks job creation if this fails.
-    """
-    from datetime import date as _date
-    log_date = log_date or _date.today().isoformat()
-    try:
-        jobtread_query({
-            "createDailyLog": {
-                "$": {
-                    "jobId": job_id,
-                    "date": log_date,
-                    "notes": notes_text,
-                    "notify": False,
-                },
-                "createdDailyLog": {"id": {}}
-            }
-        })
-        print(f"  Daily Log created for job {job_id} (full notes, {len(notes_text)} chars)")
-    except Exception as e:
-        print(f"  Daily Log creation failed for job {job_id} (non-fatal): {e}")
-
-
 def create_job_record(location_id, cfg):
     """Create the job. cfg: job_type, status_field, status_value, pm, projected_budget (opt),
     job_name (opt → None for auto Job #####), notes_text."""
@@ -1188,12 +1091,10 @@ def create_job_record(location_id, cfg):
     if cfg.get("projected_budget"):
         job_cfv["Projected Budget"] = cfg["projected_budget"]
     if cfg.get("notes_text"):
-        # See JOB_NOTES_FIELD_SAFE_LIMIT / _split_notes_for_job() above —
-        # only the safe, short portion (or a pointer, if the real notes are
-        # too long) goes in this customer-visible field. create_job_full()
-        # posts the full text as a Daily Log separately when it's too long.
-        job_field_notes, _ = _split_notes_for_job(cfg["notes_text"])
-        job_cfv["Notes"] = job_field_notes
+        # Job "description" is customer-facing (shows at the top of Customer
+        # Orders), so inquiry notes go in the "Notes" custom field instead —
+        # internal-only, not shown on customer documents.
+        job_cfv["Notes"] = cfg["notes_text"]
 
     job_input = {
         "locationId": location_id,
@@ -1266,151 +1167,6 @@ def add_cost_groups(job_id, estimate):
             continue
     print(f"  {added}/{len(cost_groups)} cost groups added")
     return added
-
-
-# ── AI-estimate snapshot (feedback-loop step 1, Jul 2026) ────────────────────
-# After add_cost_groups_v2() writes a closing-repair budget, the full AI
-# estimate is saved to the job's Files as "Original AI Estimate.csv" —
-# the guaranteed pre-edit baseline for the estimate feedback loop (diffing
-# what the AI produced vs. what Jason's team changed during review).
-#
-# Mechanics: createUploadRequest only accepts a URL to fetch from (proven
-# pattern in attach_files() above — no raw-bytes upload), so the generated
-# CSV is held in memory briefly and served from this same web server at
-# /snapshots/<random token>, JobTread fetches it into its own storage, then
-# the token is discarded. Render's ephemeral disk doesn't matter since
-# nothing is ever written to disk and the temp URL only needs to live for
-# the seconds the fetch takes.
-_SNAPSHOT_STORE = {}
-_SNAPSHOT_LOCK = threading.Lock()
-_SNAPSHOT_TTL_SECONDS = 600  # cleanup guard for tokens JobTread never fetched
-
-
-def _snapshot_base_url():
-    """Public base URL of this service. Render sets RENDER_EXTERNAL_URL
-    automatically on web services; SNAPSHOT_BASE_URL can override it if
-    ever needed. Returns "" if neither is available (snapshot is skipped
-    gracefully in that case — never blocks an estimate)."""
-    return (os.environ.get("SNAPSHOT_BASE_URL", "")
-            or os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/")
-
-
-def _serve_snapshot(token):
-    """Look up (and expire) a pending snapshot by token. Returns CSV bytes
-    or None. Tokens are single-purpose but NOT single-use — JobTread may
-    conceivably fetch with a retry, so entries live until TTL cleanup
-    rather than being deleted on first read."""
-    import time
-    now = time.time()
-    with _SNAPSHOT_LOCK:
-        # Opportunistic cleanup of anything past TTL
-        expired = [t for t, (_, ts) in _SNAPSHOT_STORE.items()
-                   if now - ts > _SNAPSHOT_TTL_SECONDS]
-        for t in expired:
-            del _SNAPSHOT_STORE[t]
-        entry = _SNAPSHOT_STORE.get(token)
-    return entry[0] if entry else None
-
-
-def attach_estimate_snapshot(job_id, estimate):
-    """Generate the AI-estimate CSV and attach it to the job's Files as
-    "Original AI Estimate.csv". Completely non-fatal — any failure just
-    means no snapshot this time, never a blocked estimate."""
-    import time
-    import secrets
-    try:
-        base_url = _snapshot_base_url()
-        if not base_url:
-            print("  Snapshot skipped: no RENDER_EXTERNAL_URL/SNAPSHOT_BASE_URL set")
-            return False
-
-        csv_text = v2.build_estimate_snapshot_csv(estimate)
-        if not csv_text.strip():
-            print("  Snapshot skipped: empty estimate")
-            return False
-
-        token = secrets.token_urlsafe(24)
-        with _SNAPSHOT_LOCK:
-            _SNAPSHOT_STORE[token] = (csv_text.encode("utf-8"), time.time())
-
-        snapshot_url = f"{base_url}/snapshots/{token}"
-        resp = jobtread_query({
-            "createUploadRequest": {
-                "$": {"organizationId": JOBTREAD_ORG, "url": snapshot_url},
-                "createdUploadRequest": {"id": {}}
-            }
-        })
-        upload_id = resp["createUploadRequest"]["createdUploadRequest"]["id"]
-        jobtread_query({
-            "createFile": {
-                "$": {"targetType": "job", "targetId": job_id,
-                      "name": "Original AI Estimate.csv",
-                      "uploadRequestId": upload_id},
-                "createdFile": {"id": {}}
-            }
-        })
-        print(f"  Snapshot attached: Original AI Estimate.csv ({len(csv_text)} chars)")
-        return True
-    except Exception as e:
-        print(f"  Snapshot attach failed (non-fatal): {e}")
-        return False
-    finally:
-        # Token cleanup happens via TTL in _serve_snapshot rather than
-        # immediately here — JobTread's fetch of the URL may lag the
-        # createUploadRequest response, so deleting now could race it.
-        pass
-
-
-_PHOTO_STORE = {}
-_PHOTO_LOCK = threading.Lock()
-_PHOTO_TTL_SECONDS = 600  # same cleanup-guard pattern as _SNAPSHOT_STORE
-
-
-def _serve_photo(token):
-    """Look up (and expire) a pending reference-photo upload by token.
-    Returns (bytes, mime_type) or None. Mirrors _serve_snapshot()."""
-    import time
-    now = time.time()
-    with _PHOTO_LOCK:
-        expired = [t for t, (_, _, ts) in _PHOTO_STORE.items()
-                   if now - ts > _PHOTO_TTL_SECONDS]
-        for t in expired:
-            del _PHOTO_STORE[t]
-        entry = _PHOTO_STORE.get(token)
-    return (entry[0], entry[1]) if entry else None
-
-
-def _upload_photo_bytes(photo_bytes, mime_type):
-    """Real photo_uploader implementation passed into v2.add_cost_groups_v2().
-
-    Reuses the EXACT same proven mechanism as attach_estimate_snapshot()
-    (serve the raw bytes from a temp URL on this same service, then point
-    JobTread's own createUploadRequest(url=...) at it so JobTread fetches
-    it server-side) rather than the raw signed-PUT-to-Google-Cloud-Storage
-    flow the JobTread UI itself uses — this backend has no reason to
-    replicate that second mechanism when the URL-fetch mode is already
-    working in production for the snapshot CSV. Returns the real
-    uploadRequestId, or raises on failure (add_cost_groups_v2 treats any
-    failure here as non-fatal — just fewer/no photos on that group).
-    """
-    import time
-    import secrets
-    base_url = _snapshot_base_url()
-    if not base_url:
-        raise Exception("no RENDER_EXTERNAL_URL/SNAPSHOT_BASE_URL set")
-
-    token = secrets.token_urlsafe(24)
-    with _PHOTO_LOCK:
-        _PHOTO_STORE[token] = (photo_bytes, mime_type, time.time())
-
-    photo_url = f"{base_url}/photos/{token}"
-    resp = jobtread_query({
-        "createUploadRequest": {
-            "$": {"organizationId": JOBTREAD_ORG, "url": photo_url},
-            "createdUploadRequest": {"id": {}}
-        }
-    })
-    return resp["createUploadRequest"]["createdUploadRequest"]["id"]
 
 
 def attach_files(job_id, file_urls):
@@ -3058,13 +2814,6 @@ def create_job_stub(cfg):
     print(f"  Location: {location_id}")
     job_id = create_job_record(location_id, cfg)
     print(f"  Job created: {job_id}")
-
-    # See create_job_full()'s matching comment — same overflow handling
-    # applies here since this path also runs create_job_record().
-    _, overflow_notes = _split_notes_for_job(cfg.get("notes_text", ""))
-    if overflow_notes:
-        create_job_daily_log(job_id, overflow_notes)
-
     attach_files(job_id, cfg.get("file_urls", []))
     return job_id
 
@@ -3086,89 +2835,9 @@ def create_job_full(cfg):
     print(f"  Location: {location_id}")
     job_id = create_job_record(location_id, cfg)
     print(f"  Job created: {job_id}")
-
-    # If the real submission notes were too long for the job-level "Notes"
-    # custom field, create_job_record() only wrote a short pointer there —
-    # the full text was held back and needs to go somewhere now that we
-    # have a job_id. Daily Log, not the customer-facing Notes field (see
-    # _split_notes_for_job() / create_job_daily_log() above for why).
-    _, overflow_notes = _split_notes_for_job(cfg.get("notes_text", ""))
-    if overflow_notes:
-        create_job_daily_log(job_id, overflow_notes)
-
     add_cost_groups(job_id, cfg.get("estimate"))
     attach_files(job_id, cfg.get("file_urls", []))
     return job_id
-
-
-def _run_v2_estimate_and_write(job_id, estimate, inspection_pdf_bytes=None):
-    """Shared tail of the v2 estimating pipeline — everything that happens
-    after call_claude_v2()/call_claude_v2_general() returns a raw estimate
-    and before the caller moves on to job-type-specific bookkeeping
-    (Projected Budget, consult comments, etc.). Used by every v2 call site:
-    both closing-repair flows, and (Jul 2026) Home Repair/GVL/Remodel/
-    Pre-listing/general-sales-tool after they were migrated onto the same
-    v2 pipeline. Pulling this into one place means the sequence (minimum-
-    labor enforcement -> real computed total -> catalog resolution -> write
-    cost groups + reference photos -> snapshot) can't drift between call
-    sites the way it would copy-pasted six times.
-
-    inspection_pdf_bytes: optional — passed straight through to
-    add_cost_groups_v2() for reference-photo attachment (see
-    v2.extract_reference_photos()). None for job types that never have a
-    real inspection-report-style PDF (Home Repair, GVL, Remodel, and the
-    general sales-tool flow) — those groups simply get created with no
-    photos, same as before this feature existed.
-
-    Also builds and saves the feedback-loop baseline (Jul 2026, steps 2-4
-    — see feedback_loop.py) via a BaselineCollector wired into
-    add_cost_groups_v2()'s on_group_created/on_item_created hooks, so a
-    later sweep can diff Jason's team's final edits against exactly what
-    the AI originally proposed, by real JobTread ID.
-
-    Returns (added_group_count, computed_total, estimate) — the estimate is
-    returned back too since resolve_material_lines_with_catalog() mutates
-    and returns it (callers may want the final version, e.g. for logging).
-    """
-    # Enforce OCC's 3-hr minimum in-house labor charge per job (Jul 2026
-    # pricing Q&A) before computing the total or writing cost groups, so
-    # both reflect the enforced floor if the itemized hours fell short.
-    estimate = v2.enforce_minimum_labor_hours(estimate)
-
-    # Don't trust Claude's own "total" field here — under the v2 schema it's
-    # not told to apply markup itself, so its self-reported total has no
-    # reliable basis. Compute the real billed total the same way
-    # add_cost_groups_v2() actually prices each line.
-    total = v2.compute_estimate_total(estimate)
-    print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
-
-    print("  Resolving material lines against Home Depot catalog...")
-    estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
-    print(f"  Catalog resolution: {catalog_stats}")
-
-    # Reference photos: attach the real inspection-report photo(s) for each
-    # cost group's cited pages (Jason's request, Jul 2026) — see
-    # v2.extract_reference_photos() / the "source_pages" schema field.
-    # Non-fatal by construction: omitting inspection_pdf_bytes just means
-    # groups get created with no photos.
-    baseline_collector = fbl.BaselineCollector(job_id)
-    added = v2.add_cost_groups_v2(
-        job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG,
-        inspection_pdf_bytes=inspection_pdf_bytes, photo_uploader=_upload_photo_bytes,
-        on_group_created=baseline_collector.on_group_created,
-        on_item_created=baseline_collector.on_item_created,
-    )
-    print(f"  {added} cost groups added to job {job_id}")
-
-    # Feedback-loop baseline (Step 1.5, feeds the Step 2 diff sweep):
-    # non-fatal by construction, same as the estimate snapshot below.
-    fbl.write_baseline(jobtread_query, job_id, baseline_collector.to_record())
-
-    # Feedback-loop baseline: save the untouched AI estimate to the job's
-    # Files before anyone can edit the budget (non-fatal).
-    attach_estimate_snapshot(job_id, estimate)
-
-    return added, total, estimate
 
 
 def process_sales_tool_closing_estimate(body):
@@ -3237,7 +2906,37 @@ def process_sales_tool_closing_estimate(body):
             client_name, client_phone, client_email, address, notes_text,
             system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
         )
-        _run_v2_estimate_and_write(job_id, estimate, inspection_pdf_bytes=inspection_pdf_bytes)
+        # Enforce OCC's 3-hr minimum in-house labor charge per job (Jul 2026
+        # pricing Q&A) before computing the total or writing cost groups, so
+        # both reflect the enforced floor if the itemized hours fell short.
+        estimate = v2.enforce_minimum_labor_hours(estimate)
+
+        # Don't trust Claude's own "total" field here — under the new schema
+        # it's not told to apply markup itself, so its self-reported total
+        # has no reliable basis. Compute the real billed total the same way
+        # add_cost_groups_v2() actually prices each line.
+        total = v2.compute_estimate_total(estimate)
+        print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
+
+        print("  Resolving material lines against Home Depot catalog...")
+        estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
+        print(f"  Catalog resolution: {catalog_stats}")
+
+        # Generation Spec §2/§7 — warn (don't fail) on any report reference
+        # number that landed in more than one cost group, since that
+        # double-charges the client.
+        v2.find_duplicate_scope_references(estimate)
+
+        # Generation Spec §4.2 — confidence ratings and quantity assumptions
+        # no longer get written into client-facing JobTread fields, so surface
+        # them here for whoever reviews the estimate before it goes out.
+        v2.log_internal_review_notes(estimate)
+
+        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
+        print(f"  {added} cost groups added to job {job_id}")
+
+        # Generation Spec §5 — trailing exclusions group, always last.
+        v2.add_not_included_group(job_id, estimate, jobtread_query)
 
     except Exception as e:
         import traceback
@@ -3304,30 +3003,17 @@ def process_sales_tool_general_estimate(body):
 
     print(f"  sales-tool-general-estimate: starting AI estimate for job {job_id} ({job_type})")
 
-    # v2 pipeline (Jul 2026 — same migration as the Wufoo Home Repair/GVL/
-    # Remodel/Pre-listing flows above). This endpoint's photos already live
-    # as JobTread files (attached by route.ts before this fires) but aren't
-    # native PDF/vision content yet, so they're re-downloaded here as image
-    # blocks the same way the Wufoo Home Repair flow does. No inspection PDF
-    # is passed through this endpoint today, so inspection_pdf_bytes is left
-    # unset — no reference photos to extract/attach in this path.
     try:
-        image_blocks = [b for b in (download_image_block(u) for u in photo_urls) if b]
-        estimate = v2.call_claude_v2_general(
-            form_label, client_name, client_phone, client_email, address, notes_text,
-            system_prompt=get_system_prompt_v2(job_type_label=job_type),
-            anthropic_api_key=ANTHROPIC_KEY,
-            description=description, image_blocks=image_blocks, best_effort=True
+        estimate = call_claude_general(
+            form_label, client_name, client_phone, client_email,
+            address, description, notes_text, image_urls=photo_urls
         )
-        estimate, gated_notes, _ = _apply_estimate_gate(estimate, notes_text)
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes_text)
 
-        projected = None
         if estimate:
-            print(f"  Estimate: {len(estimate.get('cost_groups') or [])} cost group(s) | "
-                  f"consult={estimate.get('needs_consult')}")
-            added, total, estimate = _run_v2_estimate_and_write(job_id, estimate)
-            if total > 0:
-                projected = round(total)
+            total = estimate.get("total", 0) or 0
+            print(f"  Estimate total: ${total:,.2f} | consult={estimate.get('needs_consult')}")
+            added = add_cost_groups(job_id, estimate)
             print(f"  {added} cost groups added to job {job_id}")
         else:
             print(f"  Needs consult — no cost groups generated for job {job_id}")
@@ -3672,36 +3358,13 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
     job_id = create_job_stub(cfg)
 
     # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ─────
-    # v2 pipeline (Jul 2026 — Jason's request to bring the same labor+
-    # material/catalog-matching estimating logic closing repairs already
-    # has to Home Repair/GVL leads too), replacing call_claude_general() +
-    # add_cost_groups(). Home Repair/GVL never has a formal inspection
-    # report PDF — just an optional couple of photos — so no
-    # inspection_pdf_bytes is passed to _run_v2_estimate_and_write().
     try:
-        image_blocks = [b for b in (download_image_block(u) for u in image_urls) if b]
-        # form_name is "Home Repair" or "GVL Today" — only append " repair"
-        # when form_name doesn't already say it (avoids "home repair repair"
-        # in the prompt text; GVL Today still needs it appended).
-        job_type_phrase = form_name.lower() if "repair" in form_name.lower() else f"{form_name.lower()} repair"
-        estimate = v2.call_claude_v2_general(
-            job_type_phrase, name, phone, email, address, notes,
-            system_prompt=get_system_prompt_v2(job_type_label=form_name),
-            anthropic_api_key=ANTHROPIC_KEY,
-            description=work, image_blocks=image_blocks, best_effort=True
-        )
-        print(f"  Estimate: {len(estimate.get('cost_groups') or [])} cost group(s) | "
-              f"consult={estimate.get('needs_consult')}")
-        estimate, gated_notes, _ = _apply_estimate_gate(estimate, notes)
-
-        projected = None
+        estimate = call_claude_general(f"{form_name.lower()} repair", name, phone, email,
+                                       address, work, notes, image_urls=image_urls)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
         if estimate:
-            added, total, estimate = _run_v2_estimate_and_write(job_id, estimate)
-            if total > 0:
-                projected = round(total)
-        else:
-            print(f"  Needs consult — no cost groups generated for job {job_id}")
-
+            add_cost_groups(job_id, estimate)
         update_fields = {}
         if projected:
             update_fields["Projected Budget"] = projected
@@ -3766,34 +3429,15 @@ def process_remodel(data):
     job_id = create_job_stub(cfg)
 
     # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
-    # v2 pipeline (Jul 2026 — same migration as Home Repair/GVL above).
-    # Remodel leads never carry photos or a PDF, just a text description —
-    # call_claude_v2_general() handles that combination fine (description-
-    # only is the "no documents were provided" branch of
-    # build_general_document_content()).
     try:
-        estimate = v2.call_claude_v2_general(
-            "remodel", name, phone, email, address, notes,
-            system_prompt=get_system_prompt_v2(job_type_label="Remodel"),
-            anthropic_api_key=ANTHROPIC_KEY,
-            description=desc, best_effort=True
-        )
-        print(f"  Estimate: {len(estimate.get('cost_groups') or [])} cost group(s) | "
-              f"consult={estimate.get('needs_consult')}")
-        estimate, gated_notes, _ = _apply_estimate_gate(estimate, notes)
-
-        projected = None
-        if estimate:
-            added, total, estimate = _run_v2_estimate_and_write(job_id, estimate)
-            if total > 0:
-                projected = round(total)
-        else:
-            print(f"  Needs consult — no cost groups generated for job {job_id}")
-        # Remodels: client's stated budget anchors the projected field over
-        # the AI's computed total, when given.
+        estimate = call_claude_general("remodel", name, phone, email, address, desc, notes)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
+        # Remodels: client's stated budget anchors the projected field over AI total
         if budget:
-            projected = _coerce_budget_number(budget) or projected
-
+            projected = _coerce_budget_number(budget)
+        if estimate:
+            add_cost_groups(job_id, estimate)
         update_fields = {}
         if projected:
             update_fields["Projected Budget"] = projected
@@ -3871,43 +3515,22 @@ def process_prelisting(data):
     job_id = create_job_stub(cfg)
 
     # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
-    # v2 pipeline (Jul 2026 — same migration as Home Repair/GVL/Remodel above).
-    # The inspection report (when present) now goes to Claude as native PDF
-    # vision, same upgrade closing-repair's addendum already got — Pre-listing
-    # submissions can carry a real inspection report just like closing repairs,
-    # so extract_pdf_text() (garbage on scans/marked-up pages) is dropped in
-    # favor of raw bytes. Raw bytes are also passed to _run_v2_estimate_and_write
-    # so reference photos can be pulled and attached to cost groups.
     try:
-        insp_pdf_bytes = None
+        pdf_text = ""
         if insp_url:
             try:
-                insp_pdf_bytes = download_file(insp_url)
-                print(f"  Inspection report: {len(insp_pdf_bytes)} bytes downloaded (native PDF vision)")
+                pdf_text = "\n".join(t for _, t in extract_pdf_text(download_file(insp_url)))
+                print(f"  Inspection report: {len(pdf_text)} chars extracted")
             except Exception as e:
                 print(f"  Inspection PDF failed: {e}")
 
-        estimate = v2.call_claude_v2_general(
-            "pre-listing repair", name, phone, email, address, notes,
-            system_prompt=get_system_prompt_v2(job_type_label="Pre-listing Repair"),
-            anthropic_api_key=ANTHROPIC_KEY,
-            description=other, pdf_bytes=insp_pdf_bytes, pdf_label="Inspection Report",
-            best_effort=(not insp_pdf_bytes)
-        )
-        print(f"  Estimate: {len(estimate.get('cost_groups') or [])} cost group(s) | "
-              f"consult={estimate.get('needs_consult')}")
-        estimate, gated_notes, _ = _apply_estimate_gate(estimate, notes)
-
-        projected = None
+        estimate = call_claude_general("pre-listing repair", name, phone, email, address,
+                                       other, notes, pdf_text=pdf_text,
+                                       best_effort=(not pdf_text))
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
         if estimate:
-            added, total, estimate = _run_v2_estimate_and_write(
-                job_id, estimate, inspection_pdf_bytes=insp_pdf_bytes
-            )
-            if total > 0:
-                projected = round(total)
-        else:
-            print(f"  Needs consult — no cost groups generated for job {job_id}")
-
+            add_cost_groups(job_id, estimate)
         update_fields = {}
         if projected:
             update_fields["Projected Budget"] = projected
@@ -4127,46 +3750,6 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_refresh()
         elif path == "/send-followups":
             self._handle_send_followups()
-        elif path == "/review-estimates":
-            self._handle_review_estimates()
-        elif path == "/pricing-review-reminder":
-            self._handle_pricing_review_reminder()
-        elif path.startswith("/snapshots/"):
-            # Temp URL serving a just-generated AI-estimate CSV so
-            # JobTread's createUploadRequest can fetch it — see
-            # attach_estimate_snapshot(). Unknown/expired token → 404.
-            token = path[len("/snapshots/"):]
-            data = _serve_snapshot(token)
-            if data is not None:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header("Content-Disposition",
-                                 'attachment; filename="Original AI Estimate.csv"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            else:
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Not found")
-        elif path.startswith("/photos/"):
-            # Temp URL serving a just-extracted inspection-report reference
-            # photo so JobTread's createUploadRequest can fetch it — see
-            # _upload_photo_bytes() / v2.extract_reference_photos(). Same
-            # pattern as /snapshots/<token> above. Unknown/expired token -> 404.
-            token = path[len("/photos/"):]
-            entry = _serve_photo(token)
-            if entry is not None:
-                data, mime_type = entry
-                self.send_response(200)
-                self.send_header("Content-Type", mime_type or "image/jpeg")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            else:
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Not found")
         else:
             self.send_response(200)
             self.end_headers()
@@ -4183,62 +3766,6 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             import traceback
             err = f"Follow-up run failed: {e}\n{traceback.format_exc()}"
-            print(err)
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(err.encode("utf-8"))
-
-    def _handle_review_estimates(self):
-        """Feedback-loop Step 2/3 cron endpoint (Jul 2026) — daily-safe: only
-        jobs whose baseline is 7-21 days old and not already swept get
-        processed each run (see feedback_loop.MIN/MAX_SWEEP_AGE_DAYS), so
-        calling this more often than needed is harmless. Add this URL to
-        the same cron-job.org account already driving /send-followups.
-        """
-        try:
-            summary = fbl.run_feedback_sweep(
-                jobtread_query, JOBTREAD_ORG,
-                sheet_id=FEEDBACK_SHEET_ID,
-                service_account_json=GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON,
-            )
-            msg = f"Feedback sweep complete: {summary}"
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(msg.encode("utf-8"))
-        except Exception as e:
-            import traceback
-            err = f"Feedback sweep failed: {e}\n{traceback.format_exc()}"
-            print(err)
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(err.encode("utf-8"))
-
-    def _handle_pricing_review_reminder(self):
-        """Feedback-loop Step 3 monthly cron endpoint (Jul 2026) — creates a
-        JobTread to-do nudging Jason to review the feedback sheet and
-        consider new pricing rules. Add this URL to cron-job.org set to run
-        once a month (e.g. the 1st). Requires FEEDBACK_ADMIN_JOB_ID to be
-        set to a real internal (non-client) JobTread job — see CLAUDE.md
-        for the one-time setup.
-        """
-        try:
-            if not FEEDBACK_ADMIN_JOB_ID:
-                msg = "Skipped: FEEDBACK_ADMIN_JOB_ID is not set."
-                print(f"  Monthly pricing-review reminder: {msg}")
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(msg.encode("utf-8"))
-                return
-            ok = fbl.create_monthly_review_todo(
-                jobtread_query, FEEDBACK_ADMIN_JOB_ID, JASON_ID, FEEDBACK_SHEET_URL
-            )
-            msg = "Monthly pricing-review to-do created." if ok else "Monthly pricing-review to-do FAILED (see logs)."
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(msg.encode("utf-8"))
-        except Exception as e:
-            import traceback
-            err = f"Monthly reminder failed: {e}\n{traceback.format_exc()}"
             print(err)
             self.send_response(500)
             self.end_headers()
@@ -4412,7 +3939,30 @@ class Handler(BaseHTTPRequestHandler):
                     client_name, client_phone, client_email, address, notes_text,
                     system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
                 )
-                _run_v2_estimate_and_write(job_id, estimate, inspection_pdf_bytes=inspection_pdf_bytes)
+                estimate = v2.enforce_minimum_labor_hours(estimate)
+                total = v2.compute_estimate_total(estimate)
+                print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
+
+                print("  Resolving material lines against Home Depot catalog...")
+                estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
+                print(f"  Catalog resolution: {catalog_stats}")
+
+                # Generation Spec §2/§7 — warn (don't fail) on any report
+                # reference number that landed in more than one cost group,
+                # since that double-charges the client.
+                v2.find_duplicate_scope_references(estimate)
+
+                # Generation Spec §4.2 — confidence ratings and quantity
+                # assumptions no longer get written into client-facing
+                # JobTread fields, so surface them here for whoever reviews
+                # the estimate before it goes out.
+                v2.log_internal_review_notes(estimate)
+
+                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
+                print(f"  {added} cost groups added to job {job_id}")
+
+                # Generation Spec §5 — trailing exclusions group, always last.
+                v2.add_not_included_group(job_id, estimate, jobtread_query)
 
             except Exception as e:
                 import traceback
