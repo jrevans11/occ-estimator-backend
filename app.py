@@ -59,7 +59,21 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
   sand-and-refinish, or tile installation/re-tiling beyond a small crack or
   grout repair (added Jul 2026 once real vendor pricing was found for Tile
   with Style, Greer Flooring, and Jordan Lumber — OCC actually subs this
-  scale of flooring/tile work out, it is not done in-house).
+  scale of flooring/tile work out, it is not done in-house);
+  ALL gas appliance work — gas fireplace and gas log service, diagnosis, or
+  repair, gas shutoff valve relocation, and any work on a gas line or gas
+  valve. This is licensed gas work with no size exception, same as
+  electrical (added Aug 2026). A purely mechanical fireplace item with no
+  gas involvement, such as installing a throat damper, may stay in-house if
+  it is the only fireplace item on the job;
+  SIGNIFICANT masonry work — repointing/tuck-pointing across multiple
+  locations or large areas, structural masonry, retaining wall repair,
+  paver patio resetting, and settlement correction. SMALL masonry stays
+  in-house: a few mortar joints, a single crack patch, or spot work an
+  hourly crew can do with basic bagged masonry supplies. Judge by scale and
+  complexity, the same way flooring/tile is judged (added Aug 2026 — a real
+  whole-property repointing scope across porch steps, stoop, walkway,
+  patio, retaining wall, and exterior stairs was subbed at $5,000 cost).
 - IN-HOUSE work (apply $89/hr labor + 65% material markup): everything else
   — drywall, paint, carpentry, trim, general handyman repairs, small
   flooring patch/repair (a few boards or tiles, not a full room),
@@ -68,8 +82,20 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
   slow-draining sink or vanity P-trap, exposed HVAC lineset insulation, and
   small/loose duct-work repairs or strapping. ALWAYS in-house regardless of
   what else is happening in the job: exterior wood rot repair, small
-  siding or roofing repairs, window parts replacement, window/door
+  siding repairs, window parts replacement, window/door
   replacement, and other general handyman-type repairs.
+- ROOFING — use judgement, it can legitimately go either way:
+  Keep IN-HOUSE when the roofing scope is small, accessible spot work —
+  replacing a few damaged shingles, resecuring a loose downspout, sealing
+  exposed nail heads, re-seating a piece of loose flashing.
+  Go SUB when the scope is larger or genuinely a roofer's job — kick-out or
+  valley flashing that has to be fabricated and woven into the roof and wall
+  assembly, work across multiple roof areas or elevations, steep or
+  high-access roof planes, or any decking/underlayment repair. A real
+  combined scope (shingle replacement + kick-out flashing at several
+  wall-to-roof junctions + downspout resecuring) was subbed at $1,800 cost.
+  When it is a close call, prefer sub — the downside of underpricing a roof
+  is worse than the downside of a slightly high estimate.
 - HVAC INSPECTIONS: only add a sub HVAC inspection line item when the
   inspection report specifically calls for an HVAC inspection/diagnostic
   visit. Otherwise, small HVAC items (lineset insulation, minor duct
@@ -91,7 +117,12 @@ refined Jul 2026 from Jason's direct answers on real gray-area cases):
 NEVER ESTIMATE — OUT OF SCOPE (OCC does not offer these):
 - Radon remediation/mitigation
 - Landscaping, grading, regrading, and vegetation removal
-- Driveway repair and erosion correction
+- Driveway repair, driveway crack sealing, and erosion correction.
+  IMPORTANT — this exclusion covers the DRIVEWAY specifically. Walkways,
+  front steps, stoops, patios, retaining walls, and exterior stairs are
+  masonry/hardscape work that OCC DOES perform (see the MASONRY section).
+  Do not route a cracked or settled walkway, patio, or step to the exclusions
+  list just because driveway repair is excluded.
 - Termite bonds, WDO/CL-100 inspections, and pest treatment. NOTE: the
   carpentry repair of insect-damaged wood IS in scope and may be estimated as
   an allowance — it is only the inspection, treatment, and bond that are not.
@@ -276,6 +307,36 @@ CRAWLSPACE/FOUNDATION — Sub: Crawlspace Medic (864) 478-8598, apply 45% markup
   - Well vent install/repair: $210-315 each
   - Sill plate replacement: quote required (highly variable)
 
+MASONRY (significant scope only) — sub, apply 45% markup. Small spot work
+(a few mortar joints, one crack patch) stays in-house at $89/hr + materials.
+Real anchors from actual OCC jobs:
+  - Whole-property repointing across multiple locations (porch steps, stoop,
+    front walkway, rear paver patio, brick retaining wall, exterior stairs),
+    including crack sealing and settlement evaluation: $5,000 cost
+  - Expect a multi-location repointing scope to land in the $3,000-6,000 cost
+    range depending on how many separate areas and total joint footage
+  - A single-area repointing or one crack repair is much smaller and may be
+    in-house — judge by scale, not by the presence of the word "masonry"
+  NOTE: walkway and patio crack repair, paver joint repair, and masonry
+  settlement correction ARE masonry work and belong here. They are NOT the
+  same as driveway repair, which is out of scope.
+
+FIREPLACE AND GAS APPLIANCE — always sub (licensed gas work), apply 45%
+markup. Real anchors:
+  - Gas log service/diagnosis and correction across 3 fireplaces, including
+    firebox soot cleaning, plus a gas shutoff valve relocation out of the
+    firebox and one throat damper supply-and-install: $2,200 cost
+  - A single-unit gas log service call runs roughly $250-450 cost
+  - Gas shutoff valve relocation: roughly $300-500 cost as part of a visit
+  - A throat damper install with NO gas work involved may stay in-house
+
+ROOFING (when the judgement call lands on sub) — apply 45% markup. Real anchor:
+  - Combined scope of front-edge shingle replacement, excess-nail removal and
+    sealing, kick-out flashing at several wall-to-roof junctions, loose
+    flashing re-seating, and downspout resecuring: $1,800 cost
+  - Small in-house spot work (a few shingles, one downspout) stays at
+    $89/hr + materials
+
 FLOORING/TILE (significant scope only) — Sub: Tile with Style (864) 205-3723,
 Greer Flooring (864) 331-3000, or Jordan Lumber Co. (864) 238-4251 (hardwood
 specialist, sub-subs finishing to Greg Porter Floorsanding), apply 45%
@@ -403,7 +464,9 @@ DESCRIPTION FORMATTING RULES:
 - For any repair that involves painting or finishing to match existing surfaces, always include this note at the end of the description:
   "NOTE: Client is encouraged to provide the existing paint color and sheen for best results. Paint matching is not guaranteed due to age, fading, and manufacturer variation."
 
-LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out; significant flooring/tile install, refinish, or re-tile work per the FLOORING/TILE section above) or "in_house" for everything else.
+LABOR TAGGING: For each cost group, set "labor" to "sub" if the work is performed by a subcontractor (all electrical; major HVAC; major plumbing; crawlspace moisture remediation/clean-out; significant flooring/tile install, refinish, or re-tile work per the FLOORING/TILE section above; all gas appliance and gas fireplace/log service work; significant masonry per the MASONRY section; roofing where the judgement call lands on sub) or "in_house" for everything else.
+
+IMPORTANT — a sub-scope group is priced as ONE lump "sub_scope_price" covering the whole trade visit. Do NOT price a sub trade by estimating in-house labor hours and retail material costs for it. A real whole-property masonry repointing scope is a $5,000 sub bid, not 8 hours of labor plus four bags of mortar. If you catch yourself writing labor_lines and material_lines for a trade that is tagged "sub", stop and price it as a sub visit instead.
 
 OUTPUT: Respond with ONLY valid JSON, no markdown:
 {
@@ -2926,6 +2989,7 @@ def process_sales_tool_closing_estimate(body):
         # number that landed in more than one cost group, since that
         # double-charges the client.
         v2.find_duplicate_scope_references(estimate)
+        v2.find_bundled_groups_with_own_price(estimate)
 
         # Generation Spec §4.2 — confidence ratings and quantity assumptions
         # no longer get written into client-facing JobTread fields, so surface
@@ -3951,6 +4015,7 @@ class Handler(BaseHTTPRequestHandler):
                 # reference number that landed in more than one cost group,
                 # since that double-charges the client.
                 v2.find_duplicate_scope_references(estimate)
+                v2.find_bundled_groups_with_own_price(estimate)
 
                 # Generation Spec §4.2 — confidence ratings and quantity
                 # assumptions no longer get written into client-facing
