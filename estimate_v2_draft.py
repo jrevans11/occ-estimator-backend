@@ -182,6 +182,21 @@ DEFAULT_JORDAN_LUMBER_CSV = os.path.join(
     _MODULE_DIR, "jordan_lumber_invoice_history.csv"
 )
 
+# Real hand-corrected CONSOLIDATED trade groups (Aug 2026).
+# This is the single most important calibration source for the restructured
+# output, because it is the only data that shows what a whole-trade group
+# costs AFTER consolidation. Everything else in this module calibrates
+# per-repair-item pricing, which is what caused the first live test to come
+# in at 62% of Jason's actual: the model correctly grouped by trade but then
+# priced each group by summing small per-item labor/material guesses instead
+# of sizing one realistic trade visit.
+#
+# Source: job 102 Tuscany Way (22PcXP8Bd2Ck), which Jason restructured and
+# repriced by hand. Append more corrected jobs here as they happen.
+DEFAULT_CONSOLIDATED_CALIBRATION_CSV = os.path.join(
+    _MODULE_DIR, "consolidated_trade_group_calibration.csv"
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Real 3-digit cost codes (Jason's chosen set — see cost_codes_3digit.csv).
@@ -768,6 +783,76 @@ def load_vendor_reference_examples(csv_path, job_keys, label, note):
     return "\n".join(lines)
 
 
+def load_consolidated_calibration_examples(csv_path=None):
+    """Format the real hand-corrected consolidated trade groups as a few-shot
+    calibration block.
+
+    This is what teaches the model to size a WHOLE TRADE VISIT. Without it,
+    the model consolidates correctly but then prices each consolidated group
+    as the sum of its individual findings, which underprices badly (the first
+    live test came in at 62% of Jason's actual, and every underpriced group
+    was one it had priced in-house item-by-item).
+
+    Same graceful-degradation contract as the other loaders: returns "" and
+    warns rather than raising if the CSV is missing.
+    """
+    import csv as _csv
+
+    csv_path = csv_path or DEFAULT_CONSOLIDATED_CALIBRATION_CSV
+    if not os.path.exists(csv_path):
+        print(f"  WARNING: consolidated-group calibration CSV not found at "
+              f"'{csv_path}' — prompt will build WITHOUT whole-trade sizing "
+              f"anchors, which is the main defense against underpricing.")
+        return ""
+
+    subs, inhouse = [], []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            name = (row.get("group_name") or "").strip()
+            findings = (row.get("findings_count") or "").strip()
+            scope = (row.get("scope_summary") or "").strip()
+            model = (row.get("pricing_model") or "").strip()
+            if model == "sub":
+                sub_cost = (row.get("sub_cost") or "").strip()
+                subs.append(
+                    f"\n- {name} — {findings} report findings consolidated into "
+                    f"ONE sub visit at ${sub_cost} cost"
+                    f"\n    scope: {scope}"
+                )
+            else:
+                hours = (row.get("labor_hours") or "").strip()
+                mats = (row.get("material_cost_total") or "").strip()
+                bits = []
+                if hours:
+                    bits.append(f"{hours} labor hours")
+                if mats:
+                    bits.append(f"${mats} total materials at cost")
+                detail = " + ".join(bits) if bits else "small single-item group"
+                inhouse.append(
+                    f"\n- {name} — {findings} report findings consolidated into "
+                    f"ONE in-house group: {detail}"
+                    f"\n    scope: {scope}"
+                )
+
+    if not subs and not inhouse:
+        return ""
+
+    lines = [
+        "REAL_CONSOLIDATED_TRADE_GROUP_CALIBRATION (Jason's own hand-corrected "
+        "closing repair estimate — this is what a correctly-sized consolidated "
+        "group actually costs. Use these to sanity-check the SIZE of each group "
+        "you produce. Note how few labor hours-per-finding these imply is WRONG: "
+        "these are whole-visit numbers, not per-item sums):",
+    ]
+    if subs:
+        lines.append("\n  SUB-PRICED GROUPS (one lump sub_scope_price, at OCC's cost before the 45% markup):")
+        lines.extend(subs)
+    if inhouse:
+        lines.append("\n  IN-HOUSE GROUPS (real labor hours at $55 cost / $89 billed, plus real total material cost):")
+        lines.extend(inhouse)
+    return "\n".join(lines)
+
+
 def build_full_estimating_prompt(csv_path=None, redland_csv_path=None,
                                   crawlspace_medic_csv_path=None,
                                   tile_with_style_csv_path=None,
@@ -813,7 +898,15 @@ def build_full_estimating_prompt(csv_path=None, redland_csv_path=None,
     # the model reads "here's how to organize and name things" before it sees
     # a wall of real historical line items to calibrate pricing against.
     prompt += "\n\n" + OUTPUT_STRUCTURE_SECTION
+    prompt += "\n\n" + GROUP_SIZING_SECTION
     prompt += "\n\n" + ALLOWANCES_AND_VALIDATION_SECTION
+    # Whole-trade sizing anchors come FIRST among the reference blocks — they
+    # govern the size of each consolidated group, which is the thing the model
+    # got wrong on the first live test. The per-item historical examples that
+    # follow calibrate the shape of a breakdown, not its total.
+    consolidated_text = load_consolidated_calibration_examples()
+    if consolidated_text:
+        prompt += "\n\n" + consolidated_text
     if examples_text:
         prompt += "\n\n" + examples_text
     if redland_text:
@@ -932,7 +1025,12 @@ def search_home_depot_catalog(search_query, jobtread_query_fn, org_id, page=1):
 
     Returns (success, list_of_products). Each product dict has: id, name,
     brand, department, modelNumber, storeSkuNumber, unitCost (live price),
-    unitOfMeasure, imageUrl, link (real homedepot.com product URL).
+    unitOfMeasure, link (real homedepot.com product URL).
+
+    imageUrl is deliberately NOT requested (Aug 2026). It only ever fed a
+    cost-item photo attachment that JobTread's API cannot support — see the
+    removal note on _attach_catalog_image below — so pulling it was dead
+    weight on every search.
 
     jobtread_query_fn contract: takes a query dict, returns the parsed
     response dict directly (or raises on failure) — matching app.py's real
@@ -950,7 +1048,7 @@ def search_home_depot_catalog(search_query, jobtread_query_fn, org_id, page=1):
                 "nodes": {
                     "id": {}, "name": {}, "brand": {}, "department": {},
                     "modelNumber": {}, "storeSkuNumber": {}, "unitCost": {},
-                    "unitOfMeasure": {}, "imageUrl": {}, "link": {}
+                    "unitOfMeasure": {}, "link": {}
                 },
                 "nextPage": {}
             }
@@ -978,6 +1076,95 @@ def _match_score(query, product_name):
         return 0.0
     overlap = q_words & n_words
     return len(overlap) / len(q_words)
+
+
+def _head_nouns(query):
+    """Best-effort set of acceptable head nouns for a material description.
+
+    Takes the text before the first comma (the thing itself, before size and
+    finish qualifiers), splits it on "/" and " and " because estimators
+    routinely write alternatives or pairs, and returns the last significant
+    word of each part:
+      "5/4x6 primed fascia board, 12 ft"     -> {"board"}
+      "gas shutoff valve, 1/2 in."           -> {"valve"}
+      "exterior wood filler/epoxy"           -> {"filler", "epoxy"}
+      "downspout straps and screws"          -> {"straps", "screws"}
+    A match against ANY of them is enough. Returns an empty set when nothing
+    usable is found, which callers treat as "skip this check" not "fail".
+    """
+    head = (query or "").split(",")[0]
+    parts = re.split(r"/|\band\b", head.lower())
+    nouns = set()
+    for part in parts:
+        words = [w for w in re.findall(r"[a-z]+", part) if len(w) > 2]
+        if words:
+            nouns.add(words[-1])
+    return nouns
+
+
+def _inch_dimensions(text):
+    """Extract fractional/decimal inch-style size tokens ('1/2', '3/4', '5/4',
+    '2-1/8') from a string. Used to catch size mismatches where the words all
+    line up but the product is simply the wrong size — the real case being a
+    '1/2 in. gas shutoff valve' matching a '3/4 In Earthquake Gas Shutoff
+    Valve', which scored a perfect 1.00 on word overlap.
+    """
+    return set(re.findall(r"\d+\s*/\s*\d+", (text or "").lower().replace(" ", "")))
+
+
+def _catalog_match_is_plausible(query, product_name):
+    """Semantic plausibility gate applied BEFORE the price sanity check.
+
+    Word overlap alone cannot tell a fascia board from a composite deck
+    fascia board, or a 1/2 in. valve from a 3/4 in. one. Two cheap checks
+    catch most of what slipped through on the first live run:
+      1. HEAD NOUN — the core thing being bought must actually appear in the
+         product name.
+      2. SIZE CONFLICT — if both sides state fractional-inch sizes and they
+         share none, it is the wrong size part.
+
+    Returns (ok, reason). Never raises.
+    """
+    name = (product_name or "").lower()
+    if not name:
+        return False, "product has no name"
+
+    # Allow common synonym drift between how an estimator writes a line and
+    # how a retail listing names the product.
+    synonyms = {
+        "board": ("lumber", "plank", "trim"),
+        "sealant": ("caulk", "adhesive"),
+        "caulk": ("sealant",),
+        "wrap": ("insulation", "tape"),
+        "screws": ("screw", "fastener", "fasteners"),
+        "straps": ("strap", "bracket", "hanger"),
+        "hoses": ("hose",),
+        "handles": ("handle", "crank"),
+        "anchors": ("anchor",),
+    }
+    heads = _head_nouns(query)
+    if heads:
+        def _present(h):
+            return h in name or any(s in name for s in synonyms.get(h, ()))
+        if not any(_present(h) for h in heads):
+            return False, ("product name contains none of "
+                           + "/".join(f"'{h}'" for h in sorted(heads)))
+
+    q_dims = _inch_dimensions(query)
+    p_dims = _inch_dimensions(product_name)
+    if q_dims and p_dims and not (q_dims & p_dims):
+        return False, (f"size mismatch — wanted {sorted(q_dims)}, "
+                       f"product is {sorted(p_dims)}")
+
+    return True, ""
+
+
+# Minimum word-overlap score before a catalog hit may replace the LLM's cost.
+# Raised from 0.50 to 0.65 in Aug 2026: at 0.50 the first live run auto-applied
+# or price-rejected a number of plainly wrong products. Paired with
+# _catalog_match_is_plausible(), which does the semantic checks that a bag of
+# words cannot.
+CATALOG_AUTO_APPLY_THRESHOLD = 0.65
 
 
 # Generation Spec §4.1 — case/multipack detection.
@@ -1074,14 +1261,14 @@ def _summarize_candidates(scored, top_n):
         {
             "name": p.get("name"), "unit_cost": p.get("unitCost"),
             "brand": p.get("brand"), "sku": p.get("storeSkuNumber"),
-            "imageUrl": p.get("imageUrl"), "link": p.get("link"),
+            "link": p.get("link"),
         }
         for _, p in scored[:top_n]
     ]
 
 
 def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
-                                         auto_apply_threshold=0.5, top_n=3):
+                                         auto_apply_threshold=CATALOG_AUTO_APPLY_THRESHOLD, top_n=3):
     """Resolve each material_line's LLM-guessed cost against the live Home
     Depot Global Catalog (search_home_depot_catalog), so the estimate has
     real live-priced products where a confident match exists instead of a
@@ -1105,7 +1292,7 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
     stats = {"searched": N, "auto_matched": N, "candidates_only": N, "no_match": N}.
     """
     stats = {"searched": 0, "auto_matched": 0, "candidates_only": 0,
-             "no_match": 0, "price_rejected": 0}
+             "no_match": 0, "price_rejected": 0, "wrong_product": 0}
 
     for group in estimate.get("cost_groups", []) or []:
         for line in group.get("material_lines", []) or []:
@@ -1139,6 +1326,22 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
             )
             best_score, best_product = scored[0]
 
+            # Semantic gate first (Aug 2026, after the 102 Tuscany Way test
+            # run surfaced fascia board -> composite decking, 1/2 in. gas
+            # valve -> 3/4 in. earthquake valve, and downspout straps ->
+            # downspout extension). A wrong product is worse than no product:
+            # it silently replaces a reasonable estimate with a confident
+            # wrong number.
+            plausible, implausible_reason = _catalog_match_is_plausible(
+                item_desc, best_product.get("name", ""))
+            if best_score >= auto_apply_threshold and not plausible:
+                stats["wrong_product"] += 1
+                print(f"  Catalog match rejected for '{item_desc[:60]}': "
+                      f"{implausible_reason} ('{(best_product.get('name') or '')[:60]}')")
+                line["catalog_wrong_product"] = True
+                line["catalog_candidates"] = _summarize_candidates(scored, top_n)
+                continue
+
             price_ok, reject_reason = _catalog_price_passes_sanity_check(
                 line.get("unit_cost"), best_product)
             if best_score >= auto_apply_threshold and not price_ok:
@@ -1158,10 +1361,10 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
             if best_score >= auto_apply_threshold and best_product.get("unitCost"):
                 original_cost = line.get("unit_cost")
                 line["unit_cost"] = float(best_product["unitCost"])
-                # Full product detail carried through to add_cost_groups_v2()
-                # so it can write a real description (+ attempt a photo
-                # attachment) onto the JobTread cost item — not just swap
-                # the price and drop everything else on the floor.
+                # Real product detail carried through to add_cost_groups_v2()
+                # so it can write a real description and populate the SKU /
+                # link / brand / model custom fields on the JobTread cost item
+                # — not just swap the price and drop everything else.
                 line["catalog_match"] = {
                     "name": best_product.get("name"),
                     "brand": best_product.get("brand"),
@@ -1169,7 +1372,6 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                     "modelNumber": best_product.get("modelNumber"),
                     "sku": best_product.get("storeSkuNumber"),
                     "unitOfMeasure": best_product.get("unitOfMeasure"),
-                    "imageUrl": best_product.get("imageUrl"),
                     "link": best_product.get("link"),
                     "matched_score": round(best_score, 2),
                     "llm_guessed_cost": original_cost,
@@ -1204,7 +1406,17 @@ LABOR_COST_RATE = 55.00  # OCC's real internal labor cost/hr — confirmed acros
 COST_TYPE_LABOR = "22P9ppJUAHYN"
 COST_TYPE_MATERIALS = "22P9ppJUAHYP"
 COST_TYPE_SUB = "22P9ppJUAHYQ"
-COST_TYPE_OTHER = "22P9ppJUAHYR"  # kept for reference; no longer used below
+COST_TYPE_OTHER = "22P9ppJUAHYR"  # used by the internal NOTES line item below
+
+# Name of the $0 internal notes cost item added to each group.
+# Jason's call (Aug 2026): he WANTS this line item — it gives his team the
+# inspection-report context and quantity assumptions while reviewing a budget.
+# This deliberately reverses OCC Estimate Generation Spec §4.2, which said not
+# to create it. The safety concern behind §4.2 is handled a different way: the
+# note body goes in the item's `description` written with showDescription=False,
+# so it renders in the budget for OCC but not on customer-facing documents.
+# Spaced hyphen, not an em dash, per §6.
+INTERNAL_NOTES_ITEM_NAME = "NOTES (internal - not shown on client documents)"
 
 # COST_CODE_MAP and COST_CODE_UNCATEGORIZED are defined above, near the top
 # of the file, alongside the real 3-digit cost code data.
@@ -1335,6 +1547,21 @@ NO DUPLICATE SCOPE — this is the most expensive error you can make.
 - When you find a duplicate, keep it in the group where the labor actually
   lives and delete the other, folding any unique material into the survivor.
 
+BUNDLED SCOPE NEVER GETS ITS OWN GROUP. If you decide an item is handled
+inside another trade's visit, it belongs ONLY in that trade's group. Do not
+also emit a standalone group for it. A group whose own NOTES say the work is
+"bundled into" or "folded into" another visit is a double charge — the scope
+is priced twice and the client pays twice.
+  WRONG: a "Gas Line Bonding" group priced at its own sub visit price, whose
+         notes read "this item is bundled into the electrical sub visit",
+         while the same reference number also appears in the electrical group.
+  RIGHT: the gas bonding scope line lives inside "Electrical Corrections",
+         its cost is absorbed into that visit's sub_scope_price, and no
+         separate group exists.
+Before emitting, re-read each group's NOTES. If a note says the work is
+bundled elsewhere, delete that group and confirm the scope line is present in
+the group that actually carries the cost.
+
 COST GROUP NAMES
 - Plain trade or area name, Title Case. Describe what the group covers.
 - NO reference numbers in the name. The numbers belong on the scope lines
@@ -1428,6 +1655,70 @@ which colors to quote:
   inspection report flags it. Put it in skipped_items if it is a safety issue.
 - Honor stated carve-outs explicitly ("cleaning doesn't need to be quoted")
   and record the reason as the client's instruction.
+"""
+
+
+GROUP_SIZING_SECTION = """
+SIZING A CONSOLIDATED GROUP — READ THIS BEFORE PRICING ANYTHING
+
+Grouping by trade changes how you must price. A consolidated group is ONE
+REAL VISIT by one crew or one subcontractor, covering many findings. It is
+NOT the arithmetic sum of what each finding would cost on its own. Pricing a
+consolidated group by adding up per-item guesses is the single most common
+and most expensive mistake, and it always lands low.
+
+WHY IT LANDS LOW. Per-item estimates silently omit everything that happens
+once per visit rather than once per item: mobilization and drive time,
+setup and teardown, ladder and scaffold moves, protecting adjacent surfaces,
+material staging and runs, working around access constraints, cleanup, and
+the simple fact that a punch list of fifteen small items takes longer than
+fifteen isolated small jobs would suggest. It also omits the coordination
+overhead of doing several unrelated repairs in the same area.
+
+HOW TO SIZE IN-HOUSE LABOR. Ask "how long would a crew actually be on site
+to complete ALL of this?" and book that number. Then check it against the
+REAL_CONSOLIDATED_TRADE_GROUP_CALIBRATION block below, which contains real
+hour counts from a real corrected estimate. Some real anchors:
+  - 16 exterior door findings across four doors: 26 labor hours
+  - 6 exterior trim, shutter, fascia, lintel, and paint findings: 30 hours
+  - 9 interior door, window, and cabinet findings: 10.5 hours
+  - 5 garage findings: 10 hours
+  - 4 exterior railing and gate findings: 10 hours
+  - 3 master bathroom findings: 16 hours
+  - 3 attic findings: 6 hours
+  - 3 gas line and meter findings: 4 hours
+  - 1 interior railing finding: 2.5 hours
+Notice these do NOT scale linearly with finding count — scope, access, and
+finish work drive hours far more than item count does. A single group with
+heavy prep and painting can exceed a group with three times the findings.
+If your hour count for a multi-finding group is in the low single digits,
+you have almost certainly underestimated it.
+
+HOW TO SIZE MATERIALS. Keep material lines itemized — do not collapse them
+into one line — but make each one realistic and then check the GROUP TOTAL.
+Two failure modes to avoid:
+  1. Under-quantifying. One tube of caulk will not recaulk every window on a
+     house. One bag of mortar will not repoint six areas. One bundle of
+     shingles is roughly 33 sq ft. Count the real quantity the scope needs.
+  2. Forgetting consumables. Fasteners, adhesive, primer, sandpaper, blades,
+     backer rod, tape, drop cloths, and touch-up paint are real costs.
+Real whole-group material totals at COST from a corrected estimate: exterior
+doors $243, exterior trim/shutters/fascia/paint $371, garage $230, interior
+doors/windows/cabinets $226, attic $164, master bathroom $87, gas line $37,
+exterior railings $1,964 (handrail sections are genuinely expensive).
+If a multi-finding in-house group's materials total under about $75, re-check
+your quantities — that is usually a sign of under-quantifying, not a cheap job.
+
+HOW TO SIZE A SUB GROUP. Do not build it from labor and materials at all.
+Reason to a single sub_scope_price for the whole visit using the real sub
+anchors in this prompt. A sub bid already includes the sub's own labor,
+materials, overhead, and margin, which is why it is much larger than what the
+same scope would look like priced as OCC hours plus retail materials.
+
+FINAL CHECK BEFORE YOU EMIT. For each group, ask: "if I handed this number to
+the crew or the sub who has to do all of this work in one visit, would they
+take the job?" If the answer is no, the number is too low. Raise it and say
+what it assumes in NOTES.
 """
 
 
@@ -1640,18 +1931,143 @@ def find_duplicate_scope_references(estimate):
     return duplicates
 
 
+# Phrases that indicate a group's own notes admit its scope is paid for
+# inside a different group's visit. A group that says this AND carries its own
+# price is charging the client twice for the same work — caught live on the
+# first real test run (a "Gas Line Bonding" group priced at $870 whose notes
+# read "bundled into the electrical sub visit", with reference 5.7.1 also
+# present in the electrical group).
+_BUNDLED_ELSEWHERE_PHRASES = (
+    "bundled into", "bundled in the", "folded into", "included in the electrical",
+    "included in the plumbing", "part of the electrical visit",
+    "part of the plumbing visit", "covered under", "covered by the",
+)
+
+
+def _group_scope_references(group):
+    """Set of report reference numbers appearing on a group's scope lines."""
+    refs = set()
+    for raw_line in (group.get("description", "") or "").splitlines():
+        match = _SCOPE_REF_RE.match(raw_line)
+        if not match:
+            continue
+        for ref in match.group(1).split("/"):
+            ref = ref.strip()
+            if ref:
+                refs.add(ref)
+    return refs
+
+
+def find_bundled_groups_with_own_price(estimate):
+    """Flag groups that are redundant: they say their scope is bundled into
+    another visit, they carry their own price, AND every reference number they
+    contain already appears in some other group.
+
+    All three conditions matter. Language like "bundled into a single licensed
+    electrician visit" is perfectly correct on the group that actually CARRIES
+    the bundled cost — it is only a double charge when the group adds no
+    unique scope of its own. Requiring full reference overlap is what
+    separates the two, and avoids flagging every properly-bundled trade group.
+
+    Warns, does not raise (same reasoning as the duplicate check — a flagged
+    estimate beats a job that dies mid-write).
+
+    Returns a list of (title, matched_phrase, price) tuples.
+    """
+    flagged = []
+    if not estimate:
+        return flagged
+
+    groups = estimate.get("cost_groups", []) or []
+    refs_by_group = [(g, _group_scope_references(g)) for g in groups]
+
+    for group, refs in refs_by_group:
+        title = (group.get("title", "") or "Untitled group").strip()
+        blob = " ".join([
+            (group.get("description") or ""),
+            (group.get("notes") or ""),
+        ]).lower()
+        matched = next((p for p in _BUNDLED_ELSEWHERE_PHRASES if p in blob), None)
+        if not matched or not refs:
+            continue
+
+        # Does this group contribute any scope no other group already covers?
+        others = set()
+        for other, other_refs in refs_by_group:
+            if other is not group:
+                others |= other_refs
+        if not refs.issubset(others):
+            continue  # has unique scope — it's the group carrying the bundle
+
+        priced = float(group.get("sub_scope_price", 0) or 0)
+        for line in group.get("labor_lines", []) or []:
+            priced += float(line.get("hours", 0) or 0) * float(line.get("rate", 0) or 0)
+        for line in group.get("material_lines", []) or []:
+            priced += float(line.get("qty", 0) or 0) * float(line.get("unit_cost", 0) or 0)
+        if priced > 0:
+            flagged.append((title, matched, round(priced, 2)))
+
+    if flagged:
+        print("  WARNING: redundant group(s) — scope is bundled into another "
+              "visit and fully duplicated there, yet still priced separately "
+              "(Spec §2 — double charge):")
+        for title, phrase, priced in flagged:
+            print(f"    '{title}' says \"{phrase}...\", adds no unique scope, "
+                  f"yet prices ~${priced:,.2f}")
+    return flagged
+
+
+def _internal_note_flags(group):
+    """Collect the estimator-facing QA facts for one cost group.
+
+    Returns a list of short strings — quantity assumption, confidence when it
+    isn't high, and any per-material catalog caveat. Shared by the run-log
+    output and the internal NOTES cost item so the two can never drift.
+    """
+    flags = []
+    qty_note = (group.get("quantity_note") or "").strip()
+    confidence = (group.get("confidence") or "").strip().lower()
+    if confidence and confidence != "high":
+        flags.append(f"Confidence: {confidence} — spot-check before sending.")
+    if qty_note:
+        flags.append(f"Quantity assumption: {qty_note}")
+    for line in group.get("material_lines", []) or []:
+        item = (line.get("item") or "material").strip()
+        if line.get("catalog_wrong_product"):
+            flags.append(f"Catalog match rejected as the wrong product on '{item}' — cost is AI-estimated, verify before ordering.")
+        elif line.get("catalog_price_rejected"):
+            flags.append(f"Catalog price rejected as a likely case/multipack SKU on '{item}' — cost is AI-estimated, verify before ordering.")
+        elif line.get("catalog_no_match"):
+            flags.append(f"No Home Depot catalog match on '{item}' — cost is AI-estimated, verify before ordering.")
+        elif line.get("catalog_candidates"):
+            flags.append(f"Catalog match not confident on '{item}' — candidate products are listed on that line item.")
+    return flags
+
+
+def build_internal_notes_text(group):
+    """Format one group's QA facts as the body of its internal NOTES cost item.
+
+    Returns "" when there is nothing worth noting, so the caller can skip
+    creating an empty line item.
+    """
+    flags = _internal_note_flags(group)
+    if not flags:
+        return ""
+    return "\n".join(f"- {f}" for f in flags)
+
+
 def log_internal_review_notes(estimate):
     """Surface estimator-facing QA detail to the OCC team via the run log.
 
-    Generation Spec §4.2 forbids confidence ratings, quantity-assumption
-    reasoning, and "spot-check before sending" style text from reaching ANY
-    client-visible field — which is where add_cost_groups_v2() used to put
-    them (appended onto each cost group description). Deleting them outright
-    would have lost real review signal, so they come out here instead:
-    printed once per run, grouped, for whoever reviews the estimate before it
-    goes out.
+    This detail is ALSO written into JobTread as a $0 internal NOTES cost
+    item per group (see add_cost_groups_v2) — Jason asked for that back in
+    Aug 2026 because he found the extra inspection-report context useful when
+    reviewing a budget. That item is written with showDescription=False so it
+    stays off customer-facing documents while remaining visible in the budget.
+    The run log is kept as well, since it's the fastest place to skim what
+    needs review without opening the job.
 
-    Returns the same lines as a list so a caller can also email/store them.
+    Returns the lines as a list so a caller can also email/store them.
     Never raises — this is reporting, not business logic.
     """
     lines = []
@@ -1660,27 +2076,13 @@ def log_internal_review_notes(estimate):
 
     for group in estimate.get("cost_groups", []) or []:
         title = (group.get("title", "") or "Untitled group").strip()
-        qty_note = (group.get("quantity_note") or "").strip()
-        confidence = (group.get("confidence") or "").strip().lower()
-        flags = []
-        if confidence and confidence != "high":
-            flags.append(f"confidence={confidence}")
-        if qty_note:
-            flags.append(f"assumption: {qty_note}")
-        for line in group.get("material_lines", []) or []:
-            item = (line.get("item") or "material").strip()
-            if line.get("catalog_price_rejected"):
-                flags.append(f"catalog price rejected (possible case/multipack) on '{item}'")
-            elif line.get("catalog_no_match"):
-                flags.append(f"no catalog match, AI-estimated cost on '{item}'")
-            elif line.get("catalog_candidates"):
-                flags.append(f"catalog match not confident on '{item}'")
+        flags = _internal_note_flags(group)
         if flags:
-            lines.append(f"  - {title}: " + "; ".join(flags))
+            lines.append(f"  - {title}: " + " ".join(flags))
 
     if lines:
-        print("  INTERNAL REVIEW NOTES (not written to JobTread — "
-              "review before sending to client):")
+        print("  INTERNAL REVIEW NOTES (also written to each group as a $0 "
+              "internal line item, hidden from client documents):")
         for entry in lines:
             print(entry)
     return lines
@@ -1852,32 +2254,21 @@ def _is_internal_material_description(line):
                 or line.get("catalog_price_rejected"))
 
 
-def _attach_catalog_image(jobtread_query_fn, org_id, cost_item_id, image_url, name):
-    """Best-effort: attach a Home Depot product photo to a cost item, using
-    the same createUploadRequest -> createFile(targetType, targetId, url)
-    pattern app.py's attach_files() already uses successfully at the job
-    level. NOT independently confirmed to work at targetType="costItem" —
-    my research API key only has read access (creates return "You don't
-    have permission"), so this couldn't be live-tested end to end. If it
-    turns out targetType="costItem" isn't supported, this just fails
-    silently (caller wraps it in try/except) and the estimate is unaffected
-    either way — worth checking Render logs after the next real submission
-    to confirm whether "Photo attach skipped" ever prints.
-    """
-    upload_resp = jobtread_query_fn({
-        "createUploadRequest": {
-            "$": {"organizationId": org_id, "url": image_url},
-            "createdUploadRequest": {"id": {}}
-        }
-    })
-    upload_id = upload_resp["createUploadRequest"]["createdUploadRequest"]["id"]
-    jobtread_query_fn({
-        "createFile": {
-            "$": {"targetType": "costItem", "targetId": cost_item_id,
-                  "name": name, "uploadRequestId": upload_id},
-            "createdFile": {"id": {}}
-        }
-    })
+# REMOVED Aug 2026 — _attach_catalog_image().
+#
+# It tried to attach a Home Depot product photo to a cost item via
+# createFile(targetType="costItem", ...). The first live run threw HTTP 400
+# on all 16 attempts, and schema introspection confirmed why: JobTread's
+# `fileTargetType` enum accepts only dailyLog, document, task, job, location,
+# contact, account, and organization. There is no costItem target, so this
+# could never have worked — it was speculative when written (the original
+# docstring said as much) and every call was invalid.
+#
+# Do not reinstate this without first confirming `fileTargetType` has gained a
+# costItem (or costGroup) variant. The product identity is not lost: a
+# confident catalog match already writes the real product name into the cost
+# item description and the SKU/brand/model/link into real custom fields via
+# _build_material_custom_field_values().
 
 
 def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
@@ -1889,10 +2280,10 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
     jobtread_query_fn: pass in app.py's jobtread_query() function so this
     stays a pure function you can unit test without hitting the real API.
 
-    org_id: optional — only needed to attempt attaching a real Home Depot
-    product photo to auto-matched material lines (see _attach_catalog_image).
-    If omitted, materials still get a real text description (SKU/brand/link)
-    just no photo attachment attempt.
+    org_id: accepted for signature compatibility with both v2 call sites in
+    app.py. It is currently unused here — it previously fed a cost-item photo
+    attachment that JobTread's API does not actually support (see the removal
+    note above). Left in place rather than churning both call sites.
     """
     if not estimate:
         return 0
@@ -2075,21 +2466,36 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
 
                 if resp is not None:
                     items_added_this_group += 1
-                    # Best-effort: attach the real Home Depot product photo to
-                    # the cost item, same way app.py's attach_files() already
-                    # attaches job-level files (createUploadRequest -> createFile
-                    # by URL). Never lets a failure here block the estimate —
-                    # this is a nice-to-have, not confirmed with a live write
-                    # test yet (see estimate_v2_draft.py module docstring).
-                    catalog_match = line.get("catalog_match") or {}
-                    image_url = catalog_match.get("imageUrl")
-                    if image_url and org_id:
-                        try:
-                            created_id = resp["createCostItem"]["createdCostItem"]["id"]
-                            _attach_catalog_image(jobtread_query_fn, org_id, created_id,
-                                                   image_url, item[:100])
-                        except Exception as e:
-                            print(f"  Photo attach skipped for '{item[:50]}' (non-fatal): {e}")
+
+        # Internal NOTES line item ($0) — carries the quantity assumptions,
+        # confidence, and catalog caveats for this group. Only added when the
+        # group actually has real cost items, so an empty/failed group doesn't
+        # end up as a lone notes line. Written with showDescription=False so
+        # the body stays off customer-facing documents (see
+        # INTERNAL_NOTES_ITEM_NAME for why this exists despite Spec §4.2).
+        if items_added_this_group > 0:
+            notes_text = build_internal_notes_text(group)
+            if notes_text:
+                try:
+                    jobtread_query_fn({
+                        "createCostItem": {
+                            "$": {
+                                "costGroupId": group_id,
+                                "name": INTERNAL_NOTES_ITEM_NAME[:100],
+                                "quantity": 1,
+                                "unitCost": 0,
+                                "unitPrice": 0,
+                                "description": notes_text,
+                                "showDescription": False,
+                                "costCodeId": cost_code_id,
+                                "costTypeId": COST_TYPE_OTHER,
+                            },
+                            "createdCostItem": {"id": {}}
+                        }
+                    })
+                except Exception as e:
+                    # Never let a notes line take down a good estimate.
+                    print(f"  Internal notes line skipped for '{title[:50]}' (non-fatal): {e}")
 
         if items_added_this_group > 0:
             added_groups += 1
