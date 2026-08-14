@@ -1,4 +1,4 @@
-[CLAUDE.md](https://github.com/user-attachments/files/31048290/CLAUDE.md)
+[CLAUDE.md](https://github.com/user-attachments/files/31066673/CLAUDE.md)
 # Memory
 
 ## Me
@@ -207,7 +207,84 @@ Two pieces are company policy rather than closing-repair formatting, so they wen
 
 Both files compile. Mock end-to-end write test confirms: zero client-visible leaks across every `name`/`description` written, the one internal description correctly carries `showDescription: False`, the Roofing→Roofing Materials alias resolves, and the Not Included group writes. Catalog guard tested against all six real spec failures plus four legitimate matches plus the kitchen/packaging false-positive cases. Prompt assembly verified in both directions (new rules in v2, old rules still intact in the shared prompt, no cross-contamination).
 
-**Still NOT done:** no live Anthropic or JobTread API test — same standing caveat as all of v2. **Phase 2's grouping behavior specifically cannot be validated without a real run**, since "did Claude consolidate twelve electrical findings into one group" only shows up in a real generated estimate. That's the natural next step: run one real closing repair and read the output.
+## FIRST LIVE END-TO-END TEST (Aug 13, 2026) — job 22PceRVbk7c6 vs real job 102 Tuscany Way
+
+Jason ran a real closing repair through the v2 pipeline for the first time (test job `22PceRVbk7c6`, "Test Address") using the same 64-page inspection report as the real job **102 Tuscany Way (`22PcXP8Bd2Ck`)**, which he had already restructured and repriced by hand. Direct budget comparison via the JobTread MCP connector.
+
+**A JobTread MCP connector is now available in Cowork** (`mcp__65eb124e-...__query`) — full Pave API access with schema introspection. This supersedes the old note that live JobTread calls had to go through the browser. Useful gotchas learned: `job.costGroups` (not `descendentCostGroups`) is the field on a job; aggregates use the alias form `{"priceSum": {"_": "sum", "$": "price"}}` on a connection, not on `nodes`; `where` uses `["field","like","%x%"]`; there is no free-text `search` arg on `organization.jobs`.
+
+### STRUCTURE WORKED — pricing did not
+
+| Check | Result |
+|---|---|
+| Report coverage | **146 of 147** references addressed (only 2.14.1 missed) |
+| Group count | **20** vs Jason's 19 consolidated — the trade-grouping restructure landed |
+| Naming | No reference numbers, Title Case, all <60 chars — correct |
+| Description format | `Scope Includes:` / `NOTES:` exactly per spec |
+| `Not Included` group | Present, 9 job-specific exclusions, correct two-block format |
+| Client-facing leaks | **Zero** |
+
+Worth noting: **Jason's own hand-corrected version violates his own spec** in two ways the generated output got right — his scope lines use em dashes (`2.1.1 — Remove...`) where §6 requires a spaced hyphen, and every one of his groups carries a `$0` line item named "NOTES (internal — not shown on client documents)", which §4.2 explicitly warns against creating.
+
+### The real problem: total came in at 62% of actual ($30,328 vs $48,851)
+
+The pattern was unambiguous — **every group priced as a sub came out right; every group priced in-house came out ~a third of actual.**
+
+| Trade group | Actual | Test | Ratio |
+|---|---:|---:|---:|
+| Masonry | $7,250 | $823 | 11% |
+| Master Bathroom | $1,568 | $384 | 25% |
+| Exterior Railings & Gate | $4,131 | $1,096 | 27% |
+| Roofing & Flashing | $2,610 | $733 | 28% |
+| Fireplace Service | $3,190 | $938 | 29% |
+| Exterior Doors | $2,715 | $1,213 | 45% |
+| Structural Framing | $3,609 | $1,847 | 51% |
+| HVAC | $4,640 | $3,167 | 68% |
+| Interior Doors/Windows/Cabinets | $1,307 | $1,299 | **99%** |
+| Plumbing | $2,610 | $2,610 | **100%** |
+| Electrical | $4,894 | $5,220 | **107%** |
+| Crawlspace | $3,552 | $7,975 | **224%** (only overshoot) |
+
+**Root cause 1 — trade misclassification (~$10,500 of the $18,500 gap).** Jason priced masonry ($5,000 cost), roofing ($1,800) and fireplace/gas ($2,200) as SUB lump sums. The prompt had all three as in-house, so the model built them from hours + retail materials (masonry = 8 hrs + $70 of mortar = $507 cost). It also billed a *"gas appliance service call (3 units)"* as a **Materials** line at 65% markup instead of a sub line at 45%.
+
+**Root cause 2 — in-house labor hours roughly half.** Real: exterior trim/shutters/fascia/paint **30 hrs**, exterior doors **26 hrs**, master bath **16 hrs**, garage **10 hrs**. Test booked roughly half each. The historical examples calibrate *per-repair-item* hours; once groups span a whole trade, summing per-item guesses omits mobilization, setup, ladder moves, staging, and cleanup.
+
+**Root cause 3 — materials under-quantified.** Real whole-group material totals at cost: doors $243, trim/shutters/fascia/paint $371, garage $230, interior doors/windows/cabinets $226, attic $164, railings $1,964. Test groups often totaled under $100.
+
+**Root cause 4 — crawlspace overshoot**, the only group priced over: assumed full insulation replacement across an unmeasurable 1,500-2,000 sqft. It correctly self-flagged `confidence=low`.
+
+### Jason's rule decisions from this test
+
+- **Masonry → threshold, like flooring/tile.** "Scale and complexity of this means its masonry sub. hourly guys can do a small amount of work with basic masonry supplies." Significant/multi-location repointing, structural masonry, retaining walls, paver patios, settlement → sub. A few joints or one crack patch → in-house.
+- **Fireplace / gas appliance → ALWAYS sub**, no size exception, same as electrical (licensed gas work). A throat damper with no gas involvement may stay in-house if it's the only fireplace item.
+- **Roofing → judgement.** "That could go either way. Judgement can be used." Prompt now gives both directions with real anchors and says prefer sub on a close call.
+- **Materials → keep itemized, fix the pricing** (not bundled into one line the way his hand-corrected version does).
+
+### Changes made
+
+- **`consolidated_trade_group_calibration.csv`** (NEW) — all 19 of Jason's hand-corrected trade groups with real labor hours, real material totals, real sub costs, and scope summaries. Loaded by `load_consolidated_calibration_examples()` and spliced in FIRST among the reference blocks. **This is now the most important calibration source in the project** — it's the only data showing what a whole-trade group costs after consolidation. Append future corrected jobs here.
+- **`GROUP_SIZING_SECTION`** (NEW, v2 prompt) — explains why per-item sums land low, lists the real hour anchors, warns that hours don't scale linearly with finding count, gives material-total anchors with a "under $75 means you under-quantified" floor, and ends with "would the crew or sub actually take this job at this number?"
+- **Trade rules** (shared `SYSTEM_PROMPT`) — masonry threshold, gas/fireplace always sub, roofing judgement, plus new MASONRY / FIREPLACE AND GAS APPLIANCE / ROOFING pricing-reference blocks with the real $5,000 / $2,200 / $1,800 anchors. Added an explicit "if you catch yourself writing labor_lines and material_lines for a trade tagged sub, stop and price it as a sub visit."
+- **Driveway exclusion narrowed** — the model routed 2.14.2 (walkway settlement) to Not Included because §4.6 excludes "driveway repair." Jason includes walkway work in masonry. The exclusion now explicitly says walkways, steps, stoops, patios, retaining walls and exterior stairs ARE in scope.
+- **`find_bundled_groups_with_own_price()`** (NEW) — the run produced a `Gas Line Bonding` group priced at $870 whose own notes said it was "bundled into the electrical sub visit", with 5.7.1 also in the electrical group: a real double charge. Flags a group only when it claims bundling AND every one of its references already appears elsewhere — so a correctly-bundled trade group saying "all electrical items are bundled into a single visit" is not flagged. Verified against exactly that false-positive case.
+- **Catalog matching tightened.** 26 of 68 lookups were price-rejected, and several were the guard accidentally catching a *wrong product* rather than a multipack (fascia board → composite decking, 1/2 in. gas valve → 3/4 in. earthquake valve, downspout straps → downspout extension). Added `_catalog_match_is_plausible()`: a head-noun check (`_head_nouns()` splits on `/` and ` and ` so "wood filler/epoxy" accepts either) plus a fractional-inch size-conflict check. Auto-apply threshold raised 0.50 → 0.65. Tested 11 real cases, all correct.
+- **Photo attach REMOVED.** All 16 attempts threw HTTP 400. Schema introspection confirmed why: `fileTargetType` accepts only `dailyLog, document, task, job, location, contact, account, organization` — **there is no `costItem` target**, so it could never have worked. Product identity is still preserved via the cost item description and custom fields. Do not reinstate without confirming the enum has changed.
+
+### Two post-test changes Jason asked for before deploying (Aug 13, 2026)
+
+**1. Internal NOTES line item RESTORED — this deliberately reverses Spec §4.2.** Jason reviewed the comparison and said he actually likes the `$0` "NOTES (internal)" line item his hand-corrected version had: *"I actually think I like the notes line item that gives additional context related to the inspection report repair items. I didnt mind it."* So `add_cost_groups_v2()` now writes one per group again. The §4.2 safety concern is handled a different way rather than ignored: the note body goes in the cost item's `description` written with **`showDescription: False`**, so it renders in the budget for the OCC team but not on customer-facing documents. Name is `NOTES (internal - not shown on client documents)` (spaced hyphen per §6), `$0` cost and price, cost type Other, same cost code as its group. It's only added to groups that actually got real cost items, so a failed/empty group can't end up as a lone notes line, and a failure writing it is caught and logged rather than killing the estimate.
+
+Content comes from a new shared `_internal_note_flags()` / `build_internal_notes_text()` pair, used by BOTH the notes item and the run log, so the two can't drift: confidence (when not high), the quantity assumption, and any per-material catalog caveat (wrong product / multipack rejected / no match / low-confidence candidates). `log_internal_review_notes()` is kept as well — it's still the fastest way to skim what needs review without opening the job.
+
+**2. Catalog image plumbing fully removed.** `_attach_catalog_image()` and its call site were already gone; this pass removed the remaining dead data: `imageUrl` is no longer requested in the `homeDepotProducts` query, no longer stored on `catalog_match`, and no longer carried in `_summarize_candidates()`. Jason's call: *"we are wasting time tryign to get photos from the catalog into the cost items. Lets get rid of that function. Its just a waste."* Verified the query now requests only id/name/brand/department/modelNumber/storeSkuNumber/unitCost/unitOfMeasure/link.
+
+Verification for both: files compile, mock end-to-end write confirms two notes items written with `showDescription: False` and **zero** client-visible leaks, catalog query carries no `imageUrl`, and the earlier guards still pass (multipack rejection, wrong-product rejection, legitimate match accepted, cost code alias).
+
+**Still open:** 2.14.1 (walkway cracking) was the one reference dropped entirely — no code fix, the prompt's coverage checklist has to catch it. And the 102 Tuscany Way job has 8 genuinely duplicated top-level trade groups (the `22PcdMfL*` set duplicates `Masonry Repairs`, `Exterior Trim`, `Exterior Doors`, `Exterior Railings`, `Garage`, `Gas Line`, `Master Bathroom`, `Interior Balcony Railings`) — likely an artifact of the hand-correction session, worth cleaning up in JobTread. Also unverified: whether the new sizing guidance actually moves the numbers — that needs another live run.
+
+---
+
+**Previous note (now superseded by the live test above):** no live Anthropic or JobTread API test had been run at the time of the spec implementation.
 
 ---
 
