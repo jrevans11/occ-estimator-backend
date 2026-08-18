@@ -1993,6 +1993,27 @@ def process_comment_created(payload):
         if "[OCC-AUTO]" in message:
             return  # Ignore our own automated comments
 
+        # ── [RERUN] comment → rebuild the estimate ────────────────────────────
+        # Checked before the customer-reply logic so a re-run request from the
+        # team is never mistaken for a customer replying (which would tear down
+        # the follow-up chain). Restricted to internal staff for the same
+        # reason a client shouldn't be able to trigger estimate generation by
+        # typing a keyword into the portal.
+        if RERUN_COMMENT_MARKER in message.upper():
+            author = (comment.get("createdByUser") or {}).get("id") \
+                or (event.get("createdByUser") or {}).get("id")
+            if author and author not in get_internal_user_ids():
+                print(f"  rerun: {RERUN_COMMENT_MARKER} comment on job {job_id} from "
+                      f"non-internal user {author} — ignoring")
+                return
+            force = RERUN_FORCE_MARKER in message.upper()
+            rerun_closing_estimate(
+                job_id,
+                source=f"{RERUN_FORCE_MARKER if force else RERUN_COMMENT_MARKER} comment",
+                force=force,
+            )
+            return
+
         check_for_customer_reply_and_pause(job_id)
 
     except Exception as e:
@@ -2911,6 +2932,14 @@ def process_task_updated(payload):
             return
         # ─────────────────────────────────────────────────────────────────────
 
+        # ── Re-run to-do checked off → rebuild the estimate ───────────────────
+        # This handler already runs on a background thread (see the Handler's
+        # threading.Thread dispatch), so the minutes an estimate takes don't
+        # block the webhook response.
+        if task_name == RERUN_TODO_NAME:
+            rerun_closing_estimate(job_id, source=f"'{RERUN_TODO_NAME}' to-do checked off")
+            return
+
         # Handle "Call customer" — no status flip, just chain the next to-do
         if task_name == "📞 Call customer — introduce & qualify":
             next_name   = (TODO_TO_NEXT_C if is_closing else TODO_TO_NEXT).get(task_name)
@@ -3494,6 +3523,284 @@ def flag_failed_estimate(job_id, error="", job_type="Closing Repair"):
         })
     except Exception as e:
         print(f"  Could not log failed-estimate comment on job {job_id}: {e}")
+
+    # Give Jason a one-click retry. See rerun_closing_estimate() — everything
+    # the estimate needs is already on the job, so a failure never needs to be
+    # re-submitted through the form or re-sent by email.
+    if job_type == "Closing Repair":
+        try:
+            create_single_todo(job_id, job_type=job_type,
+                               name=RERUN_TODO_NAME, due_offset=0)
+        except Exception as e:
+            print(f"  Could not create re-run to-do on job {job_id}: {e}")
+
+
+# ── Re-run a failed AI estimate ───────────────────────────────────────────────
+# Aug 2026, Jason's request. Motivation: three closing-repair submissions failed
+# in a row for unrelated reasons (a read timeout on a 7.6MB report, a Word .docx
+# uploaded as the addendum, an API 400) and each one had to be rebuilt by hand.
+#
+# The original ask was "let me forward the email somewhere and have it re-run."
+# That turned out to be solving the wrong problem: when a submission fails, the
+# job, the account, the contact, the address and BOTH uploaded files are already
+# saved in JobTread — only the estimate step failed. The files even carry signed
+# cdn.jobtread.com download URLs. So a re-run needs nothing but the job ID, and
+# no inbound-email infrastructure, no new vendor, and no mailbox auth.
+#
+# Three ways to trigger it, all landing on the same function:
+#   1. Check off the "🔄 Re-run AI estimate" to-do that flag_failed_estimate()
+#      now drops on the job alongside the 🚨 one.
+#   2. Post a comment containing [RERUN] on any closing-repair job.
+#   3. POST /rerun-estimate with {"job_id": "..."} for a manual kick.
+#
+# Deliberately NOT triggered by checking off the existing "🚨 Estimate
+# generation failed — needs manual review" to-do: that to-do means "a human
+# needs to look at this", so checking it off most naturally means "I built it
+# by hand." Overloading it would re-run estimates Jason had already finished
+# manually and append a second set of cost groups underneath his work.
+
+RERUN_TODO_NAME       = "🔄 Re-run AI estimate"
+RERUN_COMMENT_MARKER  = "[RERUN]"
+RERUN_FORCE_MARKER    = "[RERUN FORCE]"
+
+# Jobs currently being re-run, so a double trigger (to-do checked AND comment
+# posted, or an impatient second click) can't run two estimates concurrently
+# and write two sets of cost groups onto the same job.
+_RERUN_LOCK = threading.Lock()
+_RERUN_IN_FLIGHT = set()
+
+
+def _find_job_attachment(files, *keywords):
+    """Pick a file off the location by fuzzy name match.
+
+    Matches on keywords rather than the exact label because the attachment
+    name is whatever the intake step wrote ("Repair Addendum", "Addendum",
+    "repair addendum.pdf"), and a re-run that can't find the file is useless.
+    """
+    for f in files or []:
+        name = (f.get("name") or "").lower()
+        if any(k in name for k in keywords) and f.get("url"):
+            return f
+    return None
+
+
+def get_job_rerun_context(job_id):
+    """Everything call_claude_v2() needs, recovered from an existing job.
+
+    Returns a dict, or None if the job can't support a re-run (wrong type,
+    missing files). Prints the reason in that case — a silent failure here
+    would look exactly like the bug this feature exists to work around.
+    """
+    try:
+        resp = jobtread_query({
+            "job": {
+                "$": {"id": job_id},
+                "name": {},
+                "customFieldValues": {
+                    "$": {"size": 20},
+                    "nodes": {"customField": {"name": {}}, "value": {}}
+                },
+                "costGroups": {
+                    "$": {"size": 100},
+                    "nodes": {
+                        "id": {}, "name": {},
+                        "document": {"id": {}},
+                        "descendentCostItems": {"$": {"size": 1}, "count": {}}
+                    }
+                },
+                "location": {
+                    "address": {},
+                    "files": {
+                        "$": {"size": 25},
+                        "nodes": {"id": {}, "name": {}, "size": {}, "url": {}}
+                    },
+                    "account": {
+                        "contacts": {
+                            "$": {"size": 5},
+                            "nodes": {
+                                "name": {},
+                                "customFieldValues": {
+                                    "$": {"size": 10},
+                                    "nodes": {"customField": {"name": {}}, "value": {}}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    except Exception as e:
+        print(f"  rerun: could not load job {job_id}: {e}")
+        return None
+
+    job = (resp or {}).get("job") or {}
+    if not job:
+        print(f"  rerun: job {job_id} not found")
+        return None
+
+    cfvs = {
+        (n.get("customField") or {}).get("name"): n.get("value")
+        for n in ((job.get("customFieldValues") or {}).get("nodes") or [])
+    }
+    job_type = cfvs.get("Job Type")
+    if job_type != "Closing Repair":
+        print(f"  rerun: job {job_id} is '{job_type}', not Closing Repair — "
+              f"re-run only supports the closing-repair v2 pipeline")
+        return None
+
+    location = job.get("location") or {}
+    files = (location.get("files") or {}).get("nodes") or []
+
+    inspection = _find_job_attachment(files, "inspection")
+    addendum   = _find_job_attachment(files, "addendum")
+    if not inspection and not addendum:
+        print(f"  rerun: job {job_id} has no inspection report or addendum "
+              f"attached — nothing to estimate from")
+        return None
+
+    # Contact details live on the account's contact, not the job.
+    client_name = client_email = client_phone = ""
+    contacts = (((location.get("account") or {}).get("contacts") or {}).get("nodes") or [])
+    if contacts:
+        c = contacts[0]
+        client_name = c.get("name") or ""
+        c_fields = {
+            (n.get("customField") or {}).get("name"): n.get("value")
+            for n in ((c.get("customFieldValues") or {}).get("nodes") or [])
+        }
+        client_email = c_fields.get("Email") or ""
+        client_phone = c_fields.get("Phone") or ""
+
+    # Only BUDGET cost groups count as "already estimated" — groups belonging
+    # to a generated estimate document are a copy of the budget, not a second
+    # estimate. (See the 102 Tuscany Way false double-count.)
+    budget_groups = [
+        g for g in ((job.get("costGroups") or {}).get("nodes") or [])
+        if not g.get("document")
+        and ((g.get("descendentCostItems") or {}).get("count") or 0) > 0
+    ]
+
+    return {
+        "job_id":        job_id,
+        "job_name":      job.get("name") or "",
+        "job_type":      job_type,
+        "client_name":   client_name,
+        "client_email":  client_email,
+        "client_phone":  client_phone,
+        "address":       location.get("address") or "",
+        "notes":         cfvs.get("Notes") or "",
+        "inspection":    inspection,
+        "addendum":      addendum,
+        "budget_groups": budget_groups,
+    }
+
+
+def rerun_closing_estimate(job_id, source="manual", force=False):
+    """Re-run the AI estimate on an existing closing-repair job, using the
+    files already attached to it.
+
+    force=True writes cost groups even if the job already has some. Off by
+    default: the common case is a job whose estimate failed and therefore has
+    zero groups, and appending a second set underneath a budget Jason already
+    built by hand would be worse than doing nothing.
+    """
+    with _RERUN_LOCK:
+        if job_id in _RERUN_IN_FLIGHT:
+            print(f"  rerun: job {job_id} is already being re-run — ignoring "
+                  f"duplicate trigger from {source}")
+            return False
+        _RERUN_IN_FLIGHT.add(job_id)
+
+    try:
+        print(f"  rerun: starting re-run of job {job_id} (trigger: {source})")
+        ctx = get_job_rerun_context(job_id)
+        if not ctx:
+            return False
+
+        if ctx["budget_groups"] and not force:
+            names = ", ".join(g.get("name", "")[:40] for g in ctx["budget_groups"][:3])
+            msg = (f"already has {len(ctx['budget_groups'])} priced cost group(s) "
+                   f"({names}...). Re-running would add a second set underneath them. "
+                   f"Comment {RERUN_FORCE_MARKER} on the job if you really want that, "
+                   f"or clear the budget first.")
+            print(f"  rerun: job {job_id} {msg}")
+            _rerun_comment(job_id, f"Re-run skipped — this job {msg}")
+            return False
+
+        addendum_bytes = b""
+        inspection_bytes = b""
+
+        if ctx["addendum"]:
+            print(f"  rerun: downloading {ctx['addendum']['name']} "
+                  f"({ctx['addendum'].get('size', 0):,} bytes)...")
+            try:
+                addendum_bytes = download_file(ctx["addendum"]["url"])
+            except Exception as e:
+                print(f"  rerun: addendum download failed ({e}) — continuing without it")
+
+        if ctx["inspection"]:
+            print(f"  rerun: downloading {ctx['inspection']['name']} "
+                  f"({ctx['inspection'].get('size', 0):,} bytes)...")
+            try:
+                inspection_bytes = download_file(ctx["inspection"]["url"])
+            except Exception as e:
+                print(f"  rerun: inspection download failed ({e}) — continuing without it")
+
+        if not addendum_bytes and not inspection_bytes:
+            _rerun_comment(job_id, "Re-run failed — neither attached file could be "
+                                   "downloaded from JobTread.")
+            return False
+
+        print("  rerun: calling Claude (v2 — labor+material breakdown)...")
+        estimate = v2.call_claude_v2(
+            addendum_bytes, inspection_bytes,
+            ctx["client_name"], ctx["client_phone"], ctx["client_email"],
+            ctx["address"], ctx["notes"],
+            system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
+        )
+        added, total, _ = _run_v2_estimate_and_write(
+            job_id, estimate, inspection_pdf_bytes=inspection_bytes
+        )
+
+        print(f"  rerun: job {job_id} rebuilt — {added} cost groups, ${total:,.2f}")
+        _rerun_comment(
+            job_id,
+            f"Estimate re-generated successfully ({added} cost groups, "
+            f"${total:,.2f}). Triggered by: {source}."
+        )
+
+        # Clear the failure flags now that there's a real estimate.
+        job_info = get_job_info(job_id)
+        complete_todo_by_name(job_info, "🚨 Estimate generation failed — needs manual review")
+        complete_todo_by_name(job_info, RERUN_TODO_NAME)
+        return True
+
+    except Exception as e:
+        import traceback
+        print(f"  rerun: job {job_id} failed: {e}")
+        traceback.print_exc()
+        _rerun_comment(job_id, f"Re-run failed again: {str(e)[:400]}")
+        return False
+    finally:
+        with _RERUN_LOCK:
+            _RERUN_IN_FLIGHT.discard(job_id)
+
+
+def _rerun_comment(job_id, message):
+    """Log a re-run outcome to the job. Best-effort — never raises."""
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "message": f"[OCC-AUTO] {message}",
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+    except Exception as e:
+        print(f"  rerun: could not post comment on job {job_id}: {e}")
 
 
 def create_jobtread_job(client_name, client_phone, client_email, address, notes_text, file_urls, estimate=None):
@@ -4406,6 +4713,22 @@ class Handler(BaseHTTPRequestHandler):
                 process_job_created(body)
             elif path == "/jobtread-comment-created":
                 process_comment_created(body)
+            elif path == "/rerun-estimate":
+                # Manual kick: POST {"job_id": "..."} (optionally "force": true).
+                # Also accepts ?job_id=... on the query string.
+                try:
+                    data = json.loads(body) if body else {}
+                except Exception:
+                    data = {}
+                rerun_job_id = (data.get("job_id") or "").strip()
+                if not rerun_job_id:
+                    print("  /rerun-estimate: no job_id provided — nothing to do")
+                else:
+                    rerun_closing_estimate(
+                        rerun_job_id,
+                        source="/rerun-estimate endpoint",
+                        force=bool(data.get("force")),
+                    )
             elif path == "/sales-tool-closing-estimate":
                 process_sales_tool_closing_estimate(body)
             elif path == "/sales-tool-general-estimate":
