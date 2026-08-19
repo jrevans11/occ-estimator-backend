@@ -1176,6 +1176,34 @@ def create_job_daily_log(job_id, notes_text, log_date=None):
         print(f"  Daily Log creation failed for job {job_id} (non-fatal): {e}")
 
 
+def log_internal_note(job_id, message):
+    """Post an internal note to the Daily Log instead of a Job Message.
+
+    createComment posts a Job Message, which notifies every internal user.
+    These notes are informational only — nobody needs an inbox ping.
+
+    DO NOT use this for the [OCC-AUTO] marker comments the automation reads
+    back — parse_sent_date(), already_sent_followup(), already_pending_review()
+    and has_pending_reply_pause() all query job.comments to find them. Those
+    MUST stay as comments or the follow-up chain silently stops working.
+    """
+    from datetime import date as _date
+    try:
+        jobtread_query({
+            "createDailyLog": {
+                "$": {
+                    "jobId": job_id,
+                    "date": _date.today().isoformat(),
+                    "notes": message,
+                    "notify": False,
+                },
+                "createdDailyLog": {"id": {}}
+            }
+        })
+    except Exception as e:
+        print(f"  Could not log internal note on job {job_id}: {e}")
+
+
 def create_job_record(location_id, cfg):
     """Create the job. cfg: job_type, status_field, status_value, pm, projected_budget (opt),
     job_name (opt → None for auto Job #####), notes_text."""
@@ -1187,13 +1215,10 @@ def create_job_record(location_id, cfg):
         job_cfv["Project Manager"] = cfg["pm"]
     if cfg.get("projected_budget"):
         job_cfv["Projected Budget"] = cfg["projected_budget"]
-    if cfg.get("notes_text"):
-        # See JOB_NOTES_FIELD_SAFE_LIMIT / _split_notes_for_job() above —
-        # only the safe, short portion (or a pointer, if the real notes are
-        # too long) goes in this customer-visible field. create_job_full()
-        # posts the full text as a Daily Log separately when it's too long.
-        job_field_notes, _ = _split_notes_for_job(cfg["notes_text"])
-        job_cfv["Notes"] = job_field_notes
+    # Intake notes deliberately do NOT go in the job-level "Notes" custom
+    # field — that field renders on customer-facing estimate documents. The
+    # full text goes to a Daily Log instead; see log_internal_note() and the
+    # calls in create_job_stub() / create_job_full().
 
     job_input = {
         "locationId": location_id,
@@ -1999,7 +2024,7 @@ def process_comment_created(payload):
         # the follow-up chain). Restricted to internal staff for the same
         # reason a client shouldn't be able to trigger estimate generation by
         # typing a keyword into the portal.
-        if RERUN_COMMENT_MARKER in message.upper():
+        if _is_rerun_request(message):
             author = (comment.get("createdByUser") or {}).get("id") \
                 or (event.get("createdByUser") or {}).get("id")
             if author and author not in get_internal_user_ids():
@@ -3188,9 +3213,10 @@ def create_job_stub(cfg):
 
     # See create_job_full()'s matching comment — same overflow handling
     # applies here since this path also runs create_job_record().
-    _, overflow_notes = _split_notes_for_job(cfg.get("notes_text", ""))
-    if overflow_notes:
-        create_job_daily_log(job_id, overflow_notes)
+    # Intake notes go to a Daily Log — the "Notes" custom field renders on
+    # customer-facing estimate documents.
+    if cfg.get("notes_text"):
+        log_internal_note(job_id, cfg["notes_text"])
 
     attach_files(job_id, cfg.get("file_urls", []))
     return job_id
@@ -3219,9 +3245,10 @@ def create_job_full(cfg):
     # the full text was held back and needs to go somewhere now that we
     # have a job_id. Daily Log, not the customer-facing Notes field (see
     # _split_notes_for_job() / create_job_daily_log() above for why).
-    _, overflow_notes = _split_notes_for_job(cfg.get("notes_text", ""))
-    if overflow_notes:
-        create_job_daily_log(job_id, overflow_notes)
+    # Intake notes go to a Daily Log — the "Notes" custom field renders on
+    # customer-facing estimate documents.
+    if cfg.get("notes_text"):
+        log_internal_note(job_id, cfg["notes_text"])
 
     add_cost_groups(job_id, cfg.get("estimate"))
     attach_files(job_id, cfg.get("file_urls", []))
@@ -3463,21 +3490,9 @@ def process_sales_tool_general_estimate(body):
         if projected:
             update_fields["Projected Budget"] = projected
         if gated_notes and gated_notes != notes_text:
-            # _apply_estimate_gate appended a "needs consult" note — surface it
-            # as a comment rather than silently rewriting the job description.
-            try:
-                jobtread_query({
-                    "createComment": {
-                        "$": {
-                            "targetType": "job",
-                            "targetId": job_id,
-                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
-                        },
-                        "createdComment": {"id": {}}
-                    }
-                })
-            except Exception as ce:
-                print(f"  Could not log consult-needed comment on job {job_id}: {ce}")
+            # Daily log, not a comment — createComment posts a Job Message
+            # that notifies every internal user.
+            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
 
         if update_fields:
             try:
@@ -3508,21 +3523,12 @@ def flag_failed_estimate(job_id, error="", job_type="Closing Repair"):
     except Exception as e:
         print(f"  Could not create failed-estimate to-do on job {job_id}: {e}")
 
-    try:
-        jobtread_query({
-            "createComment": {
-                "$": {
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "message": f"[OCC-AUTO] AI estimate generation failed: {error[:500]}. "
-                               f"The lead, contact info, and uploaded files were saved successfully — "
-                               f"only the automatic cost estimate needs to be built manually.",
-                },
-                "createdComment": {"id": {}}
-            }
-        })
-    except Exception as e:
-        print(f"  Could not log failed-estimate comment on job {job_id}: {e}")
+    log_internal_note(
+        job_id,
+        f"[OCC-AUTO] AI estimate generation failed: {error[:500]}. "
+        f"The lead, contact info, and uploaded files were saved successfully — "
+        f"only the automatic cost estimate needs to be built manually."
+    )
 
     # Give Jason a one-click retry. See rerun_closing_estimate() — everything
     # the estimate needs is already on the job, so a failure never needs to be
@@ -3562,6 +3568,31 @@ def flag_failed_estimate(job_id, error="", job_type="Closing Repair"):
 RERUN_TODO_NAME       = "🔄 Re-run AI estimate"
 RERUN_COMMENT_MARKER  = "[RERUN]"
 RERUN_FORCE_MARKER    = "[RERUN FORCE]"
+
+
+def _is_rerun_request(message):
+    """True if a job comment is asking for the estimate to be rebuilt.
+
+    Accepts three forms, because the first real attempt in production had
+    Jason typing "[RERUN]" and then plain "RERUN" seconds later when nothing
+    happened:
+      - "[RERUN]" anywhere in the message
+      - "[RERUN FORCE]" anywhere in the message
+      - a comment whose entire body is just the word "rerun"
+
+    A bare "rerun" inside a longer sentence deliberately does NOT match — "we
+    should rerun this after closing" is a note to a colleague, not a command,
+    and rebuilding someone's budget on a passing mention would be a nasty
+    surprise.
+
+    NOTE: "[RERUN FORCE]" does not contain the substring "[RERUN]", so it has
+    to be checked explicitly. The previous `RERUN_COMMENT_MARKER in message`
+    test silently ignored every force request.
+    """
+    upper = (message or "").upper()
+    if RERUN_FORCE_MARKER in upper or RERUN_COMMENT_MARKER in upper:
+        return True
+    return re.sub(r"[^A-Z]", "", upper) == "RERUN"
 
 # Jobs currently being re-run, so a double trigger (to-do checked AND comment
 # posted, or an impatient second click) can't run two estimates concurrently
@@ -3724,7 +3755,7 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
                    f"Comment {RERUN_FORCE_MARKER} on the job if you really want that, "
                    f"or clear the budget first.")
             print(f"  rerun: job {job_id} {msg}")
-            _rerun_comment(job_id, f"Re-run skipped — this job {msg}")
+            log_internal_note(job_id, f"Re-run skipped — this job {msg}")
             return False
 
         addendum_bytes = b""
@@ -3747,7 +3778,7 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
                 print(f"  rerun: inspection download failed ({e}) — continuing without it")
 
         if not addendum_bytes and not inspection_bytes:
-            _rerun_comment(job_id, "Re-run failed — neither attached file could be "
+            log_internal_note(job_id, "Re-run failed — neither attached file could be "
                                    "downloaded from JobTread.")
             return False
 
@@ -3779,28 +3810,11 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
         import traceback
         print(f"  rerun: job {job_id} failed: {e}")
         traceback.print_exc()
-        _rerun_comment(job_id, f"Re-run failed again: {str(e)[:400]}")
+        log_internal_note(job_id, f"Re-run failed again: {str(e)[:400]}")
         return False
     finally:
         with _RERUN_LOCK:
             _RERUN_IN_FLIGHT.discard(job_id)
-
-
-def _rerun_comment(job_id, message):
-    """Log a re-run outcome to the job. Best-effort — never raises."""
-    try:
-        jobtread_query({
-            "createComment": {
-                "$": {
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "message": f"[OCC-AUTO] {message}",
-                },
-                "createdComment": {"id": {}}
-            }
-        })
-    except Exception as e:
-        print(f"  rerun: could not post comment on job {job_id}: {e}")
 
 
 def create_jobtread_job(client_name, client_phone, client_email, address, notes_text, file_urls, estimate=None):
@@ -4111,18 +4125,9 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
         if projected:
             update_fields["Projected Budget"] = projected
         if gated_notes != notes:
-            try:
-                jobtread_query({
-                    "createComment": {
-                        "$": {
-                            "targetType": "job", "targetId": job_id,
-                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
-                        },
-                        "createdComment": {"id": {}}
-                    }
-                })
-            except Exception as ce:
-                print(f"  Could not log consult comment: {ce}")
+            # Daily log, not a comment — createComment posts a Job Message
+            # that notifies every internal user.
+            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
         if update_fields:
             try:
                 update_job_custom_fields(job_id, update_fields)
@@ -4203,18 +4208,9 @@ def process_remodel(data):
         if projected:
             update_fields["Projected Budget"] = projected
         if gated_notes != notes:
-            try:
-                jobtread_query({
-                    "createComment": {
-                        "$": {
-                            "targetType": "job", "targetId": job_id,
-                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
-                        },
-                        "createdComment": {"id": {}}
-                    }
-                })
-            except Exception as ce:
-                print(f"  Could not log consult comment: {ce}")
+            # Daily log, not a comment — createComment posts a Job Message
+            # that notifies every internal user.
+            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
         if update_fields:
             try:
                 update_job_custom_fields(job_id, update_fields)
@@ -4317,18 +4313,9 @@ def process_prelisting(data):
         if projected:
             update_fields["Projected Budget"] = projected
         if gated_notes != notes:
-            try:
-                jobtread_query({
-                    "createComment": {
-                        "$": {
-                            "targetType": "job", "targetId": job_id,
-                            "message": f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}",
-                        },
-                        "createdComment": {"id": {}}
-                    }
-                })
-            except Exception as ce:
-                print(f"  Could not log consult comment: {ce}")
+            # Daily log, not a comment — createComment posts a Job Message
+            # that notifies every internal user.
+            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
         if update_fields:
             try:
                 update_job_custom_fields(job_id, update_fields)
