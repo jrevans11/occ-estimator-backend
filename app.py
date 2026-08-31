@@ -1565,6 +1565,33 @@ FOLLOWUP_PENDING_MARKERS = {
     2:  "[OCC-PENDING-CR]",  # closing repair 48-hr check-in
 }
 
+# ── Follow-up milestones and catch-up behaviour ──────────────────────────────
+# The daily run used to fire on an EXACT day match (days_since == 3, == 7,
+# == 14). That made a single missed run permanently and silently skip that
+# job's follow-up — a deploy, a cold start, an API hiccup, or a scheduler that
+# stopped calling us at all. That last one actually happened: the cron went
+# quiet on 2026-07-13 and six weeks of estimates went out with no follow-up,
+# and because every job simply fell past its exact day, there was nothing in
+# any log to notice.
+#
+# The run now picks the HIGHEST milestone that is due (days_since >= N) and
+# has not already been sent or queued, so a job that was missed still gets
+# picked up by the next run that does happen. Only one email goes out per run:
+# a job sitting at day 9 with nothing sent gets the Day 7 message, and Day 3 is
+# marked superseded so it can never fire late behind it.
+FOLLOWUP_DAYS = [3, 7, 14]          # non-closing milestones, ascending
+
+# Catch-up applies only to estimates sent on or after this date. Jobs sent
+# before it keep the old exact-day behaviour, so restoring the cron does not
+# dump a backlog of late follow-ups on estimates that have already gone cold.
+# Bump this to the deploy date if the run is ever off for a long stretch again.
+FOLLOWUP_SELF_HEAL_FROM = "2026-08-31"
+
+# A closing-repair check-in is a 48-hour "did this land?" nudge. Catching one
+# up a couple of days late is still useful; catching one up two weeks late is
+# not, so the catch-up window is deliberately short.
+CLOSING_CHECKIN_MAX_DAYS = 5
+
 # ── Follow-up manual call steps ──────────────────────────────────────────────
 # The cron (process_send_followups) creates the "Review & send" to-do for
 # Day 3 / 7 / 14 directly off the real elapsed time since sending — there is
@@ -2304,6 +2331,88 @@ def log_pending_review(job_id, day):
         print(f"  Could not log pending review comment: {e}")
 
 
+def self_heal_enabled(sent_date):
+    """True if catch-up applies to an estimate sent on this date.
+
+    Estimates sent before FOLLOWUP_SELF_HEAL_FROM keep the old exact-day
+    matching, so turning the daily run back on after an outage does not fire a
+    pile of late follow-ups at customers who have already moved on.
+    """
+    from datetime import date
+    if not sent_date:
+        return False
+    try:
+        cutoff = date.fromisoformat(FOLLOWUP_SELF_HEAL_FROM)
+    except ValueError:
+        return False
+    return sent_date >= cutoff
+
+
+def pick_due_followup(days_since, comments, sent_date):
+    """Which follow-up milestone (if any) this job is due for right now.
+
+    Returns (day, superseded_days):
+      day             — the milestone to queue, or None if nothing is due
+      superseded_days — earlier milestones to mark as skipped, so they cannot
+                        fire late behind the one being queued
+
+    With catch-up enabled this is a >= match on the highest due milestone;
+    without it, the original exact-day match.
+    """
+    due = [d for d in FOLLOWUP_DAYS if days_since >= d]
+    if not due:
+        return None, []
+
+    if not self_heal_enabled(sent_date):
+        # Legacy behaviour: only fire on the exact day.
+        if days_since not in FOLLOWUP_DAYS:
+            return None, []
+        if already_sent_followup(comments, days_since) or already_pending_review(comments, days_since):
+            return None, []
+        return days_since, []
+
+    target = due[-1]
+    if already_sent_followup(comments, target) or already_pending_review(comments, target):
+        return None, []   # this milestone is already handled — nothing to do
+
+    superseded = [
+        d for d in due[:-1]
+        if not already_sent_followup(comments, d) and not already_pending_review(comments, d)
+    ]
+    return target, superseded
+
+
+def log_superseded_followup(job_id, day, in_favor_of):
+    """Mark an earlier milestone as skipped because the run caught up past it.
+
+    Writes the same pending marker the queueing path writes, so every later
+    run treats this milestone as handled and the customer never receives a
+    stale Day 3 email a week after the Day 7 one.
+    """
+    from datetime import date
+    marker = FOLLOWUP_PENDING_MARKERS.get(day, "")
+    if not marker:
+        return
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "message": (
+                        f"{marker} Day {day} follow-up skipped on "
+                        f"{date.today().isoformat()} — job was already past Day "
+                        f"{in_favor_of} when the follow-up run caught up."
+                    ),
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+        print(f"  Day {day} marked superseded by Day {in_favor_of}")
+    except Exception as e:
+        print(f"  Could not log superseded marker for Day {day}: {e}")
+
+
 def create_review_todo(job_id, job_type, todo_name, email_body):
     """Create the review to-do with the AI email in the description field."""
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
@@ -2387,7 +2496,13 @@ def process_send_followups():
 
         # ── Closing Repair: single 48-hr check-in if not viewed ──────────────
         if job_type_label == "Closing Repair":
-            if days_since != 2:
+            if self_heal_enabled(sent_date):
+                # Day 2 or a little later — a missed run should not cost the
+                # check-in entirely, but a two-week-late "did this land?" note
+                # is worse than none.
+                if days_since < 2 or days_since > CLOSING_CHECKIN_MAX_DAYS:
+                    continue
+            elif days_since != 2:
                 continue
             if already_sent_followup(comments, 2) or already_pending_review(comments, 2):
                 print(f"  Job {job_id}: closing repair check-in already queued/sent — skipping")
@@ -2434,19 +2549,14 @@ def process_send_followups():
             continue
 
         # ── Home Repair / Remodel / Pre-listing: Day 3, 7, 14 chain ─────────
-        # Day 2 is closing-repair-only — skip it for all other job types
-        if days_since == 2:
-            continue
-        if days_since not in FOLLOWUP_SENT_MARKERS:
-            continue
-
-        if already_sent_followup(comments, days_since):
-            print(f"  Job {job_id}: Day {days_since} follow-up already sent — skipping")
+        # Day 2 is closing-repair-only — skip it for all other job types.
+        followup_day, superseded_days = pick_due_followup(days_since, comments, sent_date)
+        if not followup_day:
             continue
 
-        if already_pending_review(comments, days_since):
-            print(f"  Job {job_id}: Day {days_since} review to-do already queued — skipping")
-            continue
+        if followup_day != days_since:
+            print(f"  Job {job_id}: {days_since} days out — catching up with the "
+                  f"Day {followup_day} follow-up")
 
         if check_for_customer_reply_and_pause(job_id, sent_date=sent_date):
             print(f"  Job {job_id}: automation paused on customer reply — skipping")
@@ -2465,14 +2575,20 @@ def process_send_followups():
             if cg.get("name")
         ]
         email_body = generate_followup_email(
-            first_name, days_since, job_type_label, job_address, job_notes, cost_group_names
+            first_name, followup_day, job_type_label, job_address, job_notes, cost_group_names
         )
 
-        todo_name = FOLLOWUP_REVIEW_TODO_NAMES[days_since]
+        todo_name = FOLLOWUP_REVIEW_TODO_NAMES[followup_day]
         create_review_todo(job_id, job_type_label, todo_name, email_body)
-        log_pending_review(job_id, days_since)
+        log_pending_review(job_id, followup_day)
+
+        # Close out anything this run jumped over, so an older milestone can
+        # never fire a week behind the one just queued.
+        for skipped_day in superseded_days:
+            log_superseded_followup(job_id, skipped_day, followup_day)
+
         queued_count += 1
-        print(f"  Job {job_id}: Day {days_since} review to-do queued for {first_name}")
+        print(f"  Job {job_id}: Day {followup_day} review to-do queued for {first_name}")
 
     print(f"Daily follow-up run complete: {queued_count} review to-dos created")
     return queued_count
@@ -4233,6 +4349,33 @@ def update_render_env(key, value):
         print(f"  Render env update response: {r.status}")
 
 
+# ── Daily follow-up run: scheduling plumbing ─────────────────────────────────
+# The run is slow by nature — a 90-day job scan, a detail query per job at
+# Sent, and a Claude call per eligible job. It used to execute inside the HTTP
+# request, so cron-job.org (30s response timeout) recorded a FAILURE on every
+# run even when the work completed fine, and eventually auto-disabled the job.
+# Nothing in the code was ever switched off; the scheduler simply gave up, and
+# the follow-up chain went silent for six weeks.
+#
+# So the endpoint now answers immediately and works in the background, exactly
+# like the webhook POST handlers already do. Whatever calls it — cron-job.org,
+# a JobTread scheduled workflow, a manual browser hit — gets a sub-second
+# response and can never time out on us again.
+_followup_run_lock = threading.Lock()
+
+
+def _run_send_followups_background():
+    """Execute the daily follow-up run, then release the in-flight lock."""
+    try:
+        count = process_send_followups()
+        print(f"Follow-up run complete: {count} review to-dos created.")
+    except Exception as e:
+        import traceback
+        print(f"Follow-up run failed: {e}\n{traceback.format_exc()}")
+    finally:
+        _followup_run_lock.release()
+
+
 class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
@@ -4247,20 +4390,30 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"OCC Estimator Backend is running!")
 
     def _handle_send_followups(self):
-        """Daily cron endpoint — send follow-up emails for Day 3, 7, 14."""
-        try:
-            count = process_send_followups()
-            msg = f"Follow-up run complete: {count} emails sent."
-            self.send_response(200)
+        """Daily cron endpoint — queue Day 2/3/7/14 follow-up review to-dos.
+
+        Answers straight away and does the work on a background thread; see the
+        note on _followup_run_lock above for why that matters. The lock also
+        stops a double trigger (two schedulers, or an impatient retry) from
+        running two scans at once and racing to create the same to-do twice.
+        """
+        if not _followup_run_lock.acquire(blocking=False):
+            msg = "Follow-up run already in progress — ignoring duplicate trigger."
+            print(msg)
+            self.send_response(409)
             self.end_headers()
             self.wfile.write(msg.encode("utf-8"))
-        except Exception as e:
-            import traceback
-            err = f"Follow-up run failed: {e}\n{traceback.format_exc()}"
-            print(err)
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(err.encode("utf-8"))
+            return
+
+        t = threading.Thread(target=_run_send_followups_background)
+        t.daemon = True
+        t.start()
+
+        msg = "Follow-up run started — results will appear in the service logs."
+        print("Follow-up run triggered")
+        self.send_response(202)
+        self.end_headers()
+        self.wfile.write(msg.encode("utf-8"))
 
     def _handle_refresh(self):
         """Pull all closing repair cost groups from JobTread and update pricing."""
