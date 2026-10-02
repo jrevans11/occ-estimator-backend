@@ -1809,6 +1809,25 @@ def check_for_customer_reply_and_pause(job_id, sent_date=None):
         return False
 
 
+def lookup_comment(comment_id):
+    """Fetch a comment's text, author and job from JobTread by ID. Returns {}
+    on any failure so a lookup problem can never break the webhook handler."""
+    try:
+        result = jobtread_query({
+            "comment": {
+                "$": {"id": comment_id},
+                "id": {},
+                "message": {},
+                "createdByUser": {"id": {}},
+                "job": {"id": {}},
+            }
+        })
+        return result.get("comment") or {}
+    except Exception as e:
+        print(f"  comment lookup failed for {comment_id}: {e}")
+        return {}
+
+
 def process_comment_created(payload):
     """
     Fired when any comment is created in JobTread (commentCreated webhook).
@@ -1820,12 +1839,31 @@ def process_comment_created(payload):
         data = json.loads(payload) if isinstance(payload, str) else payload
         event = data.get("createdEvent") or {}
         comment = event.get("comment") or {}
+        event_data = event.get("data") or {}
+        next_state = event_data.get("next") or {}
+
         job_id = (comment.get("job") or {}).get("id") or (event.get("job") or {}).get("id")
+        message = (comment.get("message")
+                   or next_state.get("message")
+                   or event_data.get("message")
+                   or "")
+
+        # FIX (Oct 2026): the commentCreated webhook only carries the comment's
+        # ID, not its text — the same way taskUpdated carries only the task ID.
+        # That's why "[RERUN]" comments never fired: `message` was always
+        # blank. If the text (or the job) didn't come through, look the
+        # comment up by ID. Verified against the Pave API: comment(id) returns
+        # message, createdByUser and job.
+        comment_id = comment.get("id")
+        if comment_id and (not message or not job_id):
+            details = lookup_comment(comment_id)
+            message = message or details.get("message") or ""
+            job_id = job_id or (details.get("job") or {}).get("id")
+            if details.get("createdByUser") and not comment.get("createdByUser"):
+                comment["createdByUser"] = details["createdByUser"]
 
         if not job_id:
             return  # Comment not attached to a job — nothing to do
-
-        message = comment.get("message") or ""
         if "[OCC-AUTO]" in message:
             return  # Ignore our own automated comments
 
