@@ -132,6 +132,37 @@ import urllib.error
 import http.client
 import os
 
+# ─────────────────────────────────────────────────────────────────────────
+# CLOSING REPAIR ESTIMATE MODEL (Oct 2026)
+# ─────────────────────────────────────────────────────────────────────────
+# Which Claude model writes closing repair estimates is controlled by the
+# CLOSING_ESTIMATE_MODEL environment variable on Render, so switching models
+# (or switching back) is a dashboard change, not a code change.
+#   - not set / blank        -> claude-sonnet-4-6 (the original model)
+#   - "claude-sonnet-5-5"    -> Sonnet 5.5 test
+# Only the closing repair flow reads this. Home repair / remodel /
+# pre-listing estimates and follow-up emails in app.py are unaffected.
+DEFAULT_CLOSING_ESTIMATE_MODEL = "claude-sonnet-4-6"
+
+# Claude 4.x-and-earlier model families. Anything NOT starting with one of
+# these is treated as a newer model (Sonnet 5 / 5.5, Opus 5+, etc.).
+_LEGACY_MODEL_PREFIXES = ("claude-sonnet-4", "claude-opus-4", "claude-haiku-4", "claude-3")
+
+
+def get_closing_estimate_model():
+    """Read at call time so a Render env change takes effect on the next
+    estimate after the service restarts."""
+    model = (os.environ.get("CLOSING_ESTIMATE_MODEL") or "").strip()
+    return model or DEFAULT_CLOSING_ESTIMATE_MODEL
+
+
+def _is_newer_model(model):
+    """True for Claude 5-generation models. Those (a) think before answering
+    by default, and that thinking counts against max_tokens, and (b) use a
+    tokenizer that produces ~30% more tokens for the same text — so they
+    need a higher output ceiling than the 4.6 defaults below."""
+    return not str(model).startswith(_LEGACY_MODEL_PREFIXES)
+
 # Resolve the historical CSV relative to THIS file's directory, not the
 # process's current working directory. Render (or any deployment) may not
 # invoke app.py with the repo root as cwd, and a relative "just the
@@ -3097,7 +3128,7 @@ Property address: {address}
 def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
                     client_phone, client_email, address, notes,
                     system_prompt, anthropic_api_key,
-                    model="claude-sonnet-4-6", max_tokens=24000, timeout=180):
+                    model=None, max_tokens=24000, timeout=180):
     """Replaces call_claude() in app.py. Same retry/parsing behavior, but:
       - addendum is now native PDF (vision), not extract_pdf_text
       - both documents are optional independently (see build_claude_document_content)
@@ -3279,7 +3310,7 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
 
 
 def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
-                          model="claude-sonnet-4-6", max_tokens=24000, timeout=180,
+                          model=None, max_tokens=24000, timeout=180,
                           caller_label="call_claude_v2", beta_headers=None):
     """Shared retry/timeout/parsing core behind BOTH call_claude_v2 (closing
     repairs — two optional PDFs) and call_claude_v2_general (Home Repair /
@@ -3302,6 +3333,20 @@ def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
         "text": system_prompt,
         "cache_control": {"type": "ephemeral"},
     }]
+
+    if not model:
+        model = get_closing_estimate_model()
+
+    # Newer models think first (adaptive thinking is on by default — we
+    # leave it on, an estimate benefits from reasoning) and that thinking
+    # shares the max_tokens budget with the JSON answer. Start them higher
+    # and let the truncation escalation below go up to 128k.
+    newer = _is_newer_model(model)
+    if newer:
+        max_tokens = max(max_tokens, 32000)
+    escalation_cap = 128000 if newer else 64000
+
+    print(f"  {caller_label}: model={model}, max_tokens={max_tokens}")
 
     current_max_tokens = max_tokens
     last_error = None
@@ -3329,7 +3374,7 @@ def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
                 # Not transient — retrying with the same ceiling truncates at
                 # exactly the same place (BUG FIX #2 learned this the hard
                 # way). Escalate instead, up to the model's 64k output cap.
-                bumped = min(64000, int(current_max_tokens * 1.5))
+                bumped = min(escalation_cap, int(current_max_tokens * 1.5))
                 if bumped > current_max_tokens and attempt < 3:
                     print(f"  Response truncated at max_tokens={current_max_tokens} "
                           f"({len(raw)} chars) — raising to {bumped} for the next attempt")
