@@ -1,0 +1,107 @@
+# OCC Site Scope Tool - Build Plan
+
+Planning notes from Oct 18-19, 2026. Status: **planned, not built.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step) and `floor-plan-drawing-rules.md` (drawing rules). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+
+**This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
+
+## Goal
+Finish info-taking on site, trigger the analysis right there, get follow-up questions while still on site, answer quickly, and have everything else finished automatically: Site Visit Notes Page, photo descriptions, floor plan + elevations, CompanyCam scope Page, JobTread budget. As accurate as possible, as efficient as possible.
+
+## Typical job size
+- 10-20 photos per site visit, a few dictated notes (videos optional)
+- 3-5 site visits per week (about 13-22 a month)
+
+## Where the code lives (decided Oct 19)
+- **Backend: this repo** (jrevans11/occ-estimator-backend, Render service occ-estimator) - not a new repo or a second Render service.
+  - Reuses what is already here: JobTread helpers, vendor invoice-history CSVs (rate anchors), markup rules, 3x case-price check, background-thread pattern from `/send-followups`. No extra Render cost and no free-tier sleep delay when Start is tapped on site.
+  - **New code goes in new files** - e.g. `site_scope.py` (run logic: fetch media, AI calls, questions, build) and `scope_drawings.py` (drawings). `app.py` only gets the few lines needed to register the new endpoints.
+  - **Memory:** the service has 512 MB shared with the estimator and follow-ups. Render drawings with a lightweight Python library (e.g. Pillow, or pure-Python SVG-to-PNG if it installs cleanly on Render) - not a headless browser.
+  - **Isolation:** each scope run runs in its own background thread with errors caught and logged, so a scope failure cannot take down follow-ups or the estimator.
+  - Split into its own repo/service later only if it outgrows the shared memory or needs to change independently of the live estimator.
+- **Frontend: jrevans11/sales-lead-tool** (Next.js 14 on Vercel), page at `app/intake/scope/page.tsx`, API routes under `app/api/`. See that repo's CLAUDE.md.
+
+## Facts found in the repos (Oct 19)
+- **Job -> CompanyCam project link:** JobTread `job.companycamId` holds the CompanyCam project ID (JobTread auto-creates the project a few seconds after a job is created). sales-lead-tool `lib/companycam.ts` already reads it (`waitForCompanycamProjectId`) and pushes photos/documents to CompanyCam with `COMPANYCAM_API_KEY` (set in Vercel). Use this instead of name/address matching.
+- `components/VoiceMemo.tsx` in sales-lead-tool is an empty stub (returns null) - the recorder is new work.
+- sales-lead-tool already ships a `manifest.json` and its README has Jason add it to the iPhone Home Screen - the prerequisite for web push on iPhone.
+- Photos are compressed client-side and stored in Vercel Blob (`BLOB_READ_WRITE_TOKEN`) - reuse for note audio.
+- Job photos in JobTread live on the `location` record, not the job.
+
+## Capture method (decided Oct 19)
+- **Photos in CompanyCam** - a wide shot of each room plus one straight-on shot of each wall that has something on it.
+- **Dictated notes in the scope page, not video transcripts.** Jason talks the way he would in a walkthrough video. Any number of notes per visit (one per room or per scope). No 10-20 minute wait for video uploads and transcripts (Oct 19 test: a 2-minute video recorded 12:21 finished uploading 12:29, transcript ~1 minute later).
+- **Videos are optional** - for Jason's own reference. The tool uses a video transcript only if one is already ready when he submits; it never waits on uploads. Skip videos under ~5 seconds (accidental taps).
+- **Notes match photos by time:** each note records when it was started and saved; photos carry `captured_at`. Natural pattern: shoot a room's photos, switch to the tool, dictate that room, repeat.
+- **Speech-to-text: record audio in the page, transcribe on the server** (Jason finds iPhone keyboard dictation mishears him). Big Record / Stop button per note; audio uploaded (Vercel Blob) and sent to a transcription API; the text shows on the page a few seconds after Stop so Jason can glance at it and fix a number.
+  - Candidate services (prices from Oct 2026 comparison articles - confirm on vendor pages): AssemblyAI ~$0.0025-0.0035/min with $50 free credit; Deepgram Nova-3 ~$0.0077/min with $200 free credit; OpenAI gpt-4o-mini-transcribe ~$0.003/min, gpt-4o-transcribe ~$0.006/min, no free credit.
+  - ~10 min of notes per visit x ~20 visits/month = ~200 min/month = roughly $0.50-1.50/month; free signup credits cover years.
+  - Feed the service a list of OCC trade words (CMU, wainscot, LVP, soffit, fascia, sill, header, lintel, GFCI, etc.) where it supports keyword/vocabulary hints.
+  - Keep the audio file so a questionable number can be replayed.
+  - The AI never silently "corrects" a number it thinks was misheard - it asks.
+  - Claude cannot take audio directly, so a speech-to-text service is required. Self-hosting Whisper does not fit the 512 MB Render plan.
+- Notes save as they are recorded (not only on submit) so a closed page or dead signal loses nothing.
+- **Notes record: one CompanyCam Page per project, "Site Visit Notes"** - word-for-word notes under a date/time heading per note; later visits append to the same Page. Word-for-word rather than a summary (the scope Page is the summary). **Nothing goes to the JobTread daily log** (Jason: adds noise).
+- Narration habits from the Oct 19 test: say wall numbers ("Wall 3") instead of descriptions, give every wall a length, give "starts X from the left corner" for each opening/fixture.
+
+## Trigger and question delivery (decided Oct 19)
+- **Trigger: the "Scope this visit" page** `/intake/scope`. The same page holds the dictated notes, so taking notes and starting the run are one place.
+  - Reuses the existing job picker with nearest-first proximity sorting.
+  - Before starting, the page shows what it found: notes, CompanyCam photo count, any videos and whether their transcripts are ready. Then Start.
+  - Vercel only forwards the request; the long-running work runs on Render in a background thread (Vercel functions time out).
+- **Questions:** the page stays live and shows the questions when ready (~1 minute). If Jason has left, a **web push notification** ("Questions ready - <address>") opens the page. iPhone push requires the Home Screen app and notifications allowed once. Fallback: text message with the link (RingCentral SMS API - not yet checked whether OCC's number can send).
+- Run state (notes, questions, answers, status) stored in a small database (e.g. Upstash Redis / Vercel KV free tier) so questions wait if the page is closed.
+- **CompanyCam tag trigger: deferred.** It would fire before uploads finish, has nowhere to show status or answer questions, and the "Project Labeled" webhook is unverified. Can be added later against the same backend endpoint.
+
+## Flow (questions first)
+1. Quick pass: read notes (plus any ready transcripts) + photos, turn them into one structured data file (rooms, walls, openings, heights, trim, scope items, subs), and write 3-6 cost-driver questions with suggested answers.
+2. Questions show on the page (tap answers, or "go" to accept all defaults). They wait on the job if the page is closed.
+3. Full build after answers: Site Visit Notes Page, photo descriptions, drawings (uploaded to CompanyCam as project photos and embedded in the scope Page), scope Page, JobTread budget. Run marked done.
+4. Anything not asked is built with (est.) / (assumed) labels and flagged in internal NOTES.
+
+## Drawing detail
+- Drawings are rendered by code from the structured data, so any element in the data can be drawn: baseboard, door/window casing, crown, wainscot/chair rail (with panel or board-and-batten spacing), cabinets (base/uppers, door divisions, countertop, backsplash, appliance gaps).
+- Profiles/styles are labels, not drawn shapes. Detail comes from dictation; items only visible in photos are drawn as (est.). Nothing invisible is invented.
+- Trim lengths (base, crown, casing, chair rail) come off the drawings as budget quantities.
+
+## AI vs. code split
+- **AI does judgment only:** reading notes/transcripts/photos into structured data, choosing questions, writing scope lines and NOTES, grouping the budget.
+- **Code does math and rules:** drawings from the structured data (exact geometry, automatic closure check), quantities (sf, LF, openings subtracted), markups (1.45x sub, 1.65x material, $55/$89 labor), rate lookups from the vendor invoice-history CSVs, and the existing checks (3x case-pricing sanity check, duplicate scope check).
+- Read the media once; every later step works from the structured file.
+- Cache the rules docs in the prompt.
+- Send photos at full resolution.
+
+## Cost estimate (Claude API, Oct 2026 pricing)
+- Sonnet 5.5: $2 / $10 per million tokens (input/output). Opus 5.5: $4 / $20. Cache hits on both are 0.05x input price.
+- Photos: Opus 5.5 is on the high-resolution image tier - a full-size phone photo is downscaled to ~1932 px square, ~4,800 input tokens (~$0.02 each on Opus). Resizing to ~1,100 px cuts that to ~1,500 tokens at some cost to small details.
+- Two calls per visit (quick pass + build). Test (1) (9 photos + short transcript): ~$0.55-0.70 on Opus, ~$0.30-0.35 on Sonnet. A 20-photo visit ~$1.00-1.20 on Opus. Per month at 13-22 visits: ~$8-25 Opus, ~$4-12 Sonnet.
+- Model choice not confirmed by Jason yet (stronger model throughout suggested, ~$10/month difference).
+- Speech-to-text: ~$0.50-1.50/month, covered by free credits.
+- Log token count and cost per run so real numbers replace estimates.
+
+## Accuracy testing before live use
+- Run the tool on 3-5 past site visits where Jason already built the final budget (candidates: 901 McDaniel / Job 00768, 7 Monet Dr). Compare line by line with what was sent; tune the rules until close (same approach as 102 Tuscany Way for the estimator).
+- Jason expects a few practice runs or real jobs to settle how to talk and how much detail to dictate.
+
+## Test run - Oct 19, 2026 (CompanyCam project "Test (1)", Jason's office, 3140 Wade Hampton Blvd)
+- 9 photos then 1 video, run through the interim chat flow. Capture order worked; photos tied to walls cleanly by time and content.
+- Transcript was word-for-word (source "mux_generated") but slow to arrive (see Capture method).
+- Photos supplied what dictation didn't: wall construction (CMU block vs drywall), door swing, an HVAC chase and whiteboard in the way of the new opening, a two-sash window. 8" block courses / 16" block lengths worked as a scale reference.
+- Question round caught: a wall length not dictated, opening offsets not dictated, one ambiguous wall reference. Jason answered: Wall 4 = 13', the new opening gets a door and will clear the HVAC chase, same-size window, Wall 3 outlet surface mount.
+- Output: 9 photo descriptions, floor plan + 4 elevations, scope Page "Office Remodel Scope - Draft from Oct 19, 2026 Site Visit", budget on stand-in JobTread job 00035 "Test job- JT" (6 groups + Project Management; $3,549 cost / $5,803.35 price with masonry and electrical at $0 PRICING TBD; non-sub prices were estimates).
+- Drawing upload to CompanyCam failed from the chat workspace (S3 upload host blocked there) - not expected to be a problem from Render; verify.
+
+## To verify before/while building
+1. CompanyCam API token available to the backend (`COMPANYCAM_API_KEY` exists in Vercel; add to Render, or have Vercel make the CompanyCam calls).
+2. Photo upload (create upload -> S3 PUT -> register photo) works from Render, so drawings land in CompanyCam.
+3. Pick the transcription service; test accuracy on a real jobsite note (background noise, numbers, trade words).
+4. Web push from the Home Screen app on Jason's iPhone.
+5. Lightweight drawing renderer runs within the shared 512 MB on Render.
+6. CompanyCam REST API returns video transcripts (optional now).
+
+## Constraints
+- Render stays on the current plan (512 MB / 0.5 CPU) - no upgrade.
+- Work on a branch, test before opening a pull request, and Jason merges in GitHub. Always start from the current main - never from an old copy of a file.
+
+## Next steps
+1. Propose build phases small enough to test one at a time, and list the accounts/keys Jason needs to set up.
+2. Build backend pieces first (new files here), then the scope page in sales-lead-tool.

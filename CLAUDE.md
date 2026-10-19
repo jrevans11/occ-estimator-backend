@@ -289,3 +289,23 @@ Verification for both: files compile, mock end-to-end write confirms two notes i
 ---
 
 **Not yet done:** same "still needs Jason's go-ahead" and "not a git checkout" caveats as everything else in this file — none of this has been tested against a live Claude or JobTread API call, and these four new CSVs plus the updated `app.py`/`estimate_v2_draft.py` need to get into whatever repo Render deploys from before they take effect in production. Also: only 21 of Crawlspace Medic's 37 real Gmail threads, 4 of 34 Tile with Style-related threads, and a handful of Greer Flooring's 6 real threads were actually opened this session (time/context budget, same tradeoff made for Redland) — there's more real data available in the inbox if broader calibration is ever wanted later.
+
+---
+
+## Active Project: Site Scope Tool (started Oct 19, 2026) — READ THE DOCS FIRST
+
+A second tool being built in this repo: Jason records notes and takes photos on a site visit, taps Start on a new sales-lead-tool page (`/intake/scope`), gets 3-6 follow-up questions on his phone, then this backend writes a Site Visit Notes Page, photo descriptions, floor plan + elevation drawings and a scope Page into CompanyCam, and a budget into JobTread.
+
+**Before working on it, read `docs/site-scope/`:**
+- `site-scope-tool-build-plan.md` — every decision made so far (capture method, trigger, push notifications, transcription service options, costs, test run results, open items). **Source of truth — update it in the same PR when a decision changes.**
+- `site-visit-writeup-process.md` — the write-up steps and the scope-Page-to-JobTread-budget mapping.
+- `floor-plan-drawing-rules.md` — drawing rules (wall thicknesses, colors, elevation labels dictated / (est.) / (assumed)).
+- `prototype_drawings.py` — geometry reference from the Oct 19 test; not for deployment.
+
+**Working rules for this tool:**
+- New code goes in **new files** (e.g. `site_scope.py`, `scope_drawings.py`). Change `app.py` only to register the new endpoints — keep that diff small. Never rewrite `app.py` wholesale.
+- The Render service has **512 MB shared** with the closing-repair estimator and the follow-up emails. No headless browsers; render drawings with a lightweight Python library. Each scope run goes in its own background thread with all errors caught and logged, so it can never take down the estimator or follow-ups. Jason will not upgrade the Render plan.
+- Reuse what's here: `jobtread_query`, the vendor invoice-history CSVs as rate anchors, the markups ($55/$89 labor, 1.65x materials, 1.45x subs), the 3x case-price check, the internal `NOTES (internal - not shown on client documents)` $0 item with `showDescription: false`.
+- Never invent prices for licensed trades (electrical, plumbing, HVAC, structural) — `$0 (PRICING TBD)` unless a sub bid or rate anchor exists.
+- The CompanyCam project for a job comes from JobTread `job.companycamId` (see sales-lead-tool `lib/companycam.ts`).
+- **Workflow:** Jason is not a coder and does not use a terminal. Work on a branch, run/test the code before opening a pull request, and explain the PR in plain language — he reviews and merges in GitHub. Start every session from the current `main`.
