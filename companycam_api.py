@@ -4,11 +4,14 @@ Mirrors the calls sales-lead-tool makes in lib/companycam.ts (same base URL,
 same Bearer auth, same optional X-CompanyCam-User header), using only the
 standard library so it adds nothing to the Render service's memory footprint.
 
-Read-only for now (phase 1). Later phases add page and photo writes here.
+Phase 1 reads; phase 2 adds photo uploads (create_project_photo). CompanyCam's
+public API only takes a photo by URL - it downloads the image itself - so a
+drawing must sit at a public URL first (site_scope serves it briefly).
 """
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -48,22 +51,36 @@ def _headers():
     return h
 
 
-def _get(path, params=None):
-    """GET a CompanyCam endpoint and return the parsed JSON body."""
+def _request(method, path, params=None, body=None):
+    """Call a CompanyCam endpoint and return the parsed JSON body."""
     if not is_configured():
         raise CompanyCamError("COMPANYCAM_API_KEY is not set on this server")
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers=_headers(), method="GET")
+    headers = _headers()
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read().decode("utf-8"))
+            raw = r.read().decode("utf-8")
+            return json.loads(raw) if raw.strip() else {}
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]
-        raise CompanyCamError(f"CompanyCam GET {path} returned HTTP {e.code}: {detail}", e.code)
+        raise CompanyCamError(f"CompanyCam {method} {path} returned HTTP {e.code}: {detail}", e.code)
     except urllib.error.URLError as e:
-        raise CompanyCamError(f"CompanyCam GET {path} failed: {e.reason}")
+        raise CompanyCamError(f"CompanyCam {method} {path} failed: {e.reason}")
+
+
+def _get(path, params=None):
+    return _request("GET", path, params)
+
+
+def _post(path, body):
+    return _request("POST", path, body=body)
 
 
 def _items(body):
@@ -119,6 +136,36 @@ def list_project_pages(project_id):
 
 def search_projects(query):
     return _items(_get("/projects", {"query": query, "per_page": 25}))
+
+
+def create_project_photo(project_id, uri, captured_at=None, description=None, tags=None):
+    """Add a photo to a project from a public URL, like sales-lead-tool's
+    pushPhoto(). CompanyCam downloads the image itself, after this returns,
+    so the URL has to keep working for a while. Returns the new photo."""
+    photo = {"uri": uri, "captured_at": int(captured_at if captured_at is not None else time.time())}
+    if description:
+        photo["description"] = description
+    if tags:
+        photo["tags"] = list(tags)
+    return _post(f"/projects/{project_id}/photos", {"photo": photo})
+
+
+def get_photo(photo_id):
+    return _get(f"/photos/{photo_id}")
+
+
+def photo_is_ready(photo):
+    """True once CompanyCam has downloaded and processed the image, False
+    while it is still working, None if it failed."""
+    status = str((photo or {}).get("processing_status") or "").lower()
+    if status in ("processing_error", "error", "failed"):
+        return None
+    if status in ("processed", "complete", "completed", "duplicate"):
+        return True
+    if status:
+        return False
+    # No status field: treat a real original image link as done.
+    return bool(photo_uri(photo or {}, "original"))
 
 
 def parse_timestamp(value):

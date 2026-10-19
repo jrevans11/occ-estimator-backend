@@ -1,0 +1,155 @@
+{
+  "schema": "occ-scope-rooms/1",
+  "project": {
+    "name": "Test (1)",
+    "address": "3140 Wade Hampton Blvd",
+    "visit_date": "2026-10-19",
+    "companycam_project_id": "117058039"
+  },
+  "flags": [
+    "Wall 4 window looks like 2 sashes side by side (drapes hide the middle) - confirm 1 twin unit or 2 units.",
+    "Power source / nearest circuit for the new Wall 2 receptacles.",
+    "New Wall 1 door: distance from the left corner and swing were not dictated (drawn assumed)."
+  ],
+  "rooms": [
+    {
+      "id": "office",
+      "name": "Office",
+      "ceiling": {"in": 120, "src": "dictated", "note": "exposed structure"},
+      "walls": [
+        {
+          "number": 1,
+          "length": {"in": 144, "src": "dictated"},
+          "construction": "cmu",
+          "construction_src": "est",
+          "openings": [
+            {
+              "type": "door", "status": "existing",
+              "offset": {"in": 106, "src": "est"}, "width": {"in": 32, "src": "est"},
+              "height": {"in": 80, "src": "assumed"},
+              "hinge": "left", "swing": "in",
+              "label": "exist. door", "plan_label": "exist. door (est.)"
+            },
+            {
+              "type": "door", "status": "new",
+              "offset": {"in": 24, "src": "assumed"}, "width": {"in": 32, "src": "dictated"},
+              "height": {"in": 80, "src": "assumed"},
+              "hinge": "right", "swing": "in",
+              "label": "NEW 2'-8\" door",
+              "plan_label": "NEW 2'-8\" door\nlocation + swing (assumed)"
+            }
+          ],
+          "items": [
+            {
+              "type": "chase", "status": "existing", "label": "HVAC chase",
+              "offset": {"in": 3, "src": "est"}, "width": {"in": 20, "src": "est"},
+              "bottom": {"in": 82, "src": "est"}, "top": "ceiling",
+              "depth": {"in": 10, "src": "est"},
+              "plan": true, "plan_label": "HVAC chase above (est.)"
+            },
+            {
+              "type": "whiteboard", "status": "remove", "label": "relocate whiteboard",
+              "offset": {"in": 20, "src": "est"}, "width": {"in": 51, "src": "est"},
+              "bottom": {"in": 36, "src": "est"}, "height": {"in": 30, "src": "est"}
+            },
+            {"type": "conduit", "status": "existing", "offset": {"in": 101, "src": "est"}, "bottom": {"in": 0, "src": "est"}, "top": "ceiling"},
+            {"type": "outlet", "status": "existing", "offset": {"in": 101, "src": "est"}, "height": {"in": 14, "src": "est"}},
+            {"type": "outlet", "status": "existing", "offset": {"in": 101, "src": "est"}, "height": {"in": 48, "src": "est"}}
+          ],
+          "notes": [
+            "New opening gets a door (confirmed). HVAC chase (est. 3\" to 23\" from the left corner, bottom about 6'-10\") - Jason: the opening will clear it.",
+            "Existing whiteboard (est. 20\" to 71\") overlaps the new door - remove and relocate. Block wall: saw cut + lintel. Location from the corner and swing (assumed)."
+          ]
+        },
+        {
+          "number": 2,
+          "length": {"in": 156, "src": "dictated"},
+          "construction": "interior",
+          "construction_src": "est",
+          "openings": [
+            {
+              "type": "cased_opening", "status": "existing",
+              "offset": {"in": 4, "src": "est"}, "width": {"in": 36, "src": "est"},
+              "height": {"in": 80, "src": "assumed"},
+              "label": "exist. cased opening", "plan_label": "exist. cased opening (est.)"
+            },
+            {
+              "type": "window", "status": "existing",
+              "offset": {"in": 52, "src": "est"}, "width": {"in": 72, "src": "est"},
+              "sill": {"in": 86, "src": "est"}, "head": {"in": 110, "src": "est"},
+              "label": "interior window (est.)", "plan_label": "interior window above (est.)"
+            }
+          ],
+          "items": [
+            {
+              "type": "whiteboard", "status": "existing", "label": "schedule whiteboard (est.)",
+              "offset": {"in": 50, "src": "est"}, "width": {"in": 96, "src": "est"},
+              "bottom": {"in": 36, "src": "est"}, "height": {"in": 48, "src": "est"}
+            },
+            {
+              "type": "outlet", "status": "new", "label": "NEW recept.",
+              "offset": {"in": 60, "src": "assumed"}, "height": {"in": 16, "src": "assumed"},
+              "plan_label": "NEW receptacles (2)\nlocations (assumed)"
+            },
+            {
+              "type": "outlet", "status": "new", "label": "NEW recept.",
+              "offset": {"in": 120, "src": "assumed"}, "height": {"in": 16, "src": "assumed"},
+              "plan_label": ""
+            }
+          ],
+          "notes": [
+            "Painted drywall wall (stud cavity) - receptacles can be fished in. Desk return at the right end.",
+            "Open: power source / nearest circuit."
+          ]
+        },
+        {
+          "number": 3,
+          "length": {"in": 144, "src": "dictated"},
+          "construction": "cmu",
+          "construction_src": "est",
+          "items": [
+            {
+              "type": "whiteboard", "status": "existing", "label": "Subcontractors whiteboard (est.)",
+              "offset": {"in": 22, "src": "est"}, "width": {"in": 96, "src": "est"},
+              "bottom": {"in": 36, "src": "est"}, "height": {"in": 48, "src": "est"}
+            },
+            {"type": "conduit", "status": "existing", "offset": {"in": 84, "src": "est"}, "bottom": {"in": 84, "src": "est"}, "top": "ceiling"},
+            {"type": "conduit", "status": "new", "offset": {"in": 84, "src": "assumed"}, "bottom": {"in": 16, "src": "assumed"}, "top": {"in": 36, "src": "assumed"}, "label": "NEW EMT (route assumed)"},
+            {
+              "type": "outlet", "status": "new", "mount": "surface",
+              "label": "NEW surface-mount recept.",
+              "offset": {"in": 84, "src": "assumed"}, "height": {"in": 16, "src": "assumed"},
+              "plan_label": "NEW surface-mount receptacle\n(location assumed)"
+            }
+          ],
+          "notes": [
+            "Block wall - surface-mount EMT and box like the existing ones (confirmed), fed from the existing conduit (gray). Route assumed.",
+            "Wall 3 taken as the intended wall (suggested default, not changed). Location along the wall (assumed)."
+          ]
+        },
+        {
+          "number": 4,
+          "length": {"in": 156, "src": "confirmed"},
+          "construction": "cmu",
+          "construction_src": "est",
+          "exterior": true,
+          "openings": [
+            {
+              "type": "window", "status": "replace",
+              "offset": {"in": 40, "src": "est"}, "width": {"in": 96, "src": "dictated"},
+              "sill": {"in": 36, "src": "est"}, "height": {"in": 48, "src": "dictated"},
+              "sashes": 2,
+              "label": "REPLACE window 8'-0\" x 4'-0\"",
+              "plan_label": "REPLACE window\n8'-0\" W x 4'-0\" H"
+            }
+          ],
+          "notes": [
+            "Exterior CMU wall. Wall length 13'-0\" (confirmed, same as Wall 2). Window width x height dictated; sill and head estimated from 8\" block courses.",
+            "Appears to be 2 sashes side by side (center dashed) - drapes hide the middle; confirm 1 twin unit vs 2 units.",
+            "Red dashed = existing removed, blue = new, same size (confirmed). Move and reset drapes, cabinet, file cabinet."
+          ]
+        }
+      ]
+    }
+  ]
+}
