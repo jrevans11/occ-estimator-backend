@@ -14,21 +14,14 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
-# v2 closing-repair estimating logic (labor+material breakdown, real cost
-# codes, historical reference examples, Home Depot catalog resolution,
-# addendum vision support). See estimate_v2_draft.py module docstring for
-# full history. Used ONLY by the two closing-repair flows below
-# (process_sales_tool_closing_estimate and the Wufoo closing-repair
-# handler) — deliberately NOT wired into call_claude()/add_cost_groups()/
-# get_system_prompt(), which stay untouched because call_claude_general()
-# (Home Repair, GVL, Remodel, Pre-listing, and the general sales-tool flow)
-# still depends on their original flat-price schema and behavior.
+# Closing-repair estimating (labor + material breakdown, real cost codes,
+# historical and vendor reference examples, Home Depot catalog pricing,
+# addendum/inspection PDFs read as vision). Used by estimate_closing_job(),
+# which every closing-repair entry point calls: the Wufoo form, the sales-tool
+# endpoint, and re-runs. The other job types (Home Repair, GVL, Remodel,
+# Pre-listing, general sales-tool) still use call_claude_general() +
+# add_cost_groups() and the flat-price schema in SYSTEM_PROMPT.
 import estimate_v2_draft as v2
-
-# Model for the Home Repair / GVL / Remodel / Pre-listing / general sales-tool
-# estimates and the follow-up emails. Closing-repair estimates pick their model
-# separately (CLOSING_ESTIMATE_MODEL env var, see v2.get_closing_estimate_model).
-CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -37,6 +30,11 @@ JOBTREAD_KEY     = os.environ.get("JOBTREAD_API_KEY", "")
 JOBTREAD_ORG     = os.environ.get("JOBTREAD_ORG_ID", "22P9ppHePJKP")
 RENDER_API_KEY   = os.environ.get("RENDER_API_KEY", "")
 RENDER_SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "")
+
+# Model for the non-closing estimates and the follow-up emails. Closing-repair
+# estimates pick their model separately (CLOSING_ESTIMATE_MODEL env var, see
+# v2.get_closing_estimate_model).
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert estimator for Owners Choice Construction LLC, a residential repair contractor in Greenville/Upstate SC. You create closing repair estimates from home inspection reports and repair addendums.
@@ -545,8 +543,8 @@ def get_system_prompt():
 def get_system_prompt_v2():
     """
     System prompt for the v2 closing-repair flow (call_claude_v2 +
-    add_cost_groups_v2) — used ONLY by process_sales_tool_closing_estimate
-    and the Wufoo closing-repair handler.
+    add_cost_groups_v2) — used ONLY by estimate_closing_job(), i.e. the
+    closing-repair Wufoo form, sales-tool endpoint and re-runs.
 
     Reuses SYSTEM_PROMPT's shared sections verbatim (company info, pricing
     rules, labor classification, out-of-scope rules, customer-facing output
@@ -3221,7 +3219,8 @@ def flag_failed_estimate(job_id, error="", job_type="Closing Repair"):
     """
     Called when the AI estimate step fails after the job/lead was already
     created successfully. Surfaces the failure directly in JobTread so the
-    lead isn't silently lost — a to-do plus a comment with the error detail.
+    lead isn't silently lost — a to-do plus an internal Daily Log note with
+    the error detail (and, for closing repairs, a one-click re-run to-do).
     """
     try:
         create_single_todo(

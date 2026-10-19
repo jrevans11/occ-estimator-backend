@@ -1,126 +1,41 @@
 """
-DRAFT — labor + material estimate rebuild (v2)
-================================================
-NOT wired into app.py. This is a review draft — nothing in production changes
-until Jason signs off and it gets merged in.
+Closing-repair estimating for the OCC estimator backend.
 
-WHAT THIS CHANGES vs. today's app.py:
-  - Today: one CostGroup + one CostItem (qty 1) per repair, picked as a single
-    blended price off a static ~150-line table.
-  - Here: Claude reasons per repair like an estimator would —
-      1. Estimate QUANTITY from the inspection report text + photos (the PDF
-         is already sent to Claude natively, so it can see photos/markups —
-         this just asks it to actually use them for sizing, not just scope).
-      2. IN-HOUSE work -> broken into labor hour line(s) + material line(s),
-         each with a stated quantity/unit and a confidence flag.
-      3. SUB work -> stays a single scoped lump sum (see rationale below),
-         but now grounded in real Redland Electric invoice history instead of
-         guessed ranges.
-  - add_cost_groups_v2() posts MULTIPLE cost items per group (one per labor
-    line, one per material line) instead of one.
+app.py's estimate_closing_job() runs every closing-repair estimate (Wufoo
+form, sales-tool endpoint, re-runs) through this module, in this order:
 
-WHY SUB WORK STAYS LUMP-SUM (not itemized labor+material):
-  20 real Redland Electric invoices (redland_electric_invoice_history.csv)
-  show subs bill OCC scope-based or day-rate per visit, not itemized
-  labor-hours + materials (one exception out of 20). Forcing a granular
-  per-line model onto sub work would fabricate a precision that doesn't
-  exist in how subs actually bill. So sub groups get ONE reasoned scope
-  price, informed by real historical ranges, same as today's structure —
-  just with better numbers behind it.
+  1. call_claude_v2() sends the repair addendum and inspection report to
+     Claude as native PDFs, so photos, scans and hand-marked pages are read
+     as images. It also handles Word or image attachments, the same file
+     uploaded twice, large files (Files API), streaming, and retries. The
+     system prompt is app.get_system_prompt_v2(), which splices in
+     build_full_estimating_prompt(): the estimating method, the output
+     structure / group sizing / allowance rules, and real reference examples
+     loaded from the CSVs next to this file (Jason's hand-corrected trade
+     groups, past OCC cost groups, and invoices from Redland Electric,
+     Crawlspace Medic, Tile with Style, Greer Flooring and Jordan Lumber).
+  2. enforce_minimum_labor_hours() applies the 3-hour in-house minimum.
+  3. resolve_material_lines_with_catalog() prices material lines against the
+     live Home Depot catalog through JobTread (homeDepotProducts). Weak,
+     implausible or multipack matches keep Claude's price and are flagged
+     for internal review.
+  4. compute_estimate_total(), find_duplicate_scope_references(),
+     find_bundled_groups_with_own_price() and log_internal_review_notes()
+     produce the billed total and review warnings for the logs.
+  5. add_cost_groups_v2() and add_not_included_group() write trade-level
+     cost groups to JobTread: labor lines ($55 cost / $89 billed), material
+     lines (+65%), sub lines (+45%), real 3-digit cost codes, an internal
+     NOTES line hidden from client documents, and a closing "Not Included In
+     This Estimate" group.
 
-BUG FOUND IN CURRENT app.py WORTH FIXING EITHER WAY:
-  add_cost_groups() today does `cost = client_price / 1.55` for EVERY group,
-  regardless of whether it's sub (should back out at /1.45) or in-house
-  (should back out material-only at /1.65, since labor isn't marked up).
-  1.55 is a rough blended guess applied uniformly. add_cost_groups_v2 below
-  fixes this by computing unitCost correctly per line type.
+Sub work stays one scope price per group because subs bill per visit, not
+itemized hours. A group can hold both in-house lines and a sub price when one
+problem needs both. JobTread calls go through the jobtread_query function
+app.py passes in, so everything here runs against a fake in tests.
 
-RESOLVED SINCE FIRST DRAFT (Jul 2026):
-  - Real historical labor hours + material costs DO exist: 514 of 960
-    historical cost groups (121 of 141 Closing Repairs docs) have real
-    multi-line labor+material breakdowns, pulled via jobtread_explore.py into
-    historical_cost_item_detail.csv (2,069 line items). Naive fuzzy-matching
-    these to the old 310-item taxonomy produced bad pairings and was
-    discarded — use the real historical examples directly as retrieval/
-    reference examples instead of a rigid lookup table.
-  - Home Depot Global Catalog search IS reachable via the API: the real
-    field is "homeDepotProducts" (a top-level query field, not nested under
-    organization — confirmed by watching JobTread's own frontend network
-    traffic). See resolve_material_from_catalog() below. This means
-    material_lines CAN resolve to a real, live-priced, specific Home Depot
-    product instead of a freeform description + guessed cost.
-
-  - Real cost codes: 173 total exist, split into a 3-digit set (32 codes)
-    and a 4-digit CSI-style full-build set (141 codes). Jason has decided to
-    use the 3-digit set — see COST_CODE_MAP below, now wired into
-    add_cost_groups_v2() via a new "cost_code" field Claude assigns per
-    group, replacing the hardcoded Uncategorized code.
-
-RESOLVED (Jul 2026, this pass) — Task #8, historical data wired into the prompt:
-  - Full historical pull expanded from 141 "Closing Repairs" docs to ALL 391
-    Home Repair + Closing Repair type jobs (371 with data) — 5,353 clean
-    deduped line items, see historical_home_and_closing_repairs_budget_
-    detail_dedup.csv and CLAUDE.md for the full findings writeup.
-  - build_full_estimating_prompt() below is the actual wiring: it calls
-    load_historical_reference_examples() to pull 17 hand-selected real cost
-    groups (by explicit job_id+group_name, NOT fuzzy text matching — see the
-    comment above HISTORICAL_REFERENCE_GROUP_KEYS for why) spanning plumbing,
-    electrical, HVAC/vents, doors/hardware, masonry, and crawlspace, and
-    appends them to ESTIMATING_LOGIC_SECTION as few-shot calibration. This is
-    the piece that was previously just a TODO comment.
-  - BUG FIX: add_cost_groups_v2()'s labor line was writing unitCost ==
-    unitPrice (both 89.00), tracking zero labor margin. Now writes unitCost =
-    LABOR_COST_RATE (55.00, OCC's real confirmed internal labor cost) and
-    unitPrice = the billed rate (89.00) — consistent with how "Hourly Rate"
-    lines actually appear in 1,290+ real historical examples.
-  - Re-tested add_cost_groups_v2() end to end against a mock query function
-    after these changes — labor/material/sub cost+price math and cost code
-    lookups all confirmed correct.
-
-STILL OPEN / PROVISIONAL (do not treat these numbers as final):
-  - The 17 curated reference examples are a first pass — could expand or
-    rotate the selection later, but deliberately kept small/curated rather
-    than dumping all 5,353 rows into the prompt (token cost + would dilute
-    the signal).
-  - RESOLVED (Jul 2026, this pass): resolve_material_lines_with_catalog()
-    now wires search_home_depot_catalog() into the actual reasoning/output
-    flow (Task #10) — it was previously a standalone function nothing
-    called. For each material_line, it searches the live catalog, scores
-    candidates by word-overlap against the LLM's item description, and
-    either (a) auto-replaces the guessed unit_cost with the real catalog
-    price when the match is confident (score >= 0.5 by default) and attaches
-    catalog_match (name/sku/link/score) so the swap is visible, or (b)
-    leaves the LLM's guess untouched but attaches catalog_candidates (top 3
-    real options with real prices) for manual pick when no match is
-    confident, or (c) leaves the line completely unchanged if the search
-    fails/returns nothing — a bad catalog lookup should never block an
-    estimate. Deliberately NOT the discarded fuzzy-matching approach from
-    pricing_library.csv — that matched against an unrelated taxonomy with no
-    fallback; this gates a REAL catalog search result and always has a safe
-    fallback (keep the LLM's number) when confidence is low. Tested with a
-    mock catalog covering all three branches (auto-match, weak-match ->
-    candidates only, no results). NOT yet tested against the live Home Depot
-    catalog API — mock only so far.
-
-  - RESOLVED (Jul 2026, this pass): call_claude_v2() + build_claude_document_
-    content() near the bottom of this file replace call_claude() from
-    app.py. Both the addendum and inspection report now go to Claude as
-    native PDF/vision (extract_pdf_text is no longer used for the
-    addendum), and the four real-world cases Jason described are handled
-    explicitly: clean typed addendum, scanned addendum, no separate
-    addendum at all (inspection report carries the ask), and a marked-up
-    inspection report used as the addendum. Tested the content-building
-    logic against all four have/don't-have combinations — branches
-    correctly and degrades gracefully if a "PDF" can't be page-counted.
-    NOT yet tested against the real Anthropic API (only the content-
-    building function was tested; the actual API call path is unchanged
-    from call_claude() other than the payload contents).
-  - search_home_depot_catalog() still isn't called anywhere in the
-    reasoning/output flow — material_lines are still LLM-guessed costs, not
-    resolved against live Home Depot pricing yet.
-  - Still not tested against the real live JobTread API (only against a
-    mock query function) — needs Jason's go-ahead before creating a real
-    test cost group.
+The other job types (Home Repair, GVL, Remodel, Pre-listing, general sales
+tool) do not use this module. CLAUDE.md has the project history and the data
+behind the pricing rules.
 """
 
 import re
@@ -1046,12 +961,10 @@ reference numbers. Every reference number appears in exactly one group.
 # Depot -> search, then confirmed working with the scripting API key too
 # (not just a logged-in browser session).
 #
-# Not yet wired into the estimating flow below — this is the building block
-# for it. Intended use: once Claude drafts a material_line description
-# (e.g. "30-yr architectural shingles"), call this to search Home Depot and
-# either pick the best real match automatically or attach a short list of
-# real candidates (with live prices/SKUs) for Jason's team to confirm,
-# rather than trusting Claude's guessed unit_cost.
+# resolve_material_lines_with_catalog() below calls this for every material
+# line Claude drafts, then either applies the best real match's price or
+# attaches a short list of real candidates (with live prices/SKUs) for
+# Jason's team to confirm, rather than trusting Claude's guessed unit_cost.
 # ─────────────────────────────────────────────────────────────────────────
 
 HOME_DEPOT_STORE_ID = "1126"  # Greer, SC — OCC's default Home Depot store in JobTread
@@ -2563,12 +2476,11 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# call_claude_v2 — replaces call_claude() in app.py.
+# call_claude_v2 — reads the addendum and inspection report as native PDFs.
 #
-# WHY THIS CHANGES: Jason confirmed (Jul 2026) that what realtors actually
-# send as the "repair addendum" is inconsistent and often visual, not the
-# clean typed document today's app.py assumes (see comment at app.py:367,
-# "it's reliably a clean [typed document]" — that assumption is wrong):
+# WHY: Jason confirmed (Jul 2026) that what realtors actually send as the
+# "repair addendum" is inconsistent and often visual, not the clean typed
+# document the original app.py call_claude() assumed:
 #   1. A clean typed PDF of the addendum document (the easy case)
 #   2. A scanned paper copy that comes in as a PDF — effectively an image;
 #      text extraction would be unreliable/garbage without OCR
@@ -3191,7 +3103,8 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
                     client_phone, client_email, address, notes,
                     system_prompt, anthropic_api_key,
                     model=None, max_tokens=24000, timeout=180):
-    """Replaces call_claude() in app.py. Same retry/parsing behavior, but:
+    """Closing-repair estimate call (replaced the original call_claude() in
+    app.py, now removed). Compared with that version:
       - addendum is now native PDF (vision), not extract_pdf_text
       - both documents are optional independently (see build_claude_document_content)
 
@@ -3258,11 +3171,12 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
         addendum_pdf_bytes = b""
 
     # ── Attachment type check (BUG FIX #4) ─────────────────────────────────
-    # Run BEFORE the dedupe and Files API steps: everything downstream assumes
-    # it's holding a PDF, and on the Meredith Tye submission it wasn't — the
-    # addendum was a Word .docx that got labelled application/pdf and earned a
-    # hard 400 from the API on all three attempts. Whatever isn't a PDF gets
-    # converted to something Claude can read, or dropped with a reason.
+    # Runs AFTER the dedupe above (which needs the raw bytes) and BEFORE the
+    # Files API step: everything downstream assumes it's holding a PDF, and
+    # on the Meredith Tye submission it wasn't — the addendum was a Word
+    # .docx that got labelled application/pdf and earned a hard 400 from the
+    # API on all three attempts. Whatever isn't a PDF gets converted to
+    # something Claude can read, or dropped with a reason.
     addendum_blocks = []
     inspection_blocks = []
     unreadable = []
@@ -3374,16 +3288,13 @@ def call_claude_v2(addendum_pdf_bytes, inspection_pdf_bytes, client_name,
 def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
                           model=None, max_tokens=24000, timeout=180,
                           caller_label="call_claude_v2", beta_headers=None):
-    """Shared retry/timeout/parsing core behind BOTH call_claude_v2 (closing
-    repairs — two optional PDFs) and call_claude_v2_general (Home Repair /
-    GVL / Remodel / Pre-listing / general sales-tool — one optional PDF
-    and/or photos and/or a plain description). Only the `content` list
-    differs between the two callers; the actual API call, retry policy,
-    and response parsing are identical, so this was pulled out of
-    call_claude_v2 (Jul 2026, migrating the other four job-type flows onto
-    the same v2 labor+material pipeline) rather than duplicated a second
-    time. See call_claude_v2's docstring for the history behind the
-    timeout/max_tokens defaults and the broadened retry exception list.
+    """The API call, retry policy and response parsing behind
+    call_claude_v2: takes the already-built `content` list, streams the
+    request, escalates max_tokens on truncation, waits and retries transient
+    errors, and returns the parsed JSON estimate. Kept separate from
+    call_claude_v2 so the content building (attachments, Files API uploads)
+    stays apart from the transport. See call_claude_v2's docstring for the
+    history behind the timeout/max_tokens defaults and the retry list.
     """
     # The system prompt is large and identical on every call (full estimating
     # logic + price tables + historical reference examples). Sending it as a
