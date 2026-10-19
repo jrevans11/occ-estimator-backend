@@ -4,11 +4,14 @@ import base64
 import re
 import io
 import time
+import traceback
 import urllib.request
 import urllib.error
 import urllib.parse
 import http.client
 import threading
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # v2 closing-repair estimating logic (labor+material breakdown, real cost
@@ -21,6 +24,11 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 # (Home Repair, GVL, Remodel, Pre-listing, and the general sales-tool flow)
 # still depends on their original flat-price schema and behavior.
 import estimate_v2_draft as v2
+
+# Model for the Home Repair / GVL / Remodel / Pre-listing / general sales-tool
+# estimates and the follow-up emails. Closing-repair estimates pick their model
+# separately (CLOSING_ESTIMATE_MODEL env var, see v2.get_closing_estimate_model).
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -491,6 +499,33 @@ OUTPUT: Respond with ONLY valid JSON, no markdown:
   "consult_reason": ""
 }"""
 
+def anthropic_messages_request(payload, timeout, beta=None):
+    """POST one non-streaming request to the Anthropic Messages API and return
+    the parsed JSON response. Errors propagate; callers own retry/fallback.
+    (Closing-repair estimates stream instead — see v2._stream_claude_message.)
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+    }
+    if beta:
+        headers["anthropic-beta"] = beta
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def anthropic_response_text(result):
+    """Concatenate the text blocks of a Messages API response."""
+    return "".join(block.get("text", "") for block in result.get("content", []))
+
+
 # ── Dynamic pricing ───────────────────────────────────────────────────────────
 
 def get_system_prompt():
@@ -713,11 +748,12 @@ _SUB_FALLBACK_KEYWORDS = [
 ]
 
 
-def _contact_cfv(contact):
-    """Return a {field_name: value} dict from a contact node's customFieldValues."""
+def custom_field_map(node):
+    """Return a {field_name: value} dict from any JobTread node's
+    customFieldValues (a job, contact or account)."""
     out = {}
-    for n in (contact.get("customFieldValues", {}) or {}).get("nodes", []):
-        name = (n.get("customField", {}) or {}).get("name", "")
+    for n in ((node.get("customFieldValues") or {}).get("nodes") or []):
+        name = (n.get("customField") or {}).get("name", "")
         if name:
             out[name] = n.get("value", "")
     return out
@@ -870,7 +906,7 @@ def find_matching_contact(contacts, phone, contact_name):
     cphone_digits = re.sub(r"\D", "", phone or "")
 
     for c in contacts:
-        cfv = _contact_cfv(c)
+        cfv = custom_field_map(c)
         c_name_match = (c.get("name") or "").strip().lower() == cname
 
         if cphone_digits:
@@ -1142,35 +1178,36 @@ def next_business_day(d):
     """
     # Monday=0 ... Saturday=5, Sunday=6
     if d.weekday() == 5:      # Saturday → Monday
-        from datetime import timedelta
         return d + timedelta(days=2)
     if d.weekday() == 6:      # Sunday → Monday
-        from datetime import timedelta
         return d + timedelta(days=1)
     return d
 
 
-def create_single_todo(job_id, job_type, name, due_offset=0):
+def create_single_todo(job_id, job_type, name, due_offset=0, description=None):
     """Create a single to-do on a job assigned to the correct team member.
-    Due date is rolled forward off a weekend to the following Monday."""
-    from datetime import date, timedelta
+    Due date is rolled forward off a weekend to the following Monday.
+
+    description: optional to-do body — the follow-up review to-dos carry the
+    AI-drafted email here, which Jason edits before checking it off.
+    """
     assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
     due_date = next_business_day(date.today() + timedelta(days=due_offset))
     due = due_date.isoformat()
+    task = {
+        "name": name,
+        "isToDo": True,
+        "targetType": "job",
+        "targetId": job_id,
+        "startDate": due,
+        "endDate": due,
+    }
+    if description is not None:
+        # Truncate to 4096 chars (JobTread description limit)
+        task["description"] = description[:4090]
+    task["assignees"] = [{"membershipId": assignee_id}]
     try:
-        jobtread_query({
-            "createTask": {
-                "$": {
-                    "name": name,
-                    "isToDo": True,
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "startDate": due,
-                    "endDate": due,
-                    "assignees": [{"membershipId": assignee_id}],
-                }
-            }
-        })
+        jobtread_query({"createTask": {"$": task}})
         print(f"  To-do created: {name} (due {due})")
     except Exception as e:
         print(f"  To-do failed '{name}': {e}")
@@ -1185,7 +1222,7 @@ def create_new_lead_todos(job_id, job_type="Home Repair"):
     if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
         print(f"  Skipping to-dos — {job_type} not in automation scope")
         return
-    create_single_todo(job_id, job_type, "📞 Call customer — introduce & qualify", due_offset=0)
+    create_single_todo(job_id, job_type, CALL_CUSTOMER_TODO, due_offset=0)
 
 
 # ── Follow-up to-do chain (post-estimate) ────────────────────────────────────
@@ -1249,7 +1286,6 @@ def get_internal_user_ids():
     INTERNAL_USER_IDS_FALLBACK instead, so a JobTread API hiccup can't silently
     disable the to-do domino.
     """
-    import time
     now = time.time()
     cached = _internal_user_cache.get("ids")
     if cached and (now - _internal_user_cache.get("fetched_at", 0)) < INTERNAL_USER_CACHE_TTL_SECONDS:
@@ -1321,6 +1357,12 @@ def is_forward_move(from_status, to_status):
     except ValueError:
         return False  # Unknown status — don't act
 
+# ── To-do names the code creates and later matches by name ──────────────────
+CALL_CUSTOMER_TODO   = "📞 Call customer — introduce & qualify"
+LONG_TERM_TODO       = "📅 Long term follow-up — check back in"
+CLOSING_CHECKIN_TODO = "📧 Review & send — Closing repair check-in"
+ESTIMATE_FAILED_TODO = "🚨 Estimate generation failed — needs manual review"
+
 # ── To-do chain definition ───────────────────────────────────────────────────
 # Each to-do, when checked off, creates the next one automatically (domino effect).
 # offset = days from today when the next to-do is due.
@@ -1329,7 +1371,7 @@ def is_forward_move(from_status, to_status):
 
 TODO_CHAIN = [
     {
-        "name":    "📞 Call customer — introduce & qualify",
+        "name":    CALL_CUSTOMER_TODO,
         "status":  None,
         "next":    "📅 Schedule site visit",
         "offset":  1,
@@ -1357,7 +1399,7 @@ TODO_CHAIN = [
 # Closing Repair uses same chain but tighter offsets
 TODO_CHAIN_CLOSING = [
     {
-        "name":    "📞 Call customer — introduce & qualify",
+        "name":    CALL_CUSTOMER_TODO,
         "status":  None,
         "next":    "📅 Schedule site visit",
         "offset":  1,
@@ -1410,14 +1452,14 @@ STATUS_TO_TODO = {
 FOLLOWUP_TODO_NAMES = {
     "📞 Follow-up call #1 — any questions?",
     "🚨 Final decision call — win or move on",
-    "📅 Long term follow-up — check back in",
+    LONG_TERM_TODO,
     "💬 Customer replied — check in personally",
     # Review to-dos — created by cron, sent when Jason checks them off.
     # These now ARE the follow-up to-dos — no separate email-placeholder chain.
     "📧 Review & send — Day 3 follow-up",
     "📧 Review & send — Day 7 follow-up",
     "📧 Review & send — Day 14 follow-up",
-    "📧 Review & send — Closing repair check-in",
+    CLOSING_CHECKIN_TODO,
 }
 
 # Maps follow-up day → to-do name Jason reviews before sending
@@ -1668,28 +1710,41 @@ def check_for_customer_reply_and_pause(job_id, sent_date=None, job=None):
         print(f"  Deleted {deleted} remaining follow-up to-dos")
         create_single_todo(job_id, job_type, CUSTOMER_REPLY_TODO, due_offset=0)
 
-        try:
-            from datetime import date as _date
-            jobtread_query({
-                "createComment": {
-                    "$": {
-                        "targetType": "job",
-                        "targetId": job_id,
-                        "message": f"{PAUSE_LOGGED_MARKER} on {_date.today().isoformat()}. "
-                                   f"Switched to manual check-in to-do.",
-                    },
-                    "createdComment": {"id": {}}
-                }
-            })
-        except Exception as ce:
-            print(f"  Could not log pause comment: {ce}")
+        post_job_comment(job_id, f"{PAUSE_LOGGED_MARKER} on {date.today().isoformat()}. "
+                                 f"Switched to manual check-in to-do.")
 
         return True
 
     except Exception as e:
-        import traceback
         print(f"check_for_customer_reply_and_pause error: {e}")
         traceback.print_exc()
+        return False
+
+
+def post_job_comment(job_id, message):
+    """Post a comment (a Job Message) on a job. Returns True on success; on
+    failure logs it and returns False rather than raising.
+
+    Use this for the [OCC-AUTO] / [OCC-PENDING] markers the automation reads
+    back from job.comments (parse_sent_date(), already_sent_followup(),
+    already_pending_review(), the pause check). Those MUST stay comments.
+    A comment notifies every internal user, so purely informational notes go
+    to log_internal_note() instead.
+    """
+    try:
+        jobtread_query({
+            "createComment": {
+                "$": {
+                    "targetType": "job",
+                    "targetId": job_id,
+                    "message": message,
+                },
+                "createdComment": {"id": {}}
+            }
+        })
+        return True
+    except Exception as e:
+        print(f"  Could not post comment on job {job_id}: {e}")
         return False
 
 
@@ -1775,7 +1830,6 @@ def process_comment_created(payload):
         check_for_customer_reply_and_pause(job_id)
 
     except Exception as e:
-        import traceback
         print(f"process_comment_created error: {e}")
         traceback.print_exc()
 
@@ -1800,30 +1854,6 @@ def delete_followup_todos(job_info):
 # create_followup_todos removed — the cron (process_send_followups) creates
 # the first real to-do ("Review & send — Day 3 follow-up") itself once 3 days
 # have actually elapsed. No placeholder is created when the estimate is sent.
-
-
-def create_longterm_todo(job_id, job_type):
-    """Create a single 60-day long-term follow-up to-do."""
-    from datetime import date, timedelta
-    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
-    due = next_business_day(date.today() + timedelta(days=60)).isoformat()
-    try:
-        jobtread_query({
-            "createTask": {
-                "$": {
-                    "name": "📅 Long term follow-up — check back in",
-                    "isToDo": True,
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "startDate": due,
-                    "endDate": due,
-                    "assignees": [{"membershipId": assignee_id}],
-                }
-            }
-        })
-        print(f"  Long-term to-do created (due {due})")
-    except Exception as e:
-        print(f"  Long-term to-do failed: {e}")
 
 
 def set_job_status(job_id, job_type, status_value):
@@ -1911,25 +1941,12 @@ def process_document_sent(payload):
         set_job_status(job_id, job_type, "Sent")
 
         # Log the sent date as a comment so the daily runner can find it
-        from datetime import date as _date
-        sent_date = _date.today().isoformat()
-        try:
-            jobtread_query({
-                "createComment": {
-                    "$": {
-                        "targetType": "job",
-                        "targetId": job_id,
-                        "message": f"[OCC-AUTO] Estimate sent on {sent_date}. Follow-up emails scheduled for Day 3, 7, and 14.",
-                    },
-                    "createdComment": {"id": {}}
-                }
-            })
+        sent_date = date.today().isoformat()
+        if post_job_comment(job_id, f"[OCC-AUTO] Estimate sent on {sent_date}. "
+                                    f"Follow-up emails scheduled for Day 3, 7, and 14."):
             print(f"  Sent date logged: {sent_date}")
-        except Exception as ce:
-            print(f"  Could not log sent date comment: {ce}")
 
     except Exception as e:
-        import traceback
         print(f"process_document_sent error: {e}")
         traceback.print_exc()
 
@@ -2003,7 +2020,6 @@ def generate_followup_email(first_name, days_since=None, job_type=None, address=
     """
     # Accept either days_since= (legacy) or day= (closing repair path)
     days_since = days_since if days_since is not None else day
-    from datetime import datetime
     hour = datetime.now().hour
     if hour < 12:
         time_of_day = "morning"
@@ -2041,25 +2057,13 @@ Follow-up context: {followup_context.get(days_since, followup_context[14])}
 Write the email now."""
 
     try:
-        payload = json.dumps({
-            "model": "claude-sonnet-4-6",
+        result = anthropic_messages_request({
+            "model": CLAUDE_MODEL,
             "max_tokens": 400,
             "system": FOLLOWUP_EMAIL_SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": prompt}]
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-api-key": ANTHROPIC_KEY,
-                "anthropic-version": "2023-06-01",
-            },
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            result = json.loads(r.read().decode("utf-8"))
-        body = "".join(block.get("text", "") for block in result.get("content", [])).strip()
+        }, timeout=30)
+        body = anthropic_response_text(result).strip()
         if body:
             print(f"  AI email generated for {first_name} (day {days_since}, {len(body)} chars)")
             return body
@@ -2136,7 +2140,6 @@ def get_jobs_needing_followup():
     all_sent_job_ids = []
 
     # Only look at jobs created in the last 90 days
-    from datetime import date, timedelta
     cutoff = (date.today() - timedelta(days=90)).isoformat()
 
     # Pass 1: jobs at "Sent" in either status field, filtered by JobTread
@@ -2180,11 +2183,7 @@ def get_jobs_needing_followup():
             })
             jobs_data = resp.get("organization", {}).get("jobs", {})
             for job in jobs_data.get("nodes", []):
-                cfvs = {
-                    cfv["customField"]["name"]: cfv["value"]
-                    for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
-                    if cfv.get("customField")
-                }
+                cfvs = custom_field_map(job)
                 # The status field at "Sent" must be the one this job type
                 # uses — a Closing Repair whose Home Repairs Status happens to
                 # say "Sent" is not in the chain.
@@ -2247,8 +2246,6 @@ def get_jobs_needing_followup():
 
 def parse_sent_date(comments):
     """Extract the estimate sent date from job comments."""
-    import re
-    from datetime import date
     for comment in (comments or []):
         body = comment.get("message", "")
         if "[OCC-AUTO] Estimate sent on" in body:
@@ -2269,22 +2266,9 @@ def already_sent_followup(comments, day):
 
 def log_followup_sent(job_id, day):
     """Add a comment to the job recording that the follow-up was sent."""
-    from datetime import date
     marker = FOLLOWUP_SENT_MARKERS[day]
     label = "Closing repair check-in" if day == 2 else f"Day {day} follow-up"
-    try:
-        jobtread_query({
-            "createComment": {
-                "$": {
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "message": f"{marker} {label} email sent on {date.today().isoformat()}.",
-                },
-                "createdComment": {"id": {}}
-            }
-        })
-    except Exception as e:
-        print(f"  Could not log follow-up comment: {e}")
+    post_job_comment(job_id, f"{marker} {label} email sent on {date.today().isoformat()}.")
 
 
 def already_pending_review(comments, day):
@@ -2295,23 +2279,10 @@ def already_pending_review(comments, day):
 
 def log_pending_review(job_id, day):
     """Add a comment marking that a review to-do was created for this day."""
-    from datetime import date
     marker = FOLLOWUP_PENDING_MARKERS.get(day, "")
     if not marker:
         return
-    try:
-        jobtread_query({
-            "createComment": {
-                "$": {
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "message": f"{marker} Review to-do created on {date.today().isoformat()}.",
-                },
-                "createdComment": {"id": {}}
-            }
-        })
-    except Exception as e:
-        print(f"  Could not log pending review comment: {e}")
+    post_job_comment(job_id, f"{marker} Review to-do created on {date.today().isoformat()}.")
 
 
 def self_heal_enabled(sent_date):
@@ -2321,7 +2292,6 @@ def self_heal_enabled(sent_date):
     matching, so turning the daily run back on after an outage does not fire a
     pile of late follow-ups at customers who have already moved on.
     """
-    from datetime import date
     if not sent_date:
         return False
     try:
@@ -2372,55 +2342,14 @@ def log_superseded_followup(job_id, day, in_favor_of):
     run treats this milestone as handled and the customer never receives a
     stale Day 3 email a week after the Day 7 one.
     """
-    from datetime import date
     marker = FOLLOWUP_PENDING_MARKERS.get(day, "")
     if not marker:
         return
-    try:
-        jobtread_query({
-            "createComment": {
-                "$": {
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "message": (
-                        f"{marker} Day {day} follow-up skipped on "
-                        f"{date.today().isoformat()} — job was already past Day "
-                        f"{in_favor_of} when the follow-up run caught up."
-                    ),
-                },
-                "createdComment": {"id": {}}
-            }
-        })
+    if post_job_comment(job_id, (
+            f"{marker} Day {day} follow-up skipped on "
+            f"{date.today().isoformat()} — job was already past Day "
+            f"{in_favor_of} when the follow-up run caught up.")):
         print(f"  Day {day} marked superseded by Day {in_favor_of}")
-    except Exception as e:
-        print(f"  Could not log superseded marker for Day {day}: {e}")
-
-
-def create_review_todo(job_id, job_type, todo_name, email_body):
-    """Create the review to-do with the AI email in the description field."""
-    assignee_id = JASON_ID if job_type in JASON_JOB_TYPES else TYLER_ID
-    from datetime import date
-    today = next_business_day(date.today()).isoformat()
-    # Truncate to 4096 chars (JobTread description limit)
-    description = email_body[:4090] if email_body else ""
-    try:
-        jobtread_query({
-            "createTask": {
-                "$": {
-                    "name": todo_name,
-                    "isToDo": True,
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "startDate": today,
-                    "endDate": today,
-                    "description": description,
-                    "assignees": [{"membershipId": assignee_id}],
-                }
-            }
-        })
-        print(f"  Review to-do created: '{todo_name}'")
-    except Exception as e:
-        print(f"  Could not create review to-do '{todo_name}': {e}")
 
 
 def get_recipient_and_name(job):
@@ -2450,7 +2379,6 @@ def process_send_followups():
 
     Called via GET /send-followups from cron-job.org once per day.
     """
-    from datetime import date
     today = date.today()
     print(f"Running daily follow-up check: {today.isoformat()}")
 
@@ -2470,11 +2398,7 @@ def process_send_followups():
         days_since = (today - sent_date).days
         print(f"  Job {job_id}: {days_since} days since estimate sent")
 
-        job_cfvs = {
-            cfv["customField"]["name"]: cfv["value"]
-            for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
-            if cfv.get("customField")
-        }
+        job_cfvs = custom_field_map(job)
         job_type_label = job_cfvs.get("Job Type", "")
 
         # ── Closing Repair: single 48-hr check-in if not viewed ──────────────
@@ -2523,10 +2447,8 @@ def process_send_followups():
                 first_name, day=2, job_type="Closing Repair",
                 address=job_address, notes=job_notes, cost_group_names=[]
             )
-            create_review_todo(
-                job_id, "Closing Repair",
-                "📧 Review & send — Closing repair check-in", email_body
-            )
+            create_single_todo(job_id, "Closing Repair", CLOSING_CHECKIN_TODO,
+                               description=email_body or "")
             log_pending_review(job_id, 2)
             queued_count += 1
             continue
@@ -2566,7 +2488,7 @@ def process_send_followups():
         )
 
         todo_name = FOLLOWUP_REVIEW_TODO_NAMES[followup_day]
-        create_review_todo(job_id, job_type_label, todo_name, email_body)
+        create_single_todo(job_id, job_type_label, todo_name, description=email_body or "")
         log_pending_review(job_id, followup_day)
 
         # Close out anything this run jumped over, so an older milestone can
@@ -2590,7 +2512,7 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
     """
     # Determine which day this review corresponds to
     day_map = {v: k for k, v in FOLLOWUP_REVIEW_TODO_NAMES.items()}
-    day_map["📧 Review & send — Closing repair check-in"] = 2
+    day_map[CLOSING_CHECKIN_TODO] = 2
     days_since = day_map.get(task_name)
     if days_since is None:
         print(f"  send_followup: unrecognised review to-do name '{task_name}' — skipping")
@@ -2632,7 +2554,7 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
 
     email_body = (resp.get("task") or {}).get("description") or ""
     if not email_body.strip():
-        print(f"  send_followup: task description is empty — cannot send")
+        print("  send_followup: task description is empty — cannot send")
         return
 
     # Find the pending estimate recipient on this job
@@ -2660,26 +2582,10 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
 
     # Log sent marker and email body as a comment
     log_followup_sent(job_id, days_since)
-    try:
-        jobtread_query({
-            "createComment": {
-                "$": {
-                    "targetType": "job",
-                    "targetId": job_id,
-                    "message": f"[OCC-AUTO] Day {days_since} follow-up email sent:\n\n{email_body}",
-                },
-                "createdComment": {"id": {}}
-            }
-        })
-    except Exception as ce:
-        print(f"  send_followup: could not log email body comment: {ce}")
+    post_job_comment(job_id, f"[OCC-AUTO] Day {days_since} follow-up email sent:\n\n{email_body}")
 
     # Flip pipeline status
-    cfvs = {
-        cfv["customField"]["name"]: cfv["value"]
-        for cfv in (job_data.get("customFieldValues") or {}).get("nodes", [])
-        if cfv.get("customField")
-    }
+    cfvs = custom_field_map(job_data)
     job_type_label = cfvs.get("Job Type", job_type or "")
     target_status = FOLLOWUP_STATUS_MAP.get(days_since)
     if target_status and job_type_label:
@@ -2821,9 +2727,7 @@ def process_task_updated(payload):
         # ── Review to-do checked off → send the email now ─────────────────────
         # Jason reviewed (and possibly edited) the draft in the to-do description.
         # We read whatever is there and send it immediately.
-        all_review_names = set(FOLLOWUP_REVIEW_TODO_NAMES.values()) | {
-            "📧 Review & send — Closing repair check-in"
-        }
+        all_review_names = set(FOLLOWUP_REVIEW_TODO_NAMES.values()) | {CLOSING_CHECKIN_TODO}
         if task_name in all_review_names:
             send_followup_email_from_todo(task_id, task_name, job_id, job_type)
             return
@@ -2846,7 +2750,7 @@ def process_task_updated(payload):
             return
 
         # Handle "Call customer" — no status flip, just chain the next to-do
-        if task_name == "📞 Call customer — introduce & qualify":
+        if task_name == CALL_CUSTOMER_TODO:
             next_name   = (TODO_TO_NEXT_C if is_closing else TODO_TO_NEXT).get(task_name)
             next_offset = (TODO_TO_OFFSET_C if is_closing else TODO_TO_OFFSET).get(task_name, 1)
             if next_name:
@@ -2885,7 +2789,6 @@ def process_task_updated(payload):
         # ─────────────────────────────────────────────────────────────────────
 
     except Exception as e:
-        import traceback
         print(f"process_task_updated error: {e}")
         traceback.print_exc()
 
@@ -2954,7 +2857,6 @@ def process_document_updated(payload):
         print(f"  doc-updated: Closed Won set, deleted {deleted} follow-up to-dos")
 
     except Exception as e:
-        import traceback
         print(f"process_document_updated error: {e}")
         traceback.print_exc()
 
@@ -2986,7 +2888,6 @@ def process_job_created(payload):
 
         # Brief pause to let any to-dos created by the sales lead tool (route.ts)
         # or another concurrent process propagate before we check for duplicates.
-        import time
         time.sleep(3)
 
         # Re-fetch job info after sleep so we see any to-dos that just landed
@@ -3003,7 +2904,6 @@ def process_job_created(payload):
         create_new_lead_todos(job_id, job_type)
 
     except Exception as e:
-        import traceback
         print(f"process_job_created error: {e}")
         traceback.print_exc()
 
@@ -3061,7 +2961,7 @@ def process_job_updated(payload):
             # Remove short-term follow-ups, add 60-day to-do
             deleted = delete_followup_todos(job_info)
             print(f"  Long Term Follow Up: deleted {deleted} follow-up to-dos")
-            create_longterm_todo(job_id, job_type)
+            create_single_todo(job_id, job_type, LONG_TERM_TODO, due_offset=60)
 
         # Sync to-do if status moved forward via drag (and we have a mapping for it)
         # Only act if the status actually changed in this update
@@ -3071,7 +2971,6 @@ def process_job_updated(payload):
                 complete_todo_by_name(job_info, todo_to_check)
 
     except Exception as e:
-        import traceback
         print(f"process_job_updated error: {e}")
         traceback.print_exc()
 
@@ -3224,7 +3123,6 @@ def process_sales_tool_closing_estimate(body):
             client_name, client_phone, client_email, address, notes_text)
 
     except Exception as e:
-        import traceback
         print(f"  AI estimate failed for job {job_id}: {e}")
         traceback.print_exc()
         flag_failed_estimate(job_id, error=str(e))
@@ -3304,7 +3202,6 @@ def log_internal_note(job_id, message):
     and the pause-marker checks all query job.comments to find them. Those
     MUST stay as comments or the follow-up chain silently stops working.
     """
-    from datetime import date
     try:
         jobtread_query({
             "createDailyLog": {
@@ -3329,7 +3226,7 @@ def flag_failed_estimate(job_id, error="", job_type="Closing Repair"):
     try:
         create_single_todo(
             job_id, job_type=job_type,
-            name="🚨 Estimate generation failed — needs manual review",
+            name=ESTIMATE_FAILED_TODO,
             due_offset=0
         )
     except Exception as e:
@@ -3509,10 +3406,7 @@ def get_job_rerun_context(job_id):
         print(f"  rerun: job {job_id} not found")
         return None
 
-    cfvs = {
-        (n.get("customField") or {}).get("name"): n.get("value")
-        for n in ((job.get("customFieldValues") or {}).get("nodes") or [])
-    }
+    cfvs = custom_field_map(job)
     job_type = cfvs.get("Job Type")
     if job_type != "Closing Repair":
         print(f"  rerun: job {job_id} is '{job_type}', not Closing Repair — "
@@ -3535,10 +3429,7 @@ def get_job_rerun_context(job_id):
     if contacts:
         c = contacts[0]
         client_name = c.get("name") or ""
-        c_fields = {
-            (n.get("customField") or {}).get("name"): n.get("value")
-            for n in ((c.get("customFieldValues") or {}).get("nodes") or [])
-        }
+        c_fields = custom_field_map(c)
         client_email = c_fields.get("Email") or ""
         client_phone = c_fields.get("Phone") or ""
 
@@ -3635,12 +3526,11 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
 
         # Clear the failure flags now that there's a real estimate.
         job_info = get_job_info(job_id)
-        complete_todo_by_name(job_info, "🚨 Estimate generation failed — needs manual review")
+        complete_todo_by_name(job_info, ESTIMATE_FAILED_TODO)
         complete_todo_by_name(job_info, RERUN_TODO_NAME)
         return True
 
     except Exception as e:
-        import traceback
         print(f"  rerun: job {job_id} failed: {e}")
         traceback.print_exc()
         log_internal_note(job_id, f"[OCC-AUTO] Re-run failed again: {str(e)[:400]}")
@@ -3753,8 +3643,8 @@ def download_image_block(url):
 
 def _call_anthropic(content):
     """Send a content array to Claude and parse the JSON estimate. Shared by general calls."""
-    payload_base = {
-        "model": "claude-sonnet-4-6",
+    payload = {
+        "model": CLAUDE_MODEL,
         "max_tokens": 8000,  # raised from 4000 — avoid truncated/invalid JSON on larger estimates
         "system": get_system_prompt(),
         "messages": [{"role": "user", "content": content}]
@@ -3763,25 +3653,12 @@ def _call_anthropic(content):
     last_error = None
     for attempt in range(1, 4):
         try:
-            payload = json.dumps(payload_base).encode("utf-8")
-            req = urllib.request.Request(
-                "https://api.anthropic.com/v1/messages",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": ANTHROPIC_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "pdfs-2024-09-25"
-                },
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=120) as r:
-                result = json.loads(r.read().decode("utf-8"))
+            result = anthropic_messages_request(payload, timeout=120, beta="pdfs-2024-09-25")
 
             if result.get("stop_reason") == "max_tokens":
                 raise ValueError(f"Claude response truncated by max_tokens (attempt {attempt})")
 
-            raw = "".join(block.get("text", "") for block in result.get("content", []))
+            raw = anthropic_response_text(result)
             match = re.search(r"\{[\s\S]*\}", raw)
             if not match:
                 raise ValueError(f"No JSON in Claude response: {raw[:500]}")
@@ -3950,7 +3827,6 @@ def estimate_general_job(job_id, job_type, form_label, client_name, client_phone
                 # as failed just because the Projected Budget field write errored.
                 print(f"  Projected Budget field update failed (budget still saved): {ue}")
     except Exception as e:
-        import traceback
         print(f"  AI estimate failed for job {job_id}: {e}")
         traceback.print_exc()
         flag_failed_estimate(job_id, error=str(e), job_type=job_type)
@@ -4117,7 +3993,6 @@ def build_pricing_reference():
     Pass 2 — fetch cost groups PRICING_REFERENCE_DOC_BATCH docs at a time
     Aggregate into a formatted pricing reference string.
     """
-    from collections import defaultdict
 
     # ── Pass 1: collect all document IDs ─────────────────────────────────────
     doc_ids = []
@@ -4139,7 +4014,7 @@ def build_pricing_reference():
         }
         resp = jobtread_query(query)
         if not resp:
-            print(f"  WARNING: Empty response from JobTread")
+            print("  WARNING: Empty response from JobTread")
             break
         if "error" in resp:
             print(f"  ERROR from JobTread: {resp}")
@@ -4331,7 +4206,6 @@ def _run_send_followups_background():
         count = process_send_followups()
         print(f"Follow-up run complete: {count} review to-dos created.")
     except Exception as e:
-        import traceback
         print(f"Follow-up run failed: {e}\n{traceback.format_exc()}")
     finally:
         _followup_run_lock.release()
@@ -4390,7 +4264,6 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(msg.encode("utf-8"))
         except Exception as e:
-            import traceback
             err = f"Refresh failed: {e}\n{traceback.format_exc()}"
             print(err)
             self.send_response(500)
@@ -4464,7 +4337,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._process(body)
         except Exception as e:
             print(f"Routing error on '{path}': {e}")
-            import traceback
             traceback.print_exc()
 
     def _process(self, body):
@@ -4542,7 +4414,6 @@ class Handler(BaseHTTPRequestHandler):
                     client_name, client_phone, client_email, address, notes_text)
 
             except Exception as e:
-                import traceback
                 print(f"  AI estimate failed for job {job_id}: {e}")
                 traceback.print_exc()
                 flag_failed_estimate(job_id, error=str(e))
@@ -4551,7 +4422,6 @@ class Handler(BaseHTTPRequestHandler):
 
         except Exception as e:
             print(f"Error processing submission: {e}")
-            import traceback
             traceback.print_exc()
 
     def log_message(self, format, *args):

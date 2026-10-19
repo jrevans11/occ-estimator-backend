@@ -125,6 +125,7 @@ STILL OPEN / PROVISIONAL (do not treat these numbers as final):
 
 import re
 import io
+import csv
 import json
 import base64
 import urllib.request
@@ -132,8 +133,10 @@ import urllib.error
 import http.client
 import os
 import time
+import zipfile
 import functools
 from concurrent.futures import ThreadPoolExecutor
+from xml.sax.saxutils import unescape
 
 # ─────────────────────────────────────────────────────────────────────────
 # CLOSING REPAIR ESTIMATE MODEL (Oct 2026)
@@ -625,7 +628,6 @@ def load_historical_reference_examples(
     own directory (DEFAULT_HISTORICAL_CSV), not the process cwd — important
     for deployment (Render may not run app.py with the repo root as cwd).
     """
-    import csv as _csv
 
     csv_path = csv_path if csv_path is not None else DEFAULT_HISTORICAL_CSV
     group_keys = group_keys if group_keys is not None else HISTORICAL_REFERENCE_GROUP_KEYS
@@ -638,7 +640,7 @@ def load_historical_reference_examples(
     wanted = set(group_keys)
     matched = {k: [] for k in group_keys}
     with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in _csv.DictReader(f):
+        for row in csv.DictReader(f):
             key = (row["job_id"], row["group_name"])
             if key in wanted:
                 matched[key].append(row)
@@ -693,7 +695,6 @@ def load_redland_reference_examples(csv_path=None, job_keys=None):
     missing this file just quietly falls back to the static REAL SUB COST
     REFERENCE ranges already in ESTIMATING_LOGIC_SECTION instead of crashing.
     """
-    import csv as _csv
 
     csv_path = csv_path if csv_path is not None else DEFAULT_REDLAND_CSV
     job_keys = job_keys if job_keys is not None else REDLAND_REFERENCE_JOB_KEYS
@@ -706,7 +707,7 @@ def load_redland_reference_examples(csv_path=None, job_keys=None):
     wanted = set(job_keys)
     by_job = {}
     with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in _csv.DictReader(f):
+        for row in csv.DictReader(f):
             if row["job_number"] in wanted:
                 by_job.setdefault(row["job_number"], []).append(row)
 
@@ -773,7 +774,6 @@ def load_vendor_reference_examples(csv_path, job_keys, label, note):
     job_keys=None means "use every job in the file, in file order" instead
     of a hand-picked subset.
     """
-    import csv as _csv
 
     if not os.path.exists(csv_path):
         print(f"  WARNING: reference CSV not found at '{csv_path}' for "
@@ -783,7 +783,7 @@ def load_vendor_reference_examples(csv_path, job_keys, label, note):
     by_job = {}
     order = []
     with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in _csv.DictReader(f):
+        for row in csv.DictReader(f):
             key = row["job_number"]
             if job_keys is not None and key not in job_keys:
                 continue
@@ -830,7 +830,6 @@ def load_consolidated_calibration_examples(csv_path=None):
     Same graceful-degradation contract as the other loaders: returns "" and
     warns rather than raising if the CSV is missing.
     """
-    import csv as _csv
 
     csv_path = csv_path or DEFAULT_CONSOLIDATED_CALIBRATION_CSV
     if not os.path.exists(csv_path):
@@ -841,7 +840,7 @@ def load_consolidated_calibration_examples(csv_path=None):
 
     subs, inhouse = [], []
     with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in _csv.DictReader(f):
+        for row in csv.DictReader(f):
             name = (row.get("group_name") or "").strip()
             findings = (row.get("findings_count") or "").strip()
             scope = (row.get("scope_summary") or "").strip()
@@ -1964,6 +1963,20 @@ def add_not_included_group(job_id, estimate, jobtread_query_fn):
 _SCOPE_REF_RE = re.compile(r"^\s*-\s*((?:\d+(?:\.\d+)*)(?:\s*/\s*\d+(?:\.\d+)*)*)\s*-\s+")
 
 
+def _group_scope_references(group):
+    """Set of report reference numbers appearing on a group's scope lines."""
+    refs = set()
+    for raw_line in (group.get("description", "") or "").splitlines():
+        match = _SCOPE_REF_RE.match(raw_line)
+        if not match:
+            continue
+        for ref in match.group(1).split("/"):
+            ref = ref.strip()
+            if ref:
+                refs.add(ref)
+    return refs
+
+
 def find_duplicate_scope_references(estimate):
     """Find report reference numbers that appear in more than one cost group.
 
@@ -1981,17 +1994,7 @@ def find_duplicate_scope_references(estimate):
 
     for group in estimate.get("cost_groups", []) or []:
         title = (group.get("title", "") or "Untitled group").strip()
-        description = group.get("description", "") or ""
-        refs_in_group = set()
-        for raw_line in description.splitlines():
-            match = _SCOPE_REF_RE.match(raw_line)
-            if not match:
-                continue
-            for ref in match.group(1).split("/"):
-                ref = ref.strip()
-                if ref:
-                    refs_in_group.add(ref)
-        for ref in refs_in_group:
+        for ref in _group_scope_references(group):
             seen.setdefault(ref, [])
             if title not in seen[ref]:
                 seen[ref].append(title)
@@ -2016,20 +2019,6 @@ _BUNDLED_ELSEWHERE_PHRASES = (
     "included in the plumbing", "part of the electrical visit",
     "part of the plumbing visit", "covered under", "covered by the",
 )
-
-
-def _group_scope_references(group):
-    """Set of report reference numbers appearing on a group's scope lines."""
-    refs = set()
-    for raw_line in (group.get("description", "") or "").splitlines():
-        match = _SCOPE_REF_RE.match(raw_line)
-        if not match:
-            continue
-        for ref in match.group(1).split("/"):
-            ref = ref.strip()
-            if ref:
-                refs.add(ref)
-    return refs
 
 
 def find_bundled_groups_with_own_price(estimate):
@@ -2364,7 +2353,6 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
         title = (group.get("title", "") or "").strip() or "Repair Item"
         description = (group.get("description", "") or "").strip()
         notes = (group.get("notes", "") or "").strip()
-        labor = (group.get("labor", "") or "").strip().lower()
         cost_code_name = (group.get("cost_code", "") or "").strip()
         cost_code_id = resolve_cost_code_id(cost_code_name, context=title[:50])
 
@@ -2914,7 +2902,6 @@ def _sniff_file_kind(data):
         # ZIP container. Office Open XML (.docx/.xlsx/.pptx) all look like
         # this — look inside to tell them apart.
         try:
-            import zipfile
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 names = set(z.namelist())
             if "word/document.xml" in names:
@@ -2956,8 +2943,6 @@ def _docx_to_text(data, max_chars=200000):
     Returns "" if anything goes wrong; the caller treats that as unreadable.
     """
     try:
-        import zipfile
-        from xml.sax.saxutils import unescape
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             names = z.namelist()
             xml = z.read("word/document.xml").decode("utf-8", errors="replace")
