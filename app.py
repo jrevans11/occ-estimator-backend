@@ -3,11 +3,13 @@ import json
 import base64
 import re
 import io
+import time
 import urllib.request
+import urllib.error
 import urllib.parse
 import http.client
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # v2 closing-repair estimating logic (labor+material breakdown, real cost
 # codes, historical reference examples, Home Depot catalog resolution,
@@ -799,6 +801,13 @@ def jobtread_query(query):
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode("utf-8"))
 
+
+# Page size for job.customFieldValues in every job query. OCC's jobs carry 11
+# custom fields (Oct 2026) and JobTread returns them in no guaranteed order, so
+# a smaller page can silently drop "Job Type" or the status field — the
+# follow-up scan used size 5 and skipped jobs sitting at "Sent" because of it.
+# Keep this comfortably above the real field count.
+JOB_CUSTOM_FIELD_PAGE_SIZE = 25
 
 # JobTread cost item constants
 COST_CODE_UNCATEGORIZED = "22P9ppJUAHXn"
@@ -1621,7 +1630,7 @@ def get_job_info(job_id):
             "job": {
                 "$": {"id": job_id},
                 "customFieldValues": {
-                    "$": {"size": 20},
+                    "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                     "nodes": {"customField": {"id": {}, "name": {}}, "value": {}}
                 },
                 "tasks": {
@@ -2224,7 +2233,7 @@ def get_jobs_needing_followup():
                             "nodes": {
                                 "id": {}, "name": {},
                                 "customFieldValues": {
-                                    "$": {"size": 5},
+                                    "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                                     "nodes": {"customField": {"name": {}}, "value": {}}
                                 }
                             }
@@ -2264,7 +2273,7 @@ def get_jobs_needing_followup():
                     "id": {}, "name": {}, "description": {},
                     "location": {"address": {}},
                     "customFieldValues": {
-                        "$": {"size": 10},
+                        "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                         "nodes": {"customField": {"name": {}}, "value": {}}
                     },
                     "comments": {
@@ -2680,7 +2689,7 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
                     }
                 },
                 "customFieldValues": {
-                    "$": {"size": 10},
+                    "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                     "nodes": {"customField": {"name": {}}, "value": {}}
                 }
             }
@@ -3250,16 +3259,18 @@ def process_sales_tool_closing_estimate(body):
         # both reflect the enforced floor if the itemized hours fell short.
         estimate = v2.enforce_minimum_labor_hours(estimate)
 
-        # Don't trust Claude's own "total" field here — under the new schema
-        # it's not told to apply markup itself, so its self-reported total
-        # has no reliable basis. Compute the real billed total the same way
-        # add_cost_groups_v2() actually prices each line.
-        total = v2.compute_estimate_total(estimate)
-        print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
-
         print("  Resolving material lines against Home Depot catalog...")
         estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
         print(f"  Catalog resolution: {catalog_stats}")
+
+        # Don't trust Claude's own "total" field here — under the new schema
+        # it's not told to apply markup itself, so its self-reported total
+        # has no reliable basis. Compute the real billed total the same way
+        # add_cost_groups_v2() actually prices each line. Must run AFTER the
+        # catalog step, which replaces material unit costs with live prices —
+        # computed before it, the total didn't match what was written.
+        total = v2.compute_estimate_total(estimate)
+        print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
 
         # Generation Spec §2/§7 — warn (don't fail) on any report reference
         # number that landed in more than one cost group, since that
@@ -3551,7 +3562,7 @@ def get_job_rerun_context(job_id):
                 "$": {"id": job_id},
                 "name": {},
                 "customFieldValues": {
-                    "$": {"size": 20},
+                    "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                     "nodes": {"customField": {"name": {}}, "value": {}}
                 },
                 "costGroups": {
@@ -3721,13 +3732,15 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
             system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
         )
         estimate = v2.enforce_minimum_labor_hours(estimate)
-        total = v2.compute_estimate_total(estimate)
-        print(f"  rerun: estimate total (computed, not LLM-reported): ${total:,.2f}")
 
         print("  rerun: resolving material lines against Home Depot catalog...")
         estimate, catalog_stats = v2.resolve_material_lines_with_catalog(
             estimate, jobtread_query, JOBTREAD_ORG)
         print(f"  rerun: catalog resolution: {catalog_stats}")
+
+        # After the catalog step — it changes material costs.
+        total = v2.compute_estimate_total(estimate)
+        print(f"  rerun: estimate total (computed, not LLM-reported): ${total:,.2f}")
 
         v2.find_duplicate_scope_references(estimate)
         v2.find_bundled_groups_with_own_price(estimate)
@@ -3899,6 +3912,31 @@ def _call_anthropic(content):
             if not match:
                 raise ValueError(f"No JSON in Claude response: {raw[:500]}")
             return json.loads(match.group(0))
+
+        except urllib.error.HTTPError as e:
+            # Must come before the OSError clause below — HTTPError is an
+            # OSError. A 4xx other than 429 is a bad request and fails the
+            # same way every time; 429/5xx/529 are transient.
+            if e.code != 429 and e.code < 500:
+                raise
+            last_error = e
+            print(f"  _call_anthropic attempt {attempt} failed: HTTP {e.code}")
+            if attempt < 3:
+                delay = v2.retry_delay_seconds(attempt, (e.headers or {}).get("retry-after"))
+                print(f"  Retrying in {delay:.0f}s...")
+                time.sleep(delay)
+                continue
+
+        except (TimeoutError, OSError, http.client.HTTPException) as e:
+            # Network trouble used to escape this loop entirely and fail the
+            # estimate on attempt 1.
+            last_error = e
+            print(f"  _call_anthropic attempt {attempt} failed ({type(e).__name__}): {e}")
+            if attempt < 3:
+                delay = v2.retry_delay_seconds(attempt)
+                print(f"  Retrying in {delay:.0f}s...")
+                time.sleep(delay)
+                continue
 
         except (json.JSONDecodeError, ValueError) as e:
             last_error = e
@@ -4637,12 +4675,14 @@ class Handler(BaseHTTPRequestHandler):
                     system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
                 )
                 estimate = v2.enforce_minimum_labor_hours(estimate)
-                total = v2.compute_estimate_total(estimate)
-                print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
 
                 print("  Resolving material lines against Home Depot catalog...")
                 estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
                 print(f"  Catalog resolution: {catalog_stats}")
+
+                # After the catalog step — it changes material costs.
+                total = v2.compute_estimate_total(estimate)
+                print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
 
                 # Generation Spec §2/§7 — warn (don't fail) on any report
                 # reference number that landed in more than one cost group,
@@ -4682,5 +4722,10 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"Starting OCC Estimator on port {port}")
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    # Threading server: each request gets its own thread. The plain
+    # HTTPServer handled one request at a time, so a slow synchronous GET
+    # (/refresh-pricing makes a JobTread call per closing-repair document and
+    # takes minutes) left every Wufoo submission and JobTread webhook queued
+    # behind it until their senders timed out.
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()

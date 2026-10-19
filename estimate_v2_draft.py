@@ -131,6 +131,7 @@ import urllib.request
 import urllib.error
 import http.client
 import os
+import time
 
 # ─────────────────────────────────────────────────────────────────────────
 # CLOSING REPAIR ESTIMATE MODEL (Oct 2026)
@@ -2634,6 +2635,40 @@ class NonRetryableEstimateError(Exception):
     pass
 
 
+class RetryableAPIError(Exception):
+    """A transient Anthropic failure — rate limit (429), overload (529), a 5xx,
+    or an error event mid-stream. Worth retrying, but only after a pause:
+    hitting an overloaded API again immediately just fails again.
+
+    Oct 2026: these used to be raised as a bare Exception, which isn't in
+    _call_claude_v2_core's retry list, so an API blip failed the estimate on
+    the first attempt even though the docstring promised a retry.
+    """
+
+    def __init__(self, message, retry_after=None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+# Pause before retry N+1 after a transient API error. Two retries means at most
+# about a minute of waiting, which is nothing next to a lead going to manual
+# entry. Truncated/bad-JSON responses retry immediately — waiting doesn't help.
+RETRY_BACKOFF_SECONDS = (15, 45)
+RETRY_AFTER_CAP_SECONDS = 60
+
+
+def retry_delay_seconds(attempt, retry_after=None):
+    """Seconds to wait after failed attempt `attempt` (1-based). Honors the
+    API's Retry-After header when it sends one, capped so a bad header can't
+    park a worker thread for long."""
+    try:
+        if retry_after is not None:
+            return min(max(float(retry_after), 1.0), RETRY_AFTER_CAP_SECONDS)
+    except (TypeError, ValueError):
+        pass
+    return RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS)) - 1]
+
+
 def _upload_pdf_to_files_api(pdf_bytes, filename, anthropic_api_key, timeout=300):
     """Upload a PDF to the Anthropic Files API and return its file_id.
 
@@ -2757,7 +2792,9 @@ def _stream_claude_message(payload_bytes, anthropic_api_key, timeout, beta_heade
         if e.code in (400, 401, 403, 404, 413, 422):
             raise NonRetryableEstimateError(
                 f"Anthropic API rejected the request: HTTP {e.code} — {body}")
-        raise Exception(f"Anthropic API error: HTTP {e.code} — {body}")
+        raise RetryableAPIError(
+            f"Anthropic API error: HTTP {e.code} — {body}",
+            retry_after=(e.headers or {}).get("retry-after"))
 
     with stream as r:
         for raw_line in r:                      # iterates the stream line by line
@@ -2780,7 +2817,11 @@ def _stream_claude_message(payload_bytes, anthropic_api_key, timeout, beta_heade
             elif etype == "message_delta":
                 stop_reason = event.get("delta", {}).get("stop_reason") or stop_reason
             elif etype == "error":
-                raise Exception(f"Claude stream error: {event.get('error')}")
+                err = event.get("error") or {}
+                if err.get("type") == "invalid_request_error":
+                    raise NonRetryableEstimateError(f"Claude stream error: {err}")
+                # overloaded_error / api_error — transient, retry after a pause
+                raise RetryableAPIError(f"Claude stream error: {err}")
 
     return "".join(text_parts), stop_reason
 
@@ -3399,7 +3440,19 @@ def _call_claude_v2_core(content, system_prompt, anthropic_api_key,
             # minutes.
             raise
 
-        except (json.JSONDecodeError, ValueError, TimeoutError, OSError, http.client.HTTPException) as e:
+        except (RetryableAPIError, TimeoutError, OSError, http.client.HTTPException) as e:
+            # Transient: the API or the network had a bad moment. Wait first —
+            # an immediate retry into an overloaded API just fails again.
+            last_error = e
+            print(f"  {caller_label} attempt {attempt} failed ({type(e).__name__}): {e}")
+            if attempt < 3:
+                delay = retry_delay_seconds(attempt, getattr(e, "retry_after", None))
+                print(f"  Retrying ({attempt + 1}/3) in {delay:.0f}s...")
+                time.sleep(delay)
+                continue
+
+        except (json.JSONDecodeError, ValueError) as e:
+            # Truncated or malformed output — nothing to wait out.
             last_error = e
             print(f"  {caller_label} attempt {attempt} failed ({type(e).__name__}): {e}")
             if attempt < 3:
