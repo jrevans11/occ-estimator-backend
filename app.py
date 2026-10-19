@@ -21,6 +21,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 # (Home Repair, GVL, Remodel, Pre-listing, and the general sales-tool flow)
 # still depends on their original flat-price schema and behavior.
 import estimate_v2_draft as v2
+import site_scope
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -4345,6 +4346,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_refresh()
         elif path == "/send-followups":
             self._handle_send_followups()
+        elif path == "/scope/preview":
+            self._handle_scope_preview()
         else:
             self.send_response(200)
             self.end_headers()
@@ -4375,6 +4378,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(202)
         self.end_headers()
         self.wfile.write(msg.encode("utf-8"))
+
+    def _handle_scope_preview(self):
+        """Site Scope Tool: what a site visit captured, before Start. See site_scope.py."""
+        params = urllib.parse.parse_qs(self.path.partition("?")[2])
+        status, body = site_scope.handle_preview_request(params, self.headers, jobtread_query, JOBTREAD_ORG)
+        payload = json.dumps(body, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _handle_refresh(self):
         """Pull all closing repair cost groups from JobTread and update pricing."""
@@ -4555,7 +4569,9 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
 
     def log_message(self, format, *args):
-        print(f"{self.address_string()} - {format % args}")
+        # Redact ?key= so the scope endpoints' key never lands in Render logs.
+        line = re.sub(r"([?&]key=)[^&\s]*", r"\1REDACTED", format % args)
+        print(f"{self.address_string()} - {line}")
 
 
 if __name__ == "__main__":

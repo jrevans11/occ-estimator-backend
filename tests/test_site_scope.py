@@ -1,0 +1,372 @@
+"""Tests for the Site Scope Tool phase 1 preview (site_scope.py, companycam_api.py).
+
+Run from the repo root:  python3 -m unittest discover tests
+
+CompanyCam and JobTread are faked with responses shaped like the real ones
+(pulled from project 112543911 / job 00768 on Oct 19, 2026), so no keys or
+network are needed.
+"""
+
+import json
+import os
+import sys
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from http.server import ThreadingHTTPServer
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import companycam_api as cc  # noqa: E402
+import site_scope  # noqa: E402
+
+KEY = "test-scope-key"
+ORG = "22P9ppHePJKP"
+
+
+def ts(iso):
+    return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
+
+
+def photo(pid, captured_at, description=None):
+    base = f"https://static.companycam.com/lambda/projects/117058039/photos/{pid}.jpeg"
+    return {
+        "id": pid,
+        "project_id": "117058039",
+        "captured_at": captured_at,
+        "description": description,
+        "uris": [
+            {"type": "original", "uri": base + "?d=4032x4032", "url": base + "?d=4032x4032"},
+            {"type": "web", "uri": base + "?d=400x400", "url": base + "?d=400x400"},
+            {"type": "thumbnail", "uri": base + "?d=250x250", "url": base + "?d=250x250"},
+        ],
+    }
+
+
+PROJECT = {
+    "id": "117058039",
+    "name": "Test (1)",
+    "archived": False,
+    "project_url": "https://app.companycam.com/projects/117058039",
+    "address": {"street_address_1": "3140 Wade Hampton Blvd", "city": "Taylors", "state": "SC"},
+    "photo_count": 4,
+}
+
+# Oct 19 visit (EDT, UTC-4) plus one older photo from Oct 10.
+PHOTOS = [
+    photo("p4", ts("2026-10-19T16:25:00Z"), "Wall 3"),
+    photo("p3", "2026-10-19T16:21:30Z"),            # ISO string form is accepted too
+    photo("p2", ts("2026-10-19T16:20:00Z")),
+    photo("p1", ts("2026-10-10T14:00:00Z")),
+]
+
+VIDEOS = [
+    {"id": "v2", "captured_at": ts("2026-10-19T16:29:00Z"), "duration": 3},
+    {"id": "v1", "captured_at": ts("2026-10-19T16:21:00Z"), "duration": 120},
+    {"id": "v0", "captured_at": ts("2026-10-10T14:05:00Z"), "duration": 60},
+]
+
+PAGES = [
+    {"id": "pg2", "title": "AI Walkthrough Summary"},
+    {"id": "pg1", "title": "Site Visit Notes"},
+]
+
+SEARCH = [
+    PROJECT,
+    {"id": "999", "name": "3140 Wade Hampton Blvd", "archived": False, "photo_count": 2,
+     "project_url": "https://app.companycam.com/projects/999",
+     "address": {"street_address_1": "3140 Wade Hampton Blvd"}},
+    {"id": "998", "name": "Old archived copy", "archived": True,
+     "address": {"street_address_1": "3140 Wade Hampton Blvd"}},
+    {"id": "997", "name": "Somewhere else", "archived": False,
+     "address": {"street_address_1": "3140 Wade Hampton Blvd Apt 2"}},
+]
+
+JOB = {
+    "id": "22PDLqnyG8eT", "number": "00035", "name": "Test job- JT", "companycamId": "117058039",
+    "location": {"address": "3122 Wade Hampton Blvd, Taylors, SC 29687, USA"},
+}
+
+
+class FakeCompanyCam:
+    """Stands in for companycam_api._get. Records every call."""
+
+    def __init__(self, videos_status=None, pages=PAGES, transcripts=None):
+        self.calls = []
+        self.videos_status = videos_status
+        self.pages = pages
+        self.transcripts = transcripts if transcripts is not None else {"v1": "Wall 1 is twelve feet."}
+
+    def __call__(self, path, params=None):
+        self.calls.append((path, params))
+        if path == "/projects/117058039":
+            return PROJECT
+        if path == "/projects/117058039/photos":
+            page = (params or {}).get("page", 1)
+            return PHOTOS if page == 1 else []
+        if path == "/projects/117058039/videos":
+            if self.videos_status:
+                raise cc.CompanyCamError(f"HTTP {self.videos_status}", self.videos_status)
+            return VIDEOS
+        if path.startswith("/videos/"):
+            vid = path.rsplit("/", 1)[1]
+            text = self.transcripts.get(vid)
+            return {"id": vid, "transcript": {"text": text} if text else None}
+        if path == "/projects/117058039/pages":
+            return self.pages
+        if path == "/projects":
+            return SEARCH
+        raise cc.CompanyCamError(f"unexpected path {path}", 404)
+
+
+def fake_jobtread(job=JOB):
+    calls = []
+
+    def q(query):
+        calls.append(query)
+        if "job" in query:
+            return {"job": job if query["job"]["$"]["id"] == job["id"] else None}
+        where = query["organization"]["jobs"]["$"]["where"]
+        return {"organization": {"jobs": {"nodes": [job] if where[1] == job["number"] else []}}}
+
+    q.calls = calls
+    return q
+
+
+class BaseCase(unittest.TestCase):
+    def setUp(self):
+        env = mock.patch.dict(os.environ, {"COMPANYCAM_API_KEY": "cc-test", "SCOPE_API_KEY": KEY})
+        env.start()
+        self.addCleanup(env.stop)
+        self.cc = FakeCompanyCam()
+        p = mock.patch.object(cc, "_get", self.cc)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def preview(self, job="00035", date="", jt=None):
+        return site_scope.build_visit_preview(job, jt or fake_jobtread(), ORG, date)
+
+
+class TimeTests(unittest.TestCase):
+    def test_eastern_daylight_and_standard_time(self):
+        # 23:30 UTC on Oct 19 is still Oct 19 at 7:30 PM in Greenville (EDT).
+        self.assertEqual(site_scope.to_local(ts("2026-10-19T23:30:00Z")), datetime(2026, 10, 19, 19, 30))
+        # 03:30 UTC on Oct 20 is 11:30 PM on Oct 19.
+        self.assertEqual(site_scope.to_local(ts("2026-10-20T03:30:00Z")).day, 19)
+        # January is EST (UTC-5).
+        self.assertEqual(site_scope.to_local(ts("2026-01-15T17:00:00Z")).hour, 12)
+        # DST change days: Mar 8 2026 at 07:00 UTC flips to EDT; Nov 1 2026 at 06:00 UTC flips back.
+        self.assertEqual(site_scope.to_local(ts("2026-03-08T06:59:00Z")).hour, 1)
+        self.assertEqual(site_scope.to_local(ts("2026-03-08T07:00:00Z")).hour, 3)
+        self.assertEqual(site_scope.to_local(ts("2026-11-01T05:59:00Z")).hour, 1)
+        self.assertEqual(site_scope.to_local(ts("2026-11-01T06:00:00Z")).hour, 1)
+
+    def test_parse_timestamp_forms(self):
+        self.assertEqual(cc.parse_timestamp(1787077547), 1787077547)
+        self.assertEqual(cc.parse_timestamp("1787077547"), 1787077547)
+        self.assertEqual(cc.parse_timestamp("2026-08-18T18:25:47Z"), ts("2026-08-18T18:25:47Z"))
+        self.assertIsNone(cc.parse_timestamp(None))
+        self.assertIsNone(cc.parse_timestamp("not a date"))
+
+
+class AuthTests(unittest.TestCase):
+    def test_closed_when_no_key_configured(self):
+        with mock.patch.dict(os.environ, {"SCOPE_API_KEY": ""}):
+            status, body = site_scope.handle_preview_request({"job": ["00035"]}, {}, fake_jobtread(), ORG)
+        self.assertEqual(status, 503)
+        self.assertFalse(body["ok"])
+
+    def test_wrong_or_missing_key(self):
+        with mock.patch.dict(os.environ, {"SCOPE_API_KEY": KEY}):
+            self.assertEqual(site_scope.handle_preview_request({"key": ["nope"]}, {}, fake_jobtread(), ORG)[0], 401)
+            self.assertEqual(site_scope.handle_preview_request({}, {}, fake_jobtread(), ORG)[0], 401)
+
+    def test_missing_companycam_key(self):
+        with mock.patch.dict(os.environ, {"SCOPE_API_KEY": KEY, "COMPANYCAM_API_KEY": ""}):
+            status, body = site_scope.handle_preview_request(
+                {"key": [KEY], "job": ["00035"]}, {}, fake_jobtread(), ORG)
+        self.assertEqual(status, 503)
+        self.assertIn("COMPANYCAM_API_KEY", body["error"])
+
+
+class JobLookupTests(BaseCase):
+    def test_by_number_is_zero_padded(self):
+        jt = fake_jobtread()
+        self.assertEqual(self.preview(job="35", jt=jt)["job"]["number"], "00035")
+        self.assertEqual(jt.calls[0]["organization"]["jobs"]["$"]["where"], ["number", "00035"])
+
+    def test_by_id(self):
+        self.assertEqual(self.preview(job="22PDLqnyG8eT")["job"]["id"], "22PDLqnyG8eT")
+
+    def test_unknown_job(self):
+        with self.assertRaises(site_scope.PreviewError) as e:
+            self.preview(job="99999")
+        self.assertEqual(e.exception.status, 404)
+
+    def test_no_job_given(self):
+        with self.assertRaises(site_scope.PreviewError) as e:
+            self.preview(job="")
+        self.assertEqual(e.exception.status, 400)
+
+    def test_job_without_companycam_project(self):
+        with self.assertRaises(site_scope.PreviewError) as e:
+            self.preview(jt=fake_jobtread(dict(JOB, companycamId=None)))
+        self.assertEqual(e.exception.status, 404)
+        self.assertIn("no CompanyCam project", str(e.exception))
+
+
+class PreviewTests(BaseCase):
+    def test_default_is_newest_visit_day(self):
+        r = self.preview()
+        self.assertEqual(r["visit_date"], "2026-10-19")
+        self.assertEqual(r["photos"]["count"], 3)
+        self.assertEqual([p["id"] for p in r["photos"]["items"]], ["p2", "p3", "p4"])  # capture order
+        self.assertEqual(r["photos"]["items"][0]["captured_at"], "2026-10-19 12:20 PM")
+        self.assertTrue(r["photos"]["items"][0]["thumbnail"].endswith("?d=250x250"))
+        self.assertEqual(r["photos"]["items"][2]["description"], "Wall 3")
+        self.assertEqual(r["companycam_project"]["photo_count_on_project"], 4)
+
+    def test_date_all_and_specific_date(self):
+        self.assertEqual(self.preview(date="all")["photos"]["count"], 4)
+        r = self.preview(date="2026-10-10")
+        self.assertEqual([p["id"] for p in r["photos"]["items"]], ["p1"])
+        self.assertEqual([v["id"] for v in r["videos"]["items"]], ["v0"])
+
+    def test_bad_date(self):
+        with self.assertRaises(site_scope.PreviewError) as e:
+            self.preview(date="10/19/2026")
+        self.assertEqual(e.exception.status, 400)
+
+    def test_videos_short_skipped_and_transcripts(self):
+        vids = {v["id"]: v for v in self.preview()["videos"]["items"]}
+        self.assertEqual(set(vids), {"v1", "v2"})
+        self.assertTrue(vids["v2"]["skipped"])
+        self.assertEqual(vids["v1"]["transcript"], "ready")
+        # Short video's transcript is never fetched.
+        self.assertNotIn("/videos/v2", [c[0] for c in self.cc.calls])
+
+    def test_transcript_not_ready(self):
+        self.cc.transcripts = {}
+        vids = {v["id"]: v for v in self.preview()["videos"]["items"]}
+        self.assertEqual(vids["v1"]["transcript"], "not ready")
+
+    def test_video_listing_failure_is_a_warning_not_a_failure(self):
+        self.cc.videos_status = 404
+        r = self.preview()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["videos"]["count"], 0)
+        self.assertTrue(any("videos" in w for w in r["warnings"]))
+        self.assertEqual(r["photos"]["count"], 3)
+
+    def test_notes_page_found_or_missing(self):
+        self.assertEqual(self.preview()["site_visit_notes_page"], {"exists": True, "id": "pg1", "title": "Site Visit Notes"})
+        self.cc.pages = PAGES[:1]
+        self.assertEqual(self.preview()["site_visit_notes_page"], {"exists": False})
+
+    def test_duplicate_projects_at_same_address(self):
+        others = self.preview()["other_projects_at_address"]
+        # Excludes itself, the archived copy, and a different street line.
+        self.assertEqual([o["id"] for o in others], ["999"])
+
+    def test_summary_line(self):
+        s = self.preview()["summary"]
+        self.assertEqual(
+            s,
+            "Job 00035: 3 photos and 1 video (1 with a transcript ready) from Oct 19, 2026. "
+            "The project already has a Site Visit Notes Page. "
+            "Heads up: 1 other CompanyCam project(s) share this address.")
+
+    def test_preview_never_writes(self):
+        self.preview()
+        # _get is the only call path used; no POST/PUT helper exists yet, but
+        # make sure nothing outside the read endpoints was touched.
+        paths = {c[0] for c in self.cc.calls}
+        self.assertTrue(paths <= {"/projects/117058039", "/projects/117058039/photos",
+                                  "/projects/117058039/videos", "/videos/v1",
+                                  "/projects/117058039/pages", "/projects"})
+
+
+class PhotoPagingTests(BaseCase):
+    def test_pages_until_short_page(self):
+        full = [photo(f"x{i}", ts("2026-10-19T16:00:00Z")) for i in range(cc.PER_PAGE)]
+        pages = {1: full, 2: full[:5]}
+        calls = []
+
+        def fake(path, params=None):
+            calls.append(params["page"])
+            return pages.get(params["page"], [])
+
+        with mock.patch.object(cc, "_get", fake):
+            self.assertEqual(len(cc.list_project_photos("1")), cc.PER_PAGE + 5)
+        self.assertEqual(calls, [1, 2])
+
+
+class HttpEndpointTests(BaseCase):
+    """Round trip through the real app.py Handler and a real local server."""
+
+    @classmethod
+    def setUpClass(cls):
+        import app  # noqa: F401  (imports estimate_v2_draft etc. - no network at import)
+        cls.app = app
+
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(self.app, "jobtread_query", fake_jobtread())
+        p.start()
+        self.addCleanup(p.stop)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.app.Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_port}"
+
+    def get(self, path, headers=None):
+        req = urllib.request.Request(self.base + path, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers.get("Content-Type"), json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers.get("Content-Type"), json.loads(e.read())
+
+    def test_preview_with_key_in_query(self):
+        status, ctype, body = self.get(f"/scope/preview?job=00035&key={KEY}")
+        self.assertEqual(status, 200)
+        self.assertEqual(ctype, "application/json")
+        self.assertEqual(body["photos"]["count"], 3)
+        self.assertTrue(body["summary"].startswith("Job 00035: 3 photos"))
+
+    def test_preview_with_key_in_header(self):
+        status, _, body = self.get("/scope/preview?job=00035&date=all", {"X-Scope-Key": KEY})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["photos"]["count"], 4)
+
+    def test_preview_rejects_wrong_key(self):
+        status, _, body = self.get("/scope/preview?job=00035&key=wrong")
+        self.assertEqual(status, 401)
+        self.assertFalse(body["ok"])
+
+    def test_key_is_redacted_from_request_log(self):
+        with mock.patch("builtins.print") as printed:
+            self.get(f"/scope/preview?job=00035&key={KEY}&date=all")
+        logged = " ".join(str(c.args[0]) for c in printed.call_args_list if c.args)
+        self.assertIn("key=REDACTED&date=all", logged)
+        self.assertNotIn(KEY, logged)
+
+    def test_companycam_outage_is_502_not_crash(self):
+        def down(path, params=None):
+            raise cc.CompanyCamError("CompanyCam GET failed: timed out")
+
+        with mock.patch.object(cc, "_get", down):
+            status, _, body = self.get(f"/scope/preview?job=00035&key={KEY}")
+        self.assertEqual(status, 502)
+        self.assertIn("Could not open CompanyCam project", body["error"])
+        # Server still answers afterwards.
+        with urllib.request.urlopen(self.base + "/", timeout=10) as r:
+            self.assertEqual(r.read(), b"OCC Estimator Backend is running!")
+
+
+if __name__ == "__main__":
+    unittest.main()
