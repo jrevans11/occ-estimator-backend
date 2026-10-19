@@ -119,7 +119,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 ## Accounts and keys
 | What | Set it in | Needed by | Notes |
 |---|---|---|---|
-| `COMPANYCAM_API_KEY` | Render | Phase 1 | Same value already in Vercel - copy it over |
+| `COMPANYCAM_API_KEY` | Render | Phase 1 | Make a new CompanyCam access token for Render (Vercel hides the existing one, and a separate token can be revoked without breaking sales-lead-tool) |
 | `SCOPE_API_KEY` | Render now; Vercel in phase 3 | Phase 1 | A long random password Jason makes up (password manager). Locks the scope endpoints, which return client addresses and photo links. With it unset the endpoints stay off |
 | `COMPANYCAM_CREATOR_EMAIL` (optional) | Render | Phase 2 | Which CompanyCam user shows as creator on drawings/Pages; already used the same way in Vercel |
 | Transcription service account + key | Vercel or Render (decide in phase 3) | Phase 3 | Recommend AssemblyAI (cheapest, $50 free credit, takes trade-word hints); Deepgram is the backup |
