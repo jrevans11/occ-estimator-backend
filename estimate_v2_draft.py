@@ -132,6 +132,8 @@ import urllib.error
 import http.client
 import os
 import time
+import functools
+from concurrent.futures import ThreadPoolExecutor
 
 # ─────────────────────────────────────────────────────────────────────────
 # CLOSING REPAIR ESTIMATE MODEL (Oct 2026)
@@ -885,6 +887,10 @@ def load_consolidated_calibration_examples(csv_path=None):
     return "\n".join(lines)
 
 
+# Cached: the reference CSVs only change with a deploy, which restarts the
+# process. Without this every estimate re-read all seven of them (one is
+# 656KB) to build the same text.
+@functools.lru_cache(maxsize=8)
 def build_full_estimating_prompt(csv_path=None, redland_csv_path=None,
                                   crawlspace_medic_csv_path=None,
                                   tile_with_style_csv_path=None,
@@ -1299,6 +1305,34 @@ def _summarize_candidates(scored, top_n):
     ]
 
 
+# How many Home Depot catalog searches run at once. A real 102 Tuscany Way run
+# made 68 searches back to back; a handful in parallel cuts that wait several
+# times over without hammering JobTread.
+CATALOG_SEARCH_WORKERS = 5
+
+
+def _search_catalog_safely(item_desc, jobtread_query_fn, org_id):
+    try:
+        return search_home_depot_catalog(item_desc, jobtread_query_fn, org_id)
+    except Exception as e:
+        print(f"  Catalog search failed for '{item_desc[:60]}': {e}")
+        return False, []
+
+
+def _search_catalog_for_descriptions(descriptions, jobtread_query_fn, org_id):
+    """Run one catalog search per distinct description, several at a time.
+    Returns {description: (ok, products)}. Identical descriptions share one
+    search — they would get identical results anyway."""
+    unique = list(dict.fromkeys(descriptions))
+    if not unique:
+        return {}
+    workers = max(1, min(CATALOG_SEARCH_WORKERS, len(unique)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = pool.map(
+            lambda d: _search_catalog_safely(d, jobtread_query_fn, org_id), unique)
+        return dict(zip(unique, results))
+
+
 def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
                                          auto_apply_threshold=CATALOG_AUTO_APPLY_THRESHOLD, top_n=3):
     """Resolve each material_line's LLM-guessed cost against the live Home
@@ -1326,92 +1360,100 @@ def resolve_material_lines_with_catalog(estimate, jobtread_query_fn, org_id,
     stats = {"searched": 0, "auto_matched": 0, "candidates_only": 0,
              "no_match": 0, "price_rejected": 0, "wrong_product": 0}
 
-    for group in estimate.get("cost_groups", []) or []:
-        for line in group.get("material_lines", []) or []:
-            item_desc = (line.get("item", "") or "").strip()
-            if not item_desc:
-                continue
+    # All searches happen up front, in parallel, one per distinct description.
+    # Each line is then judged against its own search result in the original
+    # order, so the outcome is the same as searching line by line.
+    lines = [
+        line
+        for group in estimate.get("cost_groups", []) or []
+        for line in group.get("material_lines", []) or []
+    ]
+    search_results = _search_catalog_for_descriptions(
+        [(line.get("item", "") or "").strip() for line in lines
+         if (line.get("item", "") or "").strip()],
+        jobtread_query_fn, org_id)
 
-            stats["searched"] += 1
-            try:
-                ok, products = search_home_depot_catalog(item_desc, jobtread_query_fn, org_id)
-            except Exception as e:
-                print(f"  Catalog search failed for '{item_desc[:60]}': {e}")
-                ok, products = False, []
+    for line in lines:
+        item_desc = (line.get("item", "") or "").strip()
+        if not item_desc:
+            continue
 
-            if not ok or not products:
-                stats["no_match"] += 1
-                # Jason's ask (Jul 2026 pricing Q&A): when there's no
-                # catalog match at all, still flag it so his team knows to
-                # manually check the price rather than silently trusting
-                # Claude's own guessed cost with no visible signal. (A real
-                # secondary price source — e.g. searching Amazon or another
-                # retailer when Home Depot's catalog comes up empty — isn't
-                # wired in yet; this is intentionally just a flag for now,
-                # not a substitute lookup.)
-                line["catalog_no_match"] = True
-                continue
+        stats["searched"] += 1
+        ok, products = search_results[item_desc]
 
-            scored = sorted(
-                ((_match_score(item_desc, p.get("name", "")), p) for p in products),
-                key=lambda t: t[0], reverse=True
-            )
-            best_score, best_product = scored[0]
+        if not ok or not products:
+            stats["no_match"] += 1
+            # Jason's ask (Jul 2026 pricing Q&A): when there's no
+            # catalog match at all, still flag it so his team knows to
+            # manually check the price rather than silently trusting
+            # Claude's own guessed cost with no visible signal. (A real
+            # secondary price source — e.g. searching Amazon or another
+            # retailer when Home Depot's catalog comes up empty — isn't
+            # wired in yet; this is intentionally just a flag for now,
+            # not a substitute lookup.)
+            line["catalog_no_match"] = True
+            continue
 
-            # Semantic gate first (Aug 2026, after the 102 Tuscany Way test
-            # run surfaced fascia board -> composite decking, 1/2 in. gas
-            # valve -> 3/4 in. earthquake valve, and downspout straps ->
-            # downspout extension). A wrong product is worse than no product:
-            # it silently replaces a reasonable estimate with a confident
-            # wrong number.
-            plausible, implausible_reason = _catalog_match_is_plausible(
-                item_desc, best_product.get("name", ""))
-            if best_score >= auto_apply_threshold and not plausible:
-                stats["wrong_product"] += 1
-                print(f"  Catalog match rejected for '{item_desc[:60]}': "
-                      f"{implausible_reason} ('{(best_product.get('name') or '')[:60]}')")
-                line["catalog_wrong_product"] = True
-                line["catalog_candidates"] = _summarize_candidates(scored, top_n)
-                continue
+        scored = sorted(
+            ((_match_score(item_desc, p.get("name", "")), p) for p in products),
+            key=lambda t: t[0], reverse=True
+        )
+        best_score, best_product = scored[0]
 
-            price_ok, reject_reason = _catalog_price_passes_sanity_check(
-                line.get("unit_cost"), best_product)
-            if best_score >= auto_apply_threshold and not price_ok:
-                # Generation Spec §4.1 — the single most frequent data-quality
-                # error. The text matched, but the SKU is priced as a case/
-                # multipack/kit, so applying it to a per-each line inflates the
-                # cost badly (real production examples: a $69.99 "dryer vent
-                # elbow" that was an 8 ft duct kit, a $269.10 "door casing"
-                # that was a full bundle). Keep the LLM's own cost, demote the
-                # catalog hit to a candidate, and flag it for manual review.
-                stats["price_rejected"] += 1
-                print(f"  Catalog price rejected for '{item_desc[:60]}': {reject_reason}")
-                line["catalog_price_rejected"] = True
-                line["catalog_candidates"] = _summarize_candidates(scored, top_n)
-                continue
+        # Semantic gate first (Aug 2026, after the 102 Tuscany Way test
+        # run surfaced fascia board -> composite decking, 1/2 in. gas
+        # valve -> 3/4 in. earthquake valve, and downspout straps ->
+        # downspout extension). A wrong product is worse than no product:
+        # it silently replaces a reasonable estimate with a confident
+        # wrong number.
+        plausible, implausible_reason = _catalog_match_is_plausible(
+            item_desc, best_product.get("name", ""))
+        if best_score >= auto_apply_threshold and not plausible:
+            stats["wrong_product"] += 1
+            print(f"  Catalog match rejected for '{item_desc[:60]}': "
+                  f"{implausible_reason} ('{(best_product.get('name') or '')[:60]}')")
+            line["catalog_wrong_product"] = True
+            line["catalog_candidates"] = _summarize_candidates(scored, top_n)
+            continue
 
-            if best_score >= auto_apply_threshold and best_product.get("unitCost"):
-                original_cost = line.get("unit_cost")
-                line["unit_cost"] = float(best_product["unitCost"])
-                # Real product detail carried through to add_cost_groups_v2()
-                # so it can write a real description and populate the SKU /
-                # link / brand / model custom fields on the JobTread cost item
-                # — not just swap the price and drop everything else.
-                line["catalog_match"] = {
-                    "name": best_product.get("name"),
-                    "brand": best_product.get("brand"),
-                    "department": best_product.get("department"),
-                    "modelNumber": best_product.get("modelNumber"),
-                    "sku": best_product.get("storeSkuNumber"),
-                    "unitOfMeasure": best_product.get("unitOfMeasure"),
-                    "link": best_product.get("link"),
-                    "matched_score": round(best_score, 2),
-                    "llm_guessed_cost": original_cost,
-                }
-                stats["auto_matched"] += 1
-            else:
-                line["catalog_candidates"] = _summarize_candidates(scored, top_n)
-                stats["candidates_only"] += 1
+        price_ok, reject_reason = _catalog_price_passes_sanity_check(
+            line.get("unit_cost"), best_product)
+        if best_score >= auto_apply_threshold and not price_ok:
+            # Generation Spec §4.1 — the single most frequent data-quality
+            # error. The text matched, but the SKU is priced as a case/
+            # multipack/kit, so applying it to a per-each line inflates the
+            # cost badly (real production examples: a $69.99 "dryer vent
+            # elbow" that was an 8 ft duct kit, a $269.10 "door casing"
+            # that was a full bundle). Keep the LLM's own cost, demote the
+            # catalog hit to a candidate, and flag it for manual review.
+            stats["price_rejected"] += 1
+            print(f"  Catalog price rejected for '{item_desc[:60]}': {reject_reason}")
+            line["catalog_price_rejected"] = True
+            line["catalog_candidates"] = _summarize_candidates(scored, top_n)
+            continue
+
+        if best_score >= auto_apply_threshold and best_product.get("unitCost"):
+            original_cost = line.get("unit_cost")
+            line["unit_cost"] = float(best_product["unitCost"])
+            # Real product detail carried through to add_cost_groups_v2()
+            # so it can write a real description and populate the SKU /
+            # link / brand / model custom fields on the JobTread cost item
+            # — not just swap the price and drop everything else.
+            line["catalog_match"] = {
+                "name": best_product.get("name"),
+                "brand": best_product.get("brand"),
+                "department": best_product.get("department"),
+                "modelNumber": best_product.get("modelNumber"),
+                "sku": best_product.get("storeSkuNumber"),
+                "unitOfMeasure": best_product.get("unitOfMeasure"),
+                "link": best_product.get("link"),
+                "matched_score": round(best_score, 2),
+                "llm_guessed_cost": original_cost,
+            }
+            stats["auto_matched"] += 1
+        else:
+            line["catalog_candidates"] = _summarize_candidates(scored, top_n)
+            stats["candidates_only"] += 1
 
     return estimate, stats
 

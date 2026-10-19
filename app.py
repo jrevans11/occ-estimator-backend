@@ -1683,6 +1683,19 @@ def get_job_type_and_status(job_info):
     return job_type, status
 
 
+# The newest 10 comments — where has_pending_reply_pause() looks for the
+# pause marker. Shared so send_followup_email_from_todo() can fetch the same
+# page inside its one job query.
+PAUSE_CHECK_COMMENTS_QUERY = {
+    "$": {"size": 10, "sortBy": [{"field": "createdAt", "order": "desc"}]},
+    "nodes": {"message": {}}
+}
+
+
+def _has_pause_marker(comments):
+    return any(PAUSE_LOGGED_MARKER in (c.get("message") or "") for c in comments)
+
+
 def has_pending_reply_pause(job_id):
     """
     Quick check: has automation already been paused on this job due to a
@@ -1693,20 +1706,39 @@ def has_pending_reply_pause(job_id):
         resp = jobtread_query({
             "job": {
                 "$": {"id": job_id},
-                "comments": {
-                    "$": {"size": 10, "sortBy": [{"field": "createdAt", "order": "desc"}]},
-                    "nodes": {"message": {}}
-                }
+                "comments": PAUSE_CHECK_COMMENTS_QUERY
             }
         })
         comments = (resp.get("job") or {}).get("comments", {}).get("nodes", [])
-        return any(PAUSE_LOGGED_MARKER in (c.get("message") or "") for c in comments)
+        return _has_pause_marker(comments)
     except Exception as e:
         print(f"  has_pending_reply_pause check failed: {e}")
         return False
 
 
-def check_for_customer_reply_and_pause(job_id, sent_date=None):
+def get_job_for_reply_check(job_id):
+    """Everything check_for_customer_reply_and_pause() reads, in one query:
+    custom fields (job type + status), open to-dos, and comments in
+    oldest-first order. It used to take two — get_job_info() plus a separate
+    comments fetch."""
+    resp = jobtread_query({
+        "job": {
+            "$": {"id": job_id},
+            "customFieldValues": {
+                "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
+                "nodes": {"customField": {"id": {}, "name": {}}, "value": {}}
+            },
+            "tasks": {
+                "$": {"size": FOLLOWUP_TASK_PAGE_SIZE},
+                "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
+            },
+            "comments": FOLLOWUP_COMMENTS_QUERY,
+        }
+    })
+    return _comments_oldest_first(resp.get("job") or {})
+
+
+def check_for_customer_reply_and_pause(job_id, sent_date=None, job=None):
     """
     Shared logic: if the customer has replied (a comment on this job that
     came in via email, or from someone who isn't our automation user) since
@@ -1717,11 +1749,16 @@ def check_for_customer_reply_and_pause(job_id, sent_date=None):
     - process_comment_created: fires immediately when the reply lands
     - process_send_followups: runs as a backup check before any scheduled send
 
+    `job` is optional: process_send_followups passes the job it already
+    fetched in get_jobs_needing_followup() (same custom fields, to-dos and
+    comment fields), so the daily run makes no extra queries here. Without
+    it, the job is fetched in a single query.
+
     Returns True if a pause was applied (caller should not proceed with a
     scheduled automated send), False otherwise.
     """
     try:
-        job_info = get_job_info(job_id)
+        job_info = job if job is not None else get_job_for_reply_check(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
         if not job_type or job_type not in AUTOMATION_ENABLED_JOB_TYPES:
@@ -1729,19 +1766,8 @@ def check_for_customer_reply_and_pause(job_id, sent_date=None):
         if current_status in TERMINAL_STATUSES or current_status == LONG_TERM_STATUS:
             return False
 
-        resp = jobtread_query({
-            "job": {
-                "$": {"id": job_id},
-                "comments": {
-                    "$": {"size": 30, "sortBy": [{"field": "createdAt", "order": "asc"}]},
-                    "nodes": {
-                        "message": {}, "createdAt": {}, "isFromEmail": {},
-                        "createdByUser": {"id": {}}
-                    }
-                }
-            }
-        })
-        comments = (resp.get("job") or {}).get("comments", {}).get("nodes", [])
+        # Oldest-first, so the loops below keep their original meaning.
+        comments = (job_info.get("comments") or {}).get("nodes", [])
 
         if sent_date is None:
             sent_date = parse_sent_date(comments)
@@ -2201,10 +2227,61 @@ Write the email now."""
     return fallbacks.get(days_since, fallbacks[14])
 
 
+# Which status field the follow-up chain watches for each job type. The job
+# scan asks JobTread for jobs at "Sent" in either field, then keeps only the
+# jobs whose Job Type matches the field that is at "Sent".
+FOLLOWUP_STATUS_FIELDS = {
+    "Home Repairs Status":    ["Home Repair", "Remodel", "Pre-listing Repair"],
+    "Closing Repairs Status": ["Closing Repair"],
+}
+
+# Comments fetched per job wherever the follow-up chain reads its [OCC-AUTO]
+# markers. Fetched newest-first so a busy job can never push the latest
+# "Estimate sent on" marker or a fresh customer reply off the page (the old
+# oldest-first page of 30 could), then flipped back to oldest-first by
+# _comments_oldest_first() because every reader expects chronological order.
+# 100 is JobTread's page maximum.
+FOLLOWUP_COMMENT_PAGE_SIZE = 100
+
+# One shape for every follow-up comment fetch, carrying every field the
+# reply check needs, so a job fetched by the daily scan can be handed straight
+# to check_for_customer_reply_and_pause() without fetching it again.
+FOLLOWUP_COMMENTS_QUERY = {
+    "$": {"size": FOLLOWUP_COMMENT_PAGE_SIZE,
+          "sortBy": [{"field": "createdAt", "order": "desc"}]},
+    "nodes": {
+        "message": {}, "createdAt": {}, "isFromEmail": {},
+        "createdByUser": {"id": {}}
+    }
+}
+
+# Same open-to-do page size as get_job_info(), so delete_followup_todos()
+# sees the same to-dos whichever path fetched the job.
+FOLLOWUP_TASK_PAGE_SIZE = 50
+
+
+def _comments_oldest_first(job):
+    """Rewrite job["comments"]["nodes"] (fetched newest-first) into
+    oldest-first order, in place, and return the job."""
+    comments = (job or {}).get("comments")
+    if comments and comments.get("nodes"):
+        comments["nodes"] = list(reversed(comments["nodes"]))
+    return job
+
+
 def get_jobs_needing_followup():
     """
     Fetch all jobs at Sent status that need follow-up emails.
-    Uses two-pass approach: first get job IDs, then fetch details per job.
+
+    Pass 1 is a single server-side filtered query: JobTread returns only jobs
+    created in the last 90 days whose Home Repairs Status or Closing Repairs
+    Status is "Sent" (about 43 jobs in Oct 2026). It used to page through
+    every job from the last 90 days twice and filter here, about 18 calls.
+
+    Pass 2 still fetches details one job at a time. Folding the details into
+    the pass 1 query was tested live (Oct 2026) and JobTread rejects it with
+    HTTP 413 at as few as 5 jobs per page; it only fits at 3, which leaves no
+    headroom, and one bad page would then lose several jobs instead of one.
     """
     results = []
     all_sent_job_ids = []
@@ -2213,54 +2290,67 @@ def get_jobs_needing_followup():
     from datetime import date, timedelta
     cutoff = (date.today() - timedelta(days=90)).isoformat()
 
-    # Pass 1: get jobs with custom fields using pagination (small pages to avoid 413)
-    for status_field, job_types in [
-        ("Home Repairs Status",    ["Home Repair", "Remodel", "Pre-listing Repair"]),
-        ("Closing Repairs Status", ["Closing Repair"]),
-    ]:
-        page = None
-        while True:
-            try:
-                jobs_input = {"size": 20, "where": ["createdAt", ">=", cutoff]}
-                if page:
-                    jobs_input["page"] = page
-                resp = jobtread_query({
-                    "organization": {
-                        "$": {"id": JOBTREAD_ORG},
-                        "jobs": {
-                            "$": jobs_input,
-                            "nextPage": {},
-                            "nodes": {
-                                "id": {}, "name": {},
-                                "customFieldValues": {
-                                    "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
-                                    "nodes": {"customField": {"name": {}}, "value": {}}
-                                }
+    # Pass 1: jobs at "Sent" in either status field, filtered by JobTread
+    page = None
+    while True:
+        try:
+            jobs_input = {
+                "size": 100,
+                "with": {
+                    "sentStatus": {
+                        "_": "customFieldValues",
+                        "$": {"where": {"and": [
+                            [["customField", "name"], "in", list(FOLLOWUP_STATUS_FIELDS)],
+                            ["value", "Sent"],
+                        ]}},
+                        "count": {}
+                    }
+                },
+                "where": {"and": [
+                    ["createdAt", ">=", cutoff],
+                    [["sentStatus", "count"], ">", 0],
+                ]},
+            }
+            if page:
+                jobs_input["page"] = page
+            resp = jobtread_query({
+                "organization": {
+                    "$": {"id": JOBTREAD_ORG},
+                    "jobs": {
+                        "$": jobs_input,
+                        "nextPage": {},
+                        "nodes": {
+                            "id": {},
+                            "customFieldValues": {
+                                "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
+                                "nodes": {"customField": {"name": {}}, "value": {}}
                             }
                         }
                     }
-                })
-                jobs_data = resp.get("organization", {}).get("jobs", {})
-                jobs = jobs_data.get("nodes", [])
-                next_page = jobs_data.get("nextPage")
-                for job in jobs:
-                    cfvs = {
-                        cfv["customField"]["name"]: cfv["value"]
-                        for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
-                        if cfv.get("customField")
-                    }
-                    if cfvs.get(status_field) != "Sent":
-                        continue
-                    if cfvs.get("Job Type") not in job_types:
-                        continue
-                    if job["id"] not in all_sent_job_ids:
-                        all_sent_job_ids.append(job["id"])
-                if not next_page:
-                    break
-                page = next_page
-            except Exception as e:
-                print(f"  get_jobs_needing_followup error: {e}")
+                }
+            })
+            jobs_data = resp.get("organization", {}).get("jobs", {})
+            for job in jobs_data.get("nodes", []):
+                cfvs = {
+                    cfv["customField"]["name"]: cfv["value"]
+                    for cfv in (job.get("customFieldValues") or {}).get("nodes", [])
+                    if cfv.get("customField")
+                }
+                # The status field at "Sent" must be the one this job type
+                # uses — a Closing Repair whose Home Repairs Status happens to
+                # say "Sent" is not in the chain.
+                matches = any(
+                    cfvs.get(status_field) == "Sent" and cfvs.get("Job Type") in job_types
+                    for status_field, job_types in FOLLOWUP_STATUS_FIELDS.items()
+                )
+                if matches and job["id"] not in all_sent_job_ids:
+                    all_sent_job_ids.append(job["id"])
+            page = jobs_data.get("nextPage")
+            if not page:
                 break
+        except Exception as e:
+            print(f"  get_jobs_needing_followup error: {e}")
+            break
 
     print(f"  Found {len(all_sent_job_ids)} jobs at Sent status")
 
@@ -2276,10 +2366,7 @@ def get_jobs_needing_followup():
                         "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                         "nodes": {"customField": {"name": {}}, "value": {}}
                     },
-                    "comments": {
-                        "$": {"size": 30},
-                        "nodes": {"message": {}, "createdAt": {}}
-                    },
+                    "comments": FOLLOWUP_COMMENTS_QUERY,
                     "documents": {
                         "$": {"size": 5},
                         "nodes": {
@@ -2291,7 +2378,7 @@ def get_jobs_needing_followup():
                         }
                     },
                     "tasks": {
-                        "$": {"size": 20},
+                        "$": {"size": FOLLOWUP_TASK_PAGE_SIZE},
                         "nodes": {"id": {}, "name": {}, "isToDo": {}, "progress": {}}
                     },
                     "costGroups": {
@@ -2302,7 +2389,7 @@ def get_jobs_needing_followup():
             })
             job = resp.get("job")
             if job:
-                results.append(job)
+                results.append(_comments_oldest_first(job))
         except Exception as e:
             print(f"  Could not fetch details for job {job_id}: {e}")
 
@@ -2605,7 +2692,11 @@ def process_send_followups():
             print(f"  Job {job_id}: {days_since} days out — catching up with the "
                   f"Day {followup_day} follow-up")
 
-        if check_for_customer_reply_and_pause(job_id, sent_date=sent_date):
+        # Reuses the job fetched above — same fields the reply check would
+        # fetch itself — instead of two more queries per job. A reply landing
+        # in the few minutes since the fetch is caught by the commentCreated
+        # webhook, which runs the same check on fresh data.
+        if check_for_customer_reply_and_pause(job_id, sent_date=sent_date, job=job):
             print(f"  Job {job_id}: automation paused on customer reply — skipping")
             continue
 
@@ -2656,26 +2747,15 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
         print(f"  send_followup: unrecognised review to-do name '{task_name}' — skipping")
         return
 
-    # Fetch the task to read the description (may have been edited by Jason)
+    # One request for both reads: the task description (the email body, which
+    # Jason may have edited) and the job's estimate recipient + custom fields.
+    # These used to be two separate queries.
     try:
-        task_resp = jobtread_query({
+        resp = jobtread_query({
             "task": {
                 "$": {"id": task_id},
                 "description": {}
-            }
-        })
-        email_body = (task_resp.get("task") or {}).get("description") or ""
-    except Exception as e:
-        print(f"  send_followup: could not read task description: {e}")
-        return
-
-    if not email_body.strip():
-        print(f"  send_followup: task description is empty — cannot send")
-        return
-
-    # Find the pending estimate recipient on this job
-    try:
-        job_resp = jobtread_query({
+            },
             "job": {
                 "$": {"id": job_id},
                 "documents": {
@@ -2691,14 +2771,23 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
                 "customFieldValues": {
                     "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                     "nodes": {"customField": {"name": {}}, "value": {}}
-                }
+                },
+                # Same page has_pending_reply_pause() reads, for the
+                # manual-step check at the end.
+                "comments": PAUSE_CHECK_COMMENTS_QUERY,
             }
         })
     except Exception as e:
-        print(f"  send_followup: could not fetch job {job_id}: {e}")
+        print(f"  send_followup: could not read task {task_id} / job {job_id}: {e}")
         return
 
-    job_data = job_resp.get("job") or {}
+    email_body = (resp.get("task") or {}).get("description") or ""
+    if not email_body.strip():
+        print(f"  send_followup: task description is empty — cannot send")
+        return
+
+    # Find the pending estimate recipient on this job
+    job_data = resp.get("job") or {}
     recipient_id, first_name = get_recipient_and_name(job_data)
 
     if not recipient_id:
@@ -2745,8 +2834,9 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
     job_type_label = cfvs.get("Job Type", job_type or "")
     target_status = FOLLOWUP_STATUS_MAP.get(days_since)
     if target_status and job_type_label:
-        current_info = get_job_info(job_id)
-        _, current_status = get_job_type_and_status(current_info)
+        # Status as read moments ago with the task — no need to fetch the
+        # job a third time just to read the same custom field.
+        _, current_status = get_job_type_and_status(job_data)
         if (current_status not in TERMINAL_STATUSES and
                 current_status != LONG_TERM_STATUS):
             set_job_status(job_id, job_type_label, target_status)
@@ -2757,7 +2847,8 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
     # via the cron. Day 3 → phone call; Day 14 → final decision call.
     manual_step = MANUAL_CALL_AFTER_DAY.get(days_since)
     if manual_step:
-        if has_pending_reply_pause(job_id):
+        comments = (job_data.get("comments") or {}).get("nodes", [])
+        if _has_pause_marker(comments):
             print(f"  send_followup: automation paused — not creating '{manual_step['name']}'")
         else:
             create_single_todo(job_id, job_type_label, manual_step["name"], due_offset=manual_step["offset"])
@@ -4250,11 +4341,17 @@ def process_prelisting(data):
 
 # ── Pricing refresh ───────────────────────────────────────────────────────────
 
+# Documents per query in build_pricing_reference(). Tested live (Oct 2026):
+# JobTread accepts 15 documents x 30 cost groups per request and rejects 25
+# with HTTP 413, so 10 leaves headroom.
+PRICING_REFERENCE_DOC_BATCH = 10
+
+
 def build_pricing_reference():
     """
     Pull all Closing Repairs documents from JobTread in two passes:
     Pass 1 — collect all doc IDs (IDs only, small payload)
-    Pass 2 — fetch cost groups for each doc individually
+    Pass 2 — fetch cost groups PRICING_REFERENCE_DOC_BATCH docs at a time
     Aggregate into a formatted pricing reference string.
     """
     from collections import defaultdict
@@ -4297,40 +4394,65 @@ def build_pricing_reference():
 
     print(f"  Total documents found: {len(doc_ids)}")
 
-    # ── Pass 2: fetch cost groups per document ────────────────────────────────
+    # ── Pass 2: fetch cost groups, several documents per query ────────────────
     all_groups = defaultdict(list)
 
-    for i, doc_id in enumerate(doc_ids):
+    def add_groups(groups):
+        for group in groups:
+            name = (group.get("name") or "").strip()
+            total = group.get("descendentCostItems", {}).get("sum")
+            if name and total and total > 0:
+                # Normalize: strip leading inspection item numbers
+                clean = re.sub(r'^[\d\.\,\s&/]+[-\u2013:]?\s*', '', name).strip()
+                clean = re.sub(r'^[A-Z]\d+[-\u2013:]?\s*', '', clean).strip()
+                if len(clean) > 5:
+                    all_groups[clean].append(round(total, 2))
+
+    cost_groups_query = {
+        "$": {"size": 30},
+        "nodes": {
+            "name": {},
+            "descendentCostItems": {"sum": {"$": "unitPrice"}}
+        }
+    }
+
+    def fetch_one(doc_id):
         try:
-            query = {
-                "document": {
-                    "$": {"id": doc_id},
-                    "costGroups": {
-                        "$": {"size": 30},
-                        "nodes": {
-                            "name": {},
-                            "descendentCostItems": {"sum": {"$": "unitPrice"}}
-                        }
-                    }
-                }
-            }
-            resp = jobtread_query(query)
-            groups = resp.get("document", {}).get("costGroups", {}).get("nodes", [])
-            for group in groups:
-                name = (group.get("name") or "").strip()
-                total = group.get("descendentCostItems", {}).get("sum")
-                if name and total and total > 0:
-                    # Normalize: strip leading inspection item numbers
-                    clean = re.sub(r'^[\d\.\,\s&/]+[-\u2013:]?\s*', '', name).strip()
-                    clean = re.sub(r'^[A-Z]\d+[-\u2013:]?\s*', '', clean).strip()
-                    if len(clean) > 5:
-                        all_groups[clean].append(round(total, 2))
+            resp = jobtread_query({
+                "document": {"$": {"id": doc_id}, "costGroups": cost_groups_query}
+            })
+            add_groups(resp.get("document", {}).get("costGroups", {}).get("nodes", []))
         except Exception as e:
             print(f"  Skipping doc {doc_id}: {e}")
-            continue
 
-        if (i + 1) % 10 == 0:
-            print(f"  Processed {i+1}/{len(doc_ids)} documents...")
+    for start in range(0, len(doc_ids), PRICING_REFERENCE_DOC_BATCH):
+        batch = doc_ids[start:start + PRICING_REFERENCE_DOC_BATCH]
+        try:
+            resp = jobtread_query({
+                "organization": {
+                    "$": {"id": JOBTREAD_ORG},
+                    "documents": {
+                        "$": {"size": len(batch), "where": ["id", "in", batch]},
+                        "nodes": {"id": {}, "costGroups": cost_groups_query}
+                    }
+                }
+            })
+            docs = resp.get("organization", {}).get("documents", {}).get("nodes", [])
+        except Exception as e:
+            # A failed batch falls back to one query per document, so one bad
+            # document can't drop the other nine from the reference.
+            print(f"  Batch of {len(batch)} docs failed ({e}) — retrying one at a time")
+            for doc_id in batch:
+                fetch_one(doc_id)
+            docs = []
+        for doc in docs:
+            try:
+                add_groups(doc.get("costGroups", {}).get("nodes", []))
+            except Exception as e:
+                print(f"  Skipping doc {doc.get('id')}: {e}")
+
+        done = min(start + PRICING_REFERENCE_DOC_BATCH, len(doc_ids))
+        print(f"  Processed {done}/{len(doc_ids)} documents...")
 
     print(f"  Unique repair types found: {len(all_groups)}")
 
