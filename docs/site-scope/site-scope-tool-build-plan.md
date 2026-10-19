@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **planned, not built.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step) and `floor-plan-drawing-rules.md` (drawing rules). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phase 1 of 8 built (Oct 19) - see Build phases.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step) and `floor-plan-drawing-rules.md` (drawing rules). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -102,6 +102,39 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 - Render stays on the current plan (512 MB / 0.5 CPU) - no upgrade.
 - Work on a branch, test before opening a pull request, and Jason merges in GitHub. Always start from the current main - never from an old copy of a file.
 
-## Next steps
-1. Propose build phases small enough to test one at a time, and list the accounts/keys Jason needs to set up.
-2. Build backend pieces first (new files here), then the scope page in sales-lead-tool.
+## Build phases (proposed Oct 19)
+Each phase is one pull request Jason can test on its own before the next starts. Backend pieces first, then the page.
+
+| # | Phase | Where | How Jason tests it | Verifies (list above) |
+|---|---|---|---|---|
+| 1 | **"What did we find" check** - JobTread job -> CompanyCam project via `companycamId`; lists the visit's photos, videos (transcript ready or not), whether a Site Visit Notes Page exists, and duplicate projects at the same address. Read-only. `GET /scope/preview`. **Built Oct 19** (`site_scope.py`, `companycam_api.py`). | Render | Open a link in a browser with a job number | 1, 6 |
+| 2 | **Drawings** - `scope_drawings.py` draws floor plan + elevations from a structured room file with Pillow; a test endpoint draws the Oct 19 office data and uploads it to CompanyCam "Test (1)" | Render | Drawings appear on the Test (1) project | 2, 5 |
+| 3 | **Scope page v1** - `/intake/scope` with job picker, Record/Stop notes, server transcription with OCC trade-word hints, notes appended to the "Site Visit Notes" Page, phase 1 check shown before Start | sales-lead-tool + Render | Record two notes on the phone; read them in CompanyCam | 3 |
+| 4 | **Quick pass + questions** - Start runs in a Render background thread; Claude reads notes + photos into the structured file and writes 3-6 questions with suggested answers; run state saved so questions wait; tokens and cost logged per run | both | Tap Start on Test (1); answer the questions | - |
+| 5 | **Full build, CompanyCam side** - photo descriptions (appended, never overwrite), drawings uploaded, scope Page with sharing off | Render | Check Test (1) for descriptions, drawings, scope Page | 2 |
+| 6 | **Full build, JobTread side** - budget from the structured file; code does quantities, markups, rate anchors, `$0 (PRICING TBD)` for licensed trades, internal NOTES items | Render | Budget lands on test job 00035 | - |
+| 7 | **Push notification** "Questions ready - <address>" from the Home Screen app; SMS fallback only if push fails | sales-lead-tool | Start a run, close the page, get the alert | 4 |
+| 8 | **Accuracy runs** on past visits (901 McDaniel / 00768, 7 Monet Dr) and tuning | both | Compare line by line with the budgets that were sent | - |
+
+## Accounts and keys
+| What | Set it in | Needed by | Notes |
+|---|---|---|---|
+| `COMPANYCAM_API_KEY` | Render | Phase 1 | Make a new CompanyCam access token for Render (Vercel hides the existing one, and a separate token can be revoked without breaking sales-lead-tool) |
+| `SCOPE_API_KEY` | Render now; Vercel in phase 3 | Phase 1 | A long random password Jason makes up (password manager). Locks the scope endpoints, which return client addresses and photo links. With it unset the endpoints stay off |
+| `COMPANYCAM_CREATOR_EMAIL` (optional) | Render | Phase 2 | Which CompanyCam user shows as creator on drawings/Pages; already used the same way in Vercel |
+| Transcription service account + key | Vercel or Render (decide in phase 3) | Phase 3 | Recommend AssemblyAI (cheapest, $50 free credit, takes trade-word hints); Deepgram is the backup |
+| Upstash Redis (free tier, add from Vercel's Storage tab) | Vercel (automatic); Render too if the backend writes run state | Phase 3-4 | Holds notes, questions, answers, run status |
+| `SCOPE_BACKEND_URL` | Vercel | Phase 3 | The Render service URL |
+| Web push keys (VAPID) | Vercel | Phase 7 | Generated, no account. iPhone: Home Screen app + allow notifications once |
+| RingCentral SMS | - | Only if push fails | Not checked yet whether OCC's number can send |
+| `ANTHROPIC_API_KEY`, `JOBTREAD_API_KEY`, `JOBTREAD_ORG_ID` | Render | - | Already set |
+
+Decision still open before phase 4: Opus 5.5 throughout (~$8-25/month) or Sonnet 5.5 (~$4-12/month).
+
+## Phase 1 notes (Oct 19)
+- `GET /scope/preview?job=<job number or JobTread job ID>&key=<SCOPE_API_KEY>`; optional `&date=YYYY-MM-DD` or `&date=all`. The key can also go in an `X-Scope-Key` header (the scope page will use the header).
+- "This visit" defaults to the day (Greenville time) of the newest photo or video, so a check the day after still finds it.
+- Videos, transcripts, Pages and the duplicate-address search fail soft: a problem there shows as a warning and the photo list still comes back. Only a missing job, missing CompanyCam link, or CompanyCam being unreachable stops the check.
+- The request log redacts `key=` so the key never reaches Render's logs.
+- Job 00035's CompanyCam project (86663461) is archived with no photos, and "Test (1)" (117058039) is not linked to any JobTread job. For phase 1 testing use job 00768.
+- Tests: `python3 -m unittest discover tests` (fakes shaped like real CompanyCam/JobTread responses; no keys needed).
