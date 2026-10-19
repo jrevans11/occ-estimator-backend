@@ -96,7 +96,7 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 3. Pick the transcription service; test accuracy on a real jobsite note (background noise, numbers, trade words).
 4. Web push from the Home Screen app on Jason's iPhone.
 5. Lightweight drawing renderer runs within the shared 512 MB on Render.
-6. CompanyCam REST API returns video transcripts (optional now).
+6. ~~CompanyCam REST API returns video transcripts~~ - yes, through the new Public API (see CompanyCam API finding).
 
 ## Constraints
 - Render stays on the current plan (512 MB / 0.5 CPU) - no upgrade.
@@ -138,3 +138,12 @@ Decision still open before phase 4: Opus 5.5 throughout (~$8-25/month) or Sonnet
 - The request log redacts `key=` so the key never reaches Render's logs.
 - Job 00035's CompanyCam project (86663461) is archived with no photos, and "Test (1)" (117058039) is not linked to any JobTread job. For phase 1 testing use job 00768.
 - Tests: `python3 -m unittest discover tests` (fakes shaped like real CompanyCam/JobTread responses; no keys needed).
+
+## CompanyCam API finding (Oct 19, live test on job 00768)
+- **Use CompanyCam's current Public API, not the legacy one.** Base `https://app.companycam.com/public_api/v1`, Bearer token, every response wrapped as `{data, errors, meta}`, lists paged with `?after=<meta.next_cursor>` (`limit` max 100), timestamps ISO 8601. Spec: https://developers.companycam.com/openapi/public_api_v1.yaml
+- The first live test used the legacy `api.companycam.com/v2` (the same one sales-lead-tool's `lib/companycam.ts` uses). It read photos and videos fine, but answered Pages with **401 "Bad credentials"** and returned **no video transcripts**, even with a brand-new token. The new API has both: `GET /projects/{id}/pages`, `POST /projects/{id}/pages` (title + TipTap content), and `GET /videos/{id}?include=transcript` -> `transcript: {text, source, last_edited_at}` or null. `companycam_api.py` now uses only the new API.
+- Project search moved to `GET /projects/search?query=`. Photo upload is still by URL: `POST /projects/{id}/photos` with `{photo: {uri, captured_at (ISO string), description, tags}}`; `X-CompanyCam-User` only works with an admin-owned token (403 otherwise).
+- **CompanyCam shuts the legacy API off on Sep 1, 2027.** sales-lead-tool's `lib/companycam.ts` (photo/document push) must move to the new API before then.
+- A token CompanyCam rejects gives a clear "make a new Personal Access Token" message in the preview.
+- **Photo timing:** job 00768's 15 photos all show 2:25 PM while its videos were 10:10-10:17 AM - photos added from the camera roll carry the upload time, not the capture time. Notes can't be matched to those by time, so site photos should be taken with the CompanyCam camera. The preview now warns when most of a visit's photos share one capture minute.
+- Verify list: item 6 (video transcripts via the API) is answered - yes, through the new API.
