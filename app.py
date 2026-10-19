@@ -3100,6 +3100,82 @@ def create_job(cfg):
     return job_id
 
 
+def download_closing_files(addendum_url, inspection_url):
+    """Download the repair addendum and inspection report for a new
+    closing-repair submission. Returns (addendum_bytes, inspection_bytes);
+    a missing URL gives b"". Download errors propagate.
+
+    Both go to Claude as native PDFs (vision), never extract_pdf_text.
+    Realtors send addendums as clean typed PDFs, scans, marked-up inspection
+    reports, or not at all (the inspection report alone carries the ask).
+    See CLAUDE.md "repair addendum vision support" for the full finding.
+    """
+    addendum_pdf_bytes = inspection_pdf_bytes = b""
+    if addendum_url:
+        print("  Downloading repair addendum...")
+        addendum_pdf_bytes = download_file(addendum_url)
+        print(f"  Addendum: {len(addendum_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
+    if inspection_url:
+        print("  Downloading inspection report...")
+        inspection_pdf_bytes = download_file(inspection_url)
+        print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
+    return addendum_pdf_bytes, inspection_pdf_bytes
+
+
+def estimate_closing_job(job_id, addendum_pdf_bytes, inspection_pdf_bytes,
+                         client_name, client_phone, client_email, address, notes,
+                         log_prefix=""):
+    """Run the v2 closing-repair estimate and write it onto an existing job.
+
+    The one shared sequence behind all three closing-repair entry points (the
+    Wufoo form, the sales-tool endpoint, and rerun_closing_estimate), so a new
+    validation pass or writer only has to be added here. Returns
+    (cost groups added, computed billed total). Exceptions propagate; each
+    caller decides how to flag a failure.
+    """
+    print(f"  {log_prefix}Calling Claude (v2 — labor+material breakdown)...")
+    estimate = v2.call_claude_v2(
+        addendum_pdf_bytes, inspection_pdf_bytes,
+        client_name, client_phone, client_email, address, notes,
+        system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
+    )
+    # Enforce OCC's 3-hr minimum in-house labor charge per job (Jul 2026
+    # pricing Q&A) before computing the total or writing cost groups, so
+    # both reflect the enforced floor if the itemized hours fell short.
+    estimate = v2.enforce_minimum_labor_hours(estimate)
+
+    print(f"  {log_prefix}Resolving material lines against Home Depot catalog...")
+    estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
+    print(f"  {log_prefix}Catalog resolution: {catalog_stats}")
+
+    # Don't trust Claude's own "total" field here — under the new schema
+    # it's not told to apply markup itself, so its self-reported total
+    # has no reliable basis. Compute the real billed total the same way
+    # add_cost_groups_v2() actually prices each line. Must run AFTER the
+    # catalog step, which replaces material unit costs with live prices —
+    # computed before it, the total didn't match what was written.
+    total = v2.compute_estimate_total(estimate)
+    print(f"  {log_prefix}Estimate total (computed, not LLM-reported): ${total:,.2f}")
+
+    # Generation Spec §2/§7 — warn (don't fail) on any report reference
+    # number that landed in more than one cost group, since that
+    # double-charges the client.
+    v2.find_duplicate_scope_references(estimate)
+    v2.find_bundled_groups_with_own_price(estimate)
+
+    # Generation Spec §4.2 — confidence ratings and quantity assumptions
+    # no longer get written into client-facing JobTread fields, so surface
+    # them here for whoever reviews the estimate before it goes out.
+    v2.log_internal_review_notes(estimate)
+
+    added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
+    print(f"  {log_prefix}{added} cost groups added to job {job_id}")
+
+    # Generation Spec §5 — trailing exclusions group, always last.
+    v2.add_not_included_group(job_id, estimate, jobtread_query)
+    return added, total
+
+
 def process_sales_tool_closing_estimate(body):
     """
     Fired by the sales-lead-tool (route.ts) after it creates a Closing Repair
@@ -3139,67 +3215,13 @@ def process_sales_tool_closing_estimate(body):
     print(f"  sales-tool-closing-estimate: starting AI estimate for job {job_id}")
 
     try:
-        addendum_pdf_bytes   = b""
-        inspection_pdf_bytes = b""
-
-        # v2: addendum now goes to Claude as native PDF (vision), same as the
-        # inspection report — NOT extract_pdf_text. Realtors send addendums
-        # as clean typed PDFs, scans, or sometimes not at all (the inspection
-        # report alone carries the ask), or as a marked-up inspection report.
-        # See CLAUDE.md "repair addendum vision support" for the full finding.
-        if addendum_url:
-            print("  Downloading repair addendum...")
-            addendum_pdf_bytes = download_file(addendum_url)
-            print(f"  Addendum: {len(addendum_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
-
-        if inspection_url:
-            print("  Downloading inspection report...")
-            inspection_pdf_bytes = download_file(inspection_url)
-            print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
-
+        addendum_pdf_bytes, inspection_pdf_bytes = download_closing_files(addendum_url, inspection_url)
         if not addendum_pdf_bytes and not inspection_pdf_bytes:
             raise Exception("Files provided but neither could be downloaded")
 
-        print("  Calling Claude (v2 — labor+material breakdown)...")
-        estimate = v2.call_claude_v2(
-            addendum_pdf_bytes, inspection_pdf_bytes,
-            client_name, client_phone, client_email, address, notes_text,
-            system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
-        )
-        # Enforce OCC's 3-hr minimum in-house labor charge per job (Jul 2026
-        # pricing Q&A) before computing the total or writing cost groups, so
-        # both reflect the enforced floor if the itemized hours fell short.
-        estimate = v2.enforce_minimum_labor_hours(estimate)
-
-        print("  Resolving material lines against Home Depot catalog...")
-        estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
-        print(f"  Catalog resolution: {catalog_stats}")
-
-        # Don't trust Claude's own "total" field here — under the new schema
-        # it's not told to apply markup itself, so its self-reported total
-        # has no reliable basis. Compute the real billed total the same way
-        # add_cost_groups_v2() actually prices each line. Must run AFTER the
-        # catalog step, which replaces material unit costs with live prices —
-        # computed before it, the total didn't match what was written.
-        total = v2.compute_estimate_total(estimate)
-        print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
-
-        # Generation Spec §2/§7 — warn (don't fail) on any report reference
-        # number that landed in more than one cost group, since that
-        # double-charges the client.
-        v2.find_duplicate_scope_references(estimate)
-        v2.find_bundled_groups_with_own_price(estimate)
-
-        # Generation Spec §4.2 — confidence ratings and quantity assumptions
-        # no longer get written into client-facing JobTread fields, so surface
-        # them here for whoever reviews the estimate before it goes out.
-        v2.log_internal_review_notes(estimate)
-
-        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
-        print(f"  {added} cost groups added to job {job_id}")
-
-        # Generation Spec §5 — trailing exclusions group, always last.
-        v2.add_not_included_group(job_id, estimate, jobtread_query)
+        estimate_closing_job(
+            job_id, addendum_pdf_bytes, inspection_pdf_bytes,
+            client_name, client_phone, client_email, address, notes_text)
 
     except Exception as e:
         import traceback
@@ -3266,41 +3288,9 @@ def process_sales_tool_general_estimate(body):
 
     print(f"  sales-tool-general-estimate: starting AI estimate for job {job_id} ({job_type})")
 
-    try:
-        estimate = call_claude_general(
-            form_label, client_name, client_phone, client_email,
-            address, description, notes_text, image_urls=photo_urls
-        )
-        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes_text)
-
-        if estimate:
-            total = estimate.get("total", 0) or 0
-            print(f"  Estimate total: ${total:,.2f} | consult={estimate.get('needs_consult')}")
-            added = add_cost_groups(job_id, estimate)
-            print(f"  {added} cost groups added to job {job_id}")
-        else:
-            print(f"  Needs consult — no cost groups generated for job {job_id}")
-
-        update_fields = {}
-        if projected:
-            update_fields["Projected Budget"] = projected
-        if gated_notes and gated_notes != notes_text:
-            # Daily log, not a comment — createComment posts a Job Message
-            # that notifies every internal user.
-            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
-
-        if update_fields:
-            try:
-                update_job_custom_fields(job_id, update_fields)
-                print(f"  Updated job {job_id} custom fields: {update_fields}")
-            except Exception as ue:
-                print(f"  Projected Budget field update failed (budget still saved): {ue}")
-
-    except Exception as e:
-        import traceback
-        print(f"  AI estimate failed for job {job_id}: {e}")
-        traceback.print_exc()
-        flag_failed_estimate(job_id, error=str(e), job_type=job_type)
+    estimate_general_job(job_id, job_type, form_label, client_name, client_phone,
+                         client_email, address, description, notes_text,
+                         image_urls=photo_urls)
 
 
 def log_internal_note(job_id, message):
@@ -3632,36 +3622,10 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
                                       "file could be downloaded from JobTread.")
             return False
 
-        # Same sequence as the two closing-repair call sites. Kept inline rather
-        # than factored out so it stays visibly in step with them — if the tail
-        # changes there (a new validation pass, a new writer), it has to change
-        # here too, and a shared helper would hide that.
-        print("  rerun: calling Claude (v2 — labor+material breakdown)...")
-        estimate = v2.call_claude_v2(
-            addendum_pdf_bytes, inspection_pdf_bytes,
+        added, total = estimate_closing_job(
+            job_id, addendum_pdf_bytes, inspection_pdf_bytes,
             ctx["client_name"], ctx["client_phone"], ctx["client_email"],
-            ctx["address"], ctx["notes"],
-            system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
-        )
-        estimate = v2.enforce_minimum_labor_hours(estimate)
-
-        print("  rerun: resolving material lines against Home Depot catalog...")
-        estimate, catalog_stats = v2.resolve_material_lines_with_catalog(
-            estimate, jobtread_query, JOBTREAD_ORG)
-        print(f"  rerun: catalog resolution: {catalog_stats}")
-
-        # After the catalog step — it changes material costs.
-        total = v2.compute_estimate_total(estimate)
-        print(f"  rerun: estimate total (computed, not LLM-reported): ${total:,.2f}")
-
-        v2.find_duplicate_scope_references(estimate)
-        v2.find_bundled_groups_with_own_price(estimate)
-        v2.log_internal_review_notes(estimate)
-
-        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
-        print(f"  rerun: {added} cost groups added to job {job_id}")
-
-        v2.add_not_included_group(job_id, estimate, jobtread_query)
+            ctx["address"], ctx["notes"], log_prefix="rerun: ")
 
         log_internal_note(
             job_id,
@@ -3946,6 +3910,52 @@ def _apply_estimate_gate(estimate, notes):
     return estimate, notes, projected
 
 
+def estimate_general_job(job_id, job_type, form_label, client_name, client_phone,
+                         client_email, address, description, notes, image_urls=None,
+                         pdf_text="", best_effort=True, stated_budget=None):
+    """Best-effort estimate for the non-closing flows (Home Repair / GVL,
+    Remodel, Pre-listing, and the general sales-tool endpoint), written onto a
+    job that already exists.
+
+    Runs call_claude_general, gates it (a consult-needed result writes no cost
+    groups), writes the flat-price cost groups, logs the consult note, and
+    sets Projected Budget. stated_budget, when given, overrides the AI total
+    for Projected Budget (Remodel's client-stated budget). Any failure is
+    flagged on the job with flag_failed_estimate rather than raised — the lead
+    is already saved.
+    """
+    try:
+        estimate = call_claude_general(form_label, client_name, client_phone, client_email,
+                                       address, description, notes, image_urls=image_urls,
+                                       pdf_text=pdf_text, best_effort=best_effort)
+        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
+        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
+        if stated_budget:
+            projected = _coerce_budget_number(stated_budget)
+        if estimate:
+            added = add_cost_groups(job_id, estimate)
+            print(f"  {added} cost groups added to job {job_id}")
+        else:
+            print(f"  Needs consult — no cost groups generated for job {job_id}")
+        if gated_notes != notes:
+            # Daily log, not a comment — createComment posts a Job Message
+            # that notifies every internal user.
+            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
+        if projected:
+            try:
+                update_job_custom_fields(job_id, {"Projected Budget": projected})
+                print(f"  Projected Budget set to {projected} on job {job_id}")
+            except Exception as ue:
+                # Budget/cost groups already saved — don't flag the whole estimate
+                # as failed just because the Projected Budget field write errored.
+                print(f"  Projected Budget field update failed (budget still saved): {ue}")
+    except Exception as e:
+        import traceback
+        print(f"  AI estimate failed for job {job_id}: {e}")
+        traceback.print_exc()
+        flag_failed_estimate(job_id, error=str(e), job_type=job_type)
+
+
 # ── Form processors ───────────────────────────────────────────────────────────
 
 def process_home_repairs(data, form_name="Home Repair", lead_source_override=None):
@@ -3984,29 +3994,8 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
     job_id = create_job(cfg)
 
     # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ─────
-    try:
-        estimate = call_claude_general(f"{form_name.lower()} repair", name, phone, email,
-                                       address, work, notes, image_urls=image_urls)
-        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
-        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
-        if estimate:
-            add_cost_groups(job_id, estimate)
-        update_fields = {}
-        if projected:
-            update_fields["Projected Budget"] = projected
-        if gated_notes != notes:
-            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
-        if update_fields:
-            try:
-                update_job_custom_fields(job_id, update_fields)
-            except Exception as ue:
-                print(f"  Projected Budget field update failed (budget still saved): {ue}")
-    except Exception as e:
-        import traceback
-        print(f"  AI estimate failed for job {job_id}: {e}")
-        traceback.print_exc()
-        flag_failed_estimate(job_id, error=str(e), job_type="Home Repair")
-
+    estimate_general_job(job_id, "Home Repair", f"{form_name.lower()} repair", name, phone,
+                         email, address, work, notes, image_urls=image_urls)
     return job_id
 
 
@@ -4044,31 +4033,9 @@ def process_remodel(data):
     job_id = create_job(cfg)
 
     # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
-    try:
-        estimate = call_claude_general("remodel", name, phone, email, address, desc, notes)
-        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
-        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
-        # Remodels: client's stated budget anchors the projected field over AI total
-        if budget:
-            projected = _coerce_budget_number(budget)
-        if estimate:
-            add_cost_groups(job_id, estimate)
-        update_fields = {}
-        if projected:
-            update_fields["Projected Budget"] = projected
-        if gated_notes != notes:
-            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
-        if update_fields:
-            try:
-                update_job_custom_fields(job_id, update_fields)
-            except Exception as ue:
-                print(f"  Projected Budget field update failed (budget still saved): {ue}")
-    except Exception as e:
-        import traceback
-        print(f"  AI estimate failed for job {job_id}: {e}")
-        traceback.print_exc()
-        flag_failed_estimate(job_id, error=str(e), job_type="Remodel")
-
+    # The client's stated budget anchors the Projected Budget over the AI total.
+    estimate_general_job(job_id, "Remodel", "remodel", name, phone, email, address,
+                         desc, notes, stated_budget=budget)
     return job_id
 
 
@@ -4119,40 +4086,17 @@ def process_prelisting(data):
     job_id = create_job(cfg)
 
     # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
-    try:
-        pdf_text = ""
-        if insp_url:
-            try:
-                pdf_text = "\n".join(t for _, t in extract_pdf_text(download_file(insp_url)))
-                print(f"  Inspection report: {len(pdf_text)} chars extracted")
-            except Exception as e:
-                print(f"  Inspection PDF failed: {e}")
+    pdf_text = ""
+    if insp_url:
+        try:
+            pdf_text = "\n".join(t for _, t in extract_pdf_text(download_file(insp_url)))
+            print(f"  Inspection report: {len(pdf_text)} chars extracted")
+        except Exception as e:
+            print(f"  Inspection PDF failed: {e}")
 
-        estimate = call_claude_general("pre-listing repair", name, phone, email, address,
-                                       other, notes, pdf_text=pdf_text,
-                                       best_effort=(not pdf_text))
-        print(f"  Estimate total: ${estimate.get('total', 0) or 0:,.2f} | consult={estimate.get('needs_consult')}")
-        estimate, gated_notes, projected = _apply_estimate_gate(estimate, notes)
-        if estimate:
-            add_cost_groups(job_id, estimate)
-        update_fields = {}
-        if projected:
-            update_fields["Projected Budget"] = projected
-        if gated_notes != notes:
-            log_internal_note(job_id, f"[OCC-AUTO] {gated_notes.split(chr(10)+chr(10))[-1]}")
-        if update_fields:
-            try:
-                update_job_custom_fields(job_id, update_fields)
-            except Exception as ue:
-                # Budget/cost groups already saved — don't flag the whole estimate
-                # as failed just because the Projected Budget field write errored.
-                print(f"  Projected Budget field update failed (budget still saved): {ue}")
-    except Exception as e:
-        import traceback
-        print(f"  AI estimate failed for job {job_id}: {e}")
-        traceback.print_exc()
-        flag_failed_estimate(job_id, error=str(e), job_type="Pre-listing Repair")
-
+    estimate_general_job(job_id, "Pre-listing Repair", "pre-listing repair", name, phone,
+                         email, address, other, notes, pdf_text=pdf_text,
+                         best_effort=(not pdf_text))
     return job_id
 
 
@@ -4589,59 +4533,13 @@ class Handler(BaseHTTPRequestHandler):
 
             # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ──
             try:
-                addendum_pdf_bytes   = b""
-                inspection_pdf_bytes = b""
-
-                # v2: addendum now goes to Claude as native PDF (vision), same
-                # as the inspection report — NOT extract_pdf_text. See
-                # CLAUDE.md "repair addendum vision support" for why (scans,
-                # marked-up inspection reports, or no separate file at all).
-                if addendum_url:
-                    print("  Downloading repair addendum...")
-                    addendum_pdf_bytes = download_file(addendum_url)
-                    print(f"  Addendum: {len(addendum_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
-
-                if inspection_url:
-                    print("  Downloading inspection report...")
-                    inspection_pdf_bytes = download_file(inspection_url)
-                    print(f"  Inspection: {len(inspection_pdf_bytes)} bytes downloaded (sent to Claude as native PDF)")
-
+                addendum_pdf_bytes, inspection_pdf_bytes = download_closing_files(addendum_url, inspection_url)
                 if not addendum_pdf_bytes and not inspection_pdf_bytes:
                     raise Exception("Files attached but neither could be downloaded")
 
-                print("  Calling Claude (v2 — labor+material breakdown)...")
-                estimate = v2.call_claude_v2(
-                    addendum_pdf_bytes, inspection_pdf_bytes,
-                    client_name, client_phone, client_email, address, notes_text,
-                    system_prompt=get_system_prompt_v2(), anthropic_api_key=ANTHROPIC_KEY
-                )
-                estimate = v2.enforce_minimum_labor_hours(estimate)
-
-                print("  Resolving material lines against Home Depot catalog...")
-                estimate, catalog_stats = v2.resolve_material_lines_with_catalog(estimate, jobtread_query, JOBTREAD_ORG)
-                print(f"  Catalog resolution: {catalog_stats}")
-
-                # After the catalog step — it changes material costs.
-                total = v2.compute_estimate_total(estimate)
-                print(f"  Estimate total (computed, not LLM-reported): ${total:,.2f}")
-
-                # Generation Spec §2/§7 — warn (don't fail) on any report
-                # reference number that landed in more than one cost group,
-                # since that double-charges the client.
-                v2.find_duplicate_scope_references(estimate)
-                v2.find_bundled_groups_with_own_price(estimate)
-
-                # Generation Spec §4.2 — confidence ratings and quantity
-                # assumptions no longer get written into client-facing
-                # JobTread fields, so surface them here for whoever reviews
-                # the estimate before it goes out.
-                v2.log_internal_review_notes(estimate)
-
-                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
-                print(f"  {added} cost groups added to job {job_id}")
-
-                # Generation Spec §5 — trailing exclusions group, always last.
-                v2.add_not_included_group(job_id, estimate, jobtread_query)
+                estimate_closing_job(
+                    job_id, addendum_pdf_bytes, inspection_pdf_bytes,
+                    client_name, client_phone, client_email, address, notes_text)
 
             except Exception as e:
                 import traceback
