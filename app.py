@@ -669,119 +669,6 @@ def download_file(url):
     raise Exception("Too many redirects")
 
 
-# ── Claude ────────────────────────────────────────────────────────────────────
-
-def call_claude(addendum_text, inspection_pdf_bytes, client_name, client_phone, client_email, address, notes):
-    """
-    Build Claude content and call API. Returns parsed estimate dict.
-
-    The repair addendum is sent as extracted text (it's reliably a clean,
-    text-based form). The inspection report is sent as a native PDF document
-    block instead of pypdf-extracted text — inspection reports are often
-    image-heavy with handwritten annotations circling/marking specific issues,
-    which a text-only extraction would miss entirely. Native PDF mode lets
-    Claude see the actual pages, photos, and handwriting directly.
-    """
-    content = []
-
-    intro = f"""Generate a closing repairs estimate for Owners Choice Construction.
-
-Client name: {client_name}
-Client phone: {client_phone}
-Client email: {client_email}
-Property address: {address}
-{f"Realtor notes: {notes}" if notes else ""}
-
-Process the repair addendum first to identify all requested items, then cross-reference with the inspection report (provided as a PDF below — read both the printed text and any handwritten notes, circles, arrows, or markups on the pages) to write accurate scope descriptions and calibrate pricing based on described severity.
-"""
-    content.append({"type": "text", "text": intro})
-
-    if addendum_text:
-        content.append({"type": "text", "text": f"\n=== REPAIR ADDENDUM ===\n{addendum_text[:20000]}"})
-
-    if inspection_pdf_bytes:
-        try:
-            from pypdf import PdfReader
-            page_count = len(PdfReader(io.BytesIO(inspection_pdf_bytes)).pages)
-            if page_count > 100:
-                raise ValueError(
-                    f"Inspection report has {page_count} pages — Claude's PDF support "
-                    f"caps at 100 pages per document. Split the file and try again."
-                )
-        except ValueError:
-            raise
-        except Exception as e:
-            print(f"  Could not pre-check inspection PDF page count: {e}")
-
-        inspection_b64 = base64.b64encode(inspection_pdf_bytes).decode("utf-8")
-        content.append({"type": "text", "text": "\n=== INSPECTION REPORT (PDF below — read text, photos, and handwritten annotations) ==="})
-        content.append({
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": inspection_b64
-            }
-        })
-
-    content.append({"type": "text", "text": "\nRespond with ONLY the raw JSON object. No markdown, no explanation."})
-
-    base_payload = {
-        "model": "claude-sonnet-4-6",
-        "max_tokens": 8000,  # raised from 4000 — large repair lists were getting truncated mid-JSON
-        "system": get_system_prompt(),
-        "messages": [{"role": "user", "content": content}]
-    }
-
-    last_error = None
-    for attempt in range(1, 4):  # up to 3 attempts before giving up
-        try:
-            payload = json.dumps(base_payload).encode("utf-8")
-            req = urllib.request.Request(
-                "https://api.anthropic.com/v1/messages",
-                data=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": ANTHROPIC_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "anthropic-beta": "pdfs-2024-09-25"
-                },
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=120) as r:
-                result = json.loads(r.read().decode("utf-8"))
-
-            stop_reason = result.get("stop_reason")
-            raw = "".join(block.get("text", "") for block in result.get("content", []))
-
-            if stop_reason == "max_tokens":
-                # Response was cut off — guaranteed-broken JSON, don't even try to parse
-                raise ValueError(
-                    f"Claude response truncated by max_tokens (attempt {attempt}), "
-                    f"got {len(raw)} chars before cutoff"
-                )
-
-            match = re.search(r"\{[\s\S]*\}", raw)
-            if not match:
-                raise ValueError(f"No JSON object found in Claude response: {raw[:500]}")
-
-            return json.loads(match.group(0))
-
-        except (json.JSONDecodeError, ValueError) as e:
-            last_error = e
-            print(f"  call_claude attempt {attempt} failed: {e}")
-            if attempt < 3:
-                print(f"  Retrying ({attempt + 1}/3)...")
-                continue
-
-    # All attempts exhausted — fail loudly with enough detail to debug,
-    # rather than silently dropping the lead.
-    raise Exception(
-        f"call_claude failed after 3 attempts. Last error: {last_error}. "
-        f"This lead needs to be entered manually — check Render logs for the raw Claude output."
-    )
-
-
 # ── JobTread ──────────────────────────────────────────────────────────────────
 
 def jobtread_query(query):
@@ -892,20 +779,6 @@ def normalize_address(address):
                 cased.append(token.capitalize())  # everything else — title case
         result.append(" ".join(cased))
     return ", ".join(result)
-
-
-def normalize_e164(phone):
-    """Return E.164 format (+1XXXXXXXXXX) for use in API calls / email logic.
-    Falls back to the raw string if it can't be normalised.
-    """
-    if not phone:
-        return phone
-    digits = re.sub(r"\D", "", phone)
-    if len(digits) == 11 and digits.startswith("1"):
-        return f"+{digits}"
-    if len(digits) == 10:
-        return f"+1{digits}"
-    return phone.strip()
 
 
 def find_account_by_name(name, address=None):
@@ -1420,10 +1293,6 @@ AUTOMATION_ENABLED_JOB_TYPES = {
     "Pre-listing Repair",
 }
 
-# Status field IDs by job type
-HOME_REPAIR_STATUS_FIELD    = "22PFPUHGUt4g"   # Home Repairs Status
-CLOSING_REPAIR_STATUS_FIELD = "22PFPSefyzSp"   # Closing Repairs Status
-
 # Status values that mean the job is closed — stop all follow-ups
 TERMINAL_STATUSES = {"Closed Won", "Closed Lost"}
 LONG_TERM_STATUS  = "Long Term Follow Up"
@@ -1683,9 +1552,9 @@ def get_job_type_and_status(job_info):
     return job_type, status
 
 
-# The newest 10 comments — where has_pending_reply_pause() looks for the
-# pause marker. Shared so send_followup_email_from_todo() can fetch the same
-# page inside its one job query.
+# The newest 10 comments — where send_followup_email_from_todo() looks for
+# the pause marker before creating a manual call step. Fetched inside its one
+# job query.
 PAUSE_CHECK_COMMENTS_QUERY = {
     "$": {"size": 10, "sortBy": [{"field": "createdAt", "order": "desc"}]},
     "nodes": {"message": {}}
@@ -1694,26 +1563,6 @@ PAUSE_CHECK_COMMENTS_QUERY = {
 
 def _has_pause_marker(comments):
     return any(PAUSE_LOGGED_MARKER in (c.get("message") or "") for c in comments)
-
-
-def has_pending_reply_pause(job_id):
-    """
-    Quick check: has automation already been paused on this job due to a
-    customer reply? Prevents duplicate pause to-dos/comments on repeated
-    triggers (webhook + cron both calling check_for_customer_reply_and_pause).
-    """
-    try:
-        resp = jobtread_query({
-            "job": {
-                "$": {"id": job_id},
-                "comments": PAUSE_CHECK_COMMENTS_QUERY
-            }
-        })
-        comments = (resp.get("job") or {}).get("comments", {}).get("nodes", [])
-        return _has_pause_marker(comments)
-    except Exception as e:
-        print(f"  has_pending_reply_pause check failed: {e}")
-        return False
 
 
 def get_job_for_reply_check(job_id):
@@ -2772,8 +2621,8 @@ def send_followup_email_from_todo(task_id, task_name, job_id, job_type):
                     "$": {"size": JOB_CUSTOM_FIELD_PAGE_SIZE},
                     "nodes": {"customField": {"name": {}}, "value": {}}
                 },
-                # Same page has_pending_reply_pause() reads, for the
-                # manual-step check at the end.
+                # Newest comments, for the pause-marker check before the
+                # manual step at the end.
                 "comments": PAUSE_CHECK_COMMENTS_QUERY,
             }
         })
@@ -2957,10 +2806,6 @@ def process_task_updated(payload):
 
         print(f"  task-updated: '{task_name}' completed on job {job_id}")
 
-        if not task_name or not job_id:
-            print(f"  task-updated: missing task name or job ID — skipping")
-            return
-
         job_info = get_job_info(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
@@ -3133,7 +2978,7 @@ def process_job_created(payload):
         job_info = get_job_info(job_id)
         job_type, current_status = get_job_type_and_status(job_info)
 
-        if not job_id or job_type not in AUTOMATION_ENABLED_JOB_TYPES:
+        if job_type not in AUTOMATION_ENABLED_JOB_TYPES:
             return
 
         if current_status != "New Lead":
@@ -3231,10 +3076,12 @@ def process_job_updated(payload):
         traceback.print_exc()
 
 
-def create_job_stub(cfg):
+def create_job(cfg):
     """
-    Create the job record in JobTread with no estimate — account, contact,
-    location, job, and files.  Returns job_id.
+    Create the job record in JobTread with no estimate: account (+ contact,
+    set as primary), location, job, intake notes, and files. Returns job_id.
+    Every intake form uses this; the AI estimate is added afterwards so a
+    failed estimate never loses the lead.
 
     To-dos are created by the jobCreated webhook (process_job_created) which
     fires automatically after job creation — do NOT create them here or they
@@ -3249,32 +3096,6 @@ def create_job_stub(cfg):
     # customer-facing estimate documents.
     if cfg.get("notes_text"):
         log_internal_note(job_id, cfg["notes_text"])
-    attach_files(job_id, cfg.get("file_urls", []))
-    return job_id
-
-
-def create_job_full(cfg):
-    """
-    Unified job-creation flow used by routes that have the estimate ready
-    at creation time (sales-lead-tool endpoints, closing-repair Wufoo).
-    1. Find-or-create account (+ contact, primary)
-    2. Create location
-    3. Create job (PM, status, projected budget)
-    4. Cost groups (if estimate present)
-    5. Attach files
-
-    To-dos are created by the jobCreated webhook — do NOT create them here.
-    """
-    account_id  = upsert_account_and_contact(cfg)
-    location_id = create_location_record(account_id, cfg["location_address"])
-    print(f"  Location: {location_id}")
-    job_id = create_job_record(location_id, cfg)
-    print(f"  Job created: {job_id}")
-    # Intake notes go to a daily log — the "Notes" custom field renders on
-    # customer-facing estimate documents.
-    if cfg.get("notes_text"):
-        log_internal_note(job_id, cfg["notes_text"])
-    add_cost_groups(job_id, cfg.get("estimate"))
     attach_files(job_id, cfg.get("file_urls", []))
     return job_id
 
@@ -3374,7 +3195,7 @@ def process_sales_tool_closing_estimate(body):
         # them here for whoever reviews the estimate before it goes out.
         v2.log_internal_review_notes(estimate)
 
-        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
+        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
         print(f"  {added} cost groups added to job {job_id}")
 
         # Generation Spec §5 — trailing exclusions group, always last.
@@ -3490,7 +3311,7 @@ def log_internal_note(job_id, message):
 
     DO NOT use this for the [OCC-AUTO] marker comments the automation reads
     back — parse_sent_date(), already_sent_followup(), already_pending_review()
-    and has_pending_reply_pause() all query job.comments to find them. Those
+    and the pause-marker checks all query job.comments to find them. Those
     MUST stay as comments or the follow-up chain silently stops working.
     """
     from datetime import date
@@ -3837,7 +3658,7 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
         v2.find_bundled_groups_with_own_price(estimate)
         v2.log_internal_review_notes(estimate)
 
-        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
+        added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
         print(f"  rerun: {added} cost groups added to job {job_id}")
 
         v2.add_not_included_group(job_id, estimate, jobtread_query)
@@ -3866,11 +3687,10 @@ def rerun_closing_estimate(job_id, source="manual", force=False):
 
 
 
-def create_jobtread_job(client_name, client_phone, client_email, address, notes_text, file_urls, estimate=None):
+def create_jobtread_job(client_name, client_phone, client_email, address, notes_text, file_urls):
     """
     Closing-repairs job creation (account name = property address, realtor = contact).
-    estimate may be None — job/account/contact/files are created regardless;
-    cost groups are added only if/when an estimate is available.
+    The estimate is added afterwards by the caller.
     """
     street = address.split(",")[0].strip() if "," in address else address
     cfg = {
@@ -3890,11 +3710,10 @@ def create_jobtread_job(client_name, client_phone, client_email, address, notes_
         "projected_budget": None,
         "job_name":        street[:30],   # closing repairs keep the street name
         "notes_text":      notes_text,
-        "estimate":        estimate,      # may be None — add_cost_groups handles that
         "file_urls":       file_urls,
         "dedup":           True,          # match on address; reuse + fix realtor primary contact
     }
-    return create_job_full(cfg)
+    return create_job(cfg)
 
 
 def format_date(raw):
@@ -4162,7 +3981,7 @@ def process_home_repairs(data, form_name="Home Repair", lead_source_override=Non
     }
 
     # ── Step 1: Create the job first — lead is captured no matter what ────────
-    job_id = create_job_stub(cfg)
+    job_id = create_job(cfg)
 
     # ── Step 2: Best-effort AI estimate — failures are flagged, not fatal ─────
     try:
@@ -4222,7 +4041,7 @@ def process_remodel(data):
     }
 
     # ── Step 1: Create the job first ─────────────────────────────────────────
-    job_id = create_job_stub(cfg)
+    job_id = create_job(cfg)
 
     # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
     try:
@@ -4297,7 +4116,7 @@ def process_prelisting(data):
     }
 
     # ── Step 1: Create the job first ─────────────────────────────────────────
-    job_id = create_job_stub(cfg)
+    job_id = create_job(cfg)
 
     # ── Step 2: Best-effort AI estimate ──────────────────────────────────────
     try:
@@ -4764,7 +4583,7 @@ class Handler(BaseHTTPRequestHandler):
             print("  Creating JobTread job...")
             job_id = create_jobtread_job(
                 client_name, client_phone, client_email, address,
-                notes_text, file_urls, estimate=None
+                notes_text, file_urls
             )
             print(f"  Job created: {job_id}")
 
@@ -4818,7 +4637,7 @@ class Handler(BaseHTTPRequestHandler):
                 # the estimate before it goes out.
                 v2.log_internal_review_notes(estimate)
 
-                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query, org_id=JOBTREAD_ORG)
+                added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
                 print(f"  {added} cost groups added to job {job_id}")
 
                 # Generation Spec §5 — trailing exclusions group, always last.

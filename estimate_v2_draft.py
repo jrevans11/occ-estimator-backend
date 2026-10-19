@@ -2345,7 +2345,7 @@ def _is_internal_material_description(line):
 # _build_material_custom_field_values().
 
 
-def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
+def add_cost_groups_v2(job_id, estimate, jobtread_query_fn):
     """
     Create cost groups with MULTIPLE cost items each (labor + material
     lines for in-house work, a single scoped line for sub work) instead of
@@ -2353,11 +2353,6 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
 
     jobtread_query_fn: pass in app.py's jobtread_query() function so this
     stays a pure function you can unit test without hitting the real API.
-
-    org_id: accepted for signature compatibility with both v2 call sites in
-    app.py. It is currently unused here — it previously fed a cost-item photo
-    attachment that JobTread's API does not actually support (see the removal
-    note above). Left in place rather than churning both call sites.
     """
     if not estimate:
         return 0
@@ -2453,93 +2448,92 @@ def add_cost_groups_v2(job_id, estimate, jobtread_query_fn, org_id=None):
         # cost types instead of lumping everything into "Other". Runs
         # whenever labor_lines/material_lines are present, regardless of
         # whether this group ALSO had a sub_scope_price above (mixed case).
-        if True:
-            for line in group.get("labor_lines", []) or []:
-                hours = float(line.get("hours", 0) or 0)
-                rate = float(line.get("rate", 89.00) or 89.00)
-                trade = (line.get("trade", "") or "Labor").strip()
-                if hours <= 0:
-                    continue
-                try:
-                    jobtread_query_fn({
-                        "createCostItem": {
-                            "$": {
-                                "costGroupId": group_id,
-                                "name": f"{trade.capitalize()} labor"[:100],
-                                "quantity": hours,
-                                "unitCost": LABOR_COST_RATE,  # real internal cost ($55/hr)
-                                "unitPrice": rate,             # billed rate (89.00)
-                                "costCodeId": cost_code_id, "costTypeId": COST_TYPE_LABOR
-                            },
-                            "createdCostItem": {"id": {}}
-                        }
-                    })
-                    items_added_this_group += 1
-                except Exception as e:
-                    print(f"  Failed to add labor line for '{title[:50]}': {e}")
+        for line in group.get("labor_lines", []) or []:
+            hours = float(line.get("hours", 0) or 0)
+            rate = float(line.get("rate", 89.00) or 89.00)
+            trade = (line.get("trade", "") or "Labor").strip()
+            if hours <= 0:
+                continue
+            try:
+                jobtread_query_fn({
+                    "createCostItem": {
+                        "$": {
+                            "costGroupId": group_id,
+                            "name": f"{trade.capitalize()} labor"[:100],
+                            "quantity": hours,
+                            "unitCost": LABOR_COST_RATE,  # real internal cost ($55/hr)
+                            "unitPrice": rate,             # billed rate (89.00)
+                            "costCodeId": cost_code_id, "costTypeId": COST_TYPE_LABOR
+                        },
+                        "createdCostItem": {"id": {}}
+                    }
+                })
+                items_added_this_group += 1
+            except Exception as e:
+                print(f"  Failed to add labor line for '{title[:50]}': {e}")
 
-            for line in group.get("material_lines", []) or []:
-                qty = float(line.get("qty", 0) or 0)
-                unit_cost = float(line.get("unit_cost", 0) or 0)
-                item = (line.get("item", "") or "Material").strip()
-                if qty <= 0 or unit_cost <= 0:
-                    continue
-                unit_price = round(unit_cost * MATERIAL_MARKUP, 2)
-                item_description = _build_material_description(line)
-                custom_field_values = _build_material_custom_field_values(line)
-                base_args = {
-                    "costGroupId": group_id,
-                    "name": item[:100],
-                    "quantity": qty,
-                    "unitCost": unit_cost,
-                    "unitPrice": unit_price,
-                    "costCodeId": cost_code_id, "costTypeId": COST_TYPE_MATERIALS
-                }
-                enriched_args = dict(base_args)
-                if item_description:
-                    enriched_args["description"] = item_description
-                    # Generation Spec §4.2 / appendix: costItem.description
-                    # defaults to showDescription=true and renders on customer
-                    # documents. Internal QA text (unverified AI cost, rejected
-                    # catalog price, candidate lists) must be explicitly hidden
-                    # — it stays queryable for the OCC team, it just doesn't
-                    # print on anything the client sees. A confident catalog
-                    # match is a real product name, so it stays visible.
-                    if _is_internal_material_description(line):
-                        enriched_args["showDescription"] = False
-                if custom_field_values:
-                    enriched_args["customFieldValues"] = custom_field_values
+        for line in group.get("material_lines", []) or []:
+            qty = float(line.get("qty", 0) or 0)
+            unit_cost = float(line.get("unit_cost", 0) or 0)
+            item = (line.get("item", "") or "Material").strip()
+            if qty <= 0 or unit_cost <= 0:
+                continue
+            unit_price = round(unit_cost * MATERIAL_MARKUP, 2)
+            item_description = _build_material_description(line)
+            custom_field_values = _build_material_custom_field_values(line)
+            base_args = {
+                "costGroupId": group_id,
+                "name": item[:100],
+                "quantity": qty,
+                "unitCost": unit_cost,
+                "unitPrice": unit_price,
+                "costCodeId": cost_code_id, "costTypeId": COST_TYPE_MATERIALS
+            }
+            enriched_args = dict(base_args)
+            if item_description:
+                enriched_args["description"] = item_description
+                # Generation Spec §4.2 / appendix: costItem.description
+                # defaults to showDescription=true and renders on customer
+                # documents. Internal QA text (unverified AI cost, rejected
+                # catalog price, candidate lists) must be explicitly hidden
+                # — it stays queryable for the OCC team, it just doesn't
+                # print on anything the client sees. A confident catalog
+                # match is a real product name, so it stays visible.
+                if _is_internal_material_description(line):
+                    enriched_args["showDescription"] = False
+            if custom_field_values:
+                enriched_args["customFieldValues"] = custom_field_values
 
-                # Try the enriched write first (description + custom fields).
-                # Neither has been live-write-confirmed against createCostItem
-                # specifically (description is a confirmed-real READ field;
-                # customFieldValues is a confirmed-real WRITE arg on createJob,
-                # not independently proven on createCostItem). If the enriched
-                # call fails for ANY reason, fall back to the bare-minimum args
-                # already proven to work in the first successful live run
-                # (job 22PbETG4esX5) — so a bad new field costs us the extra
-                # detail on that one line, never the line item itself.
-                try:
-                    resp = jobtread_query_fn({
-                        "createCostItem": {"$": enriched_args, "createdCostItem": {"id": {}}}
-                    })
-                except Exception as enriched_err:
-                    if enriched_args != base_args:
-                        print(f"  Enriched material create failed for '{item[:50]}' "
-                              f"({enriched_err}) — retrying with bare args (no description/custom fields)")
-                        try:
-                            resp = jobtread_query_fn({
-                                "createCostItem": {"$": base_args, "createdCostItem": {"id": {}}}
-                            })
-                        except Exception as e:
-                            print(f"  Failed to add material line for '{title[:50]}' (bare retry also failed): {e}")
-                            resp = None
-                    else:
-                        print(f"  Failed to add material line for '{title[:50]}': {enriched_err}")
+            # Try the enriched write first (description + custom fields).
+            # Neither has been live-write-confirmed against createCostItem
+            # specifically (description is a confirmed-real READ field;
+            # customFieldValues is a confirmed-real WRITE arg on createJob,
+            # not independently proven on createCostItem). If the enriched
+            # call fails for ANY reason, fall back to the bare-minimum args
+            # already proven to work in the first successful live run
+            # (job 22PbETG4esX5) — so a bad new field costs us the extra
+            # detail on that one line, never the line item itself.
+            try:
+                resp = jobtread_query_fn({
+                    "createCostItem": {"$": enriched_args, "createdCostItem": {"id": {}}}
+                })
+            except Exception as enriched_err:
+                if enriched_args != base_args:
+                    print(f"  Enriched material create failed for '{item[:50]}' "
+                          f"({enriched_err}) — retrying with bare args (no description/custom fields)")
+                    try:
+                        resp = jobtread_query_fn({
+                            "createCostItem": {"$": base_args, "createdCostItem": {"id": {}}}
+                        })
+                    except Exception as e:
+                        print(f"  Failed to add material line for '{title[:50]}' (bare retry also failed): {e}")
                         resp = None
+                else:
+                    print(f"  Failed to add material line for '{title[:50]}': {enriched_err}")
+                    resp = None
 
-                if resp is not None:
-                    items_added_this_group += 1
+            if resp is not None:
+                items_added_this_group += 1
 
         # Internal NOTES line item ($0) — carries the quantity assumptions,
         # confidence, and catalog caveats for this group. Only added when the
