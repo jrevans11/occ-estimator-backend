@@ -37,6 +37,14 @@ PARENT_PREFIX = "Site Scope Draft"
 ALTERNATES_GROUP = "Optional Alternates"
 TBD_SUFFIX = " (PRICING TBD)"
 LABOR_PRICE_RATE = 89.00
+# Disposal: OCC's usual "Haul Away" line, per trailer load (Jason, Oct 20, 2026 -
+# the price his past budgets used 17 times; not the 1.65 material markup).
+HAUL_AWAY_NAME = "Haul Away"
+HAUL_AWAY_COST = 228.00
+HAUL_AWAY_PRICE = 350.00
+# Project management: 10% of the budget's price, all margin (Jason, Oct 20, 2026).
+PM_GROUP = "Project Management"
+PM_RATE = 0.10
 MAX_DESCRIPTION = 4096
 MAX_GROUP_NAME = 60
 SRC_WORDS = {"dictated": "dictated / answered", "est": "est. from photos", "assumed": "assumed"}
@@ -129,8 +137,12 @@ HOW TO BUILD IT
    - Everything else is in-house: labor lines (hours) and material lines.
    - An unlicensed sub line (flooring, tile, masonry...) may be priced from an anchor, or from your own judgment when none fits - then "anchors": [] and say so in internal_notes.
    - Sub costs are OCC's cost from the sub, before OCC's markup.
+   - A sub line's "name" is the work only ("Quartz vanity tops and backsplash"), never the sub's name - the client sees it. The sub goes in "sub".
 3. In-house hours: price each group the way a crew lead would - setup, protection, layout, the work itself, trips, cleanup. Adding up per-task minimums lands low. Real anchors: OCC billed 26 hours for a group of exterior door repairs, 30 hours for exterior trim, shutters, fascia and paint, 16 for a bathroom repair group, 10 for garage repairs. Give hours only - the rate is code's.
 4. Materials: real purchasable items at their single-unit retail cost (Home Depot, Greenville SC), in the unit you'd buy (8 ft piece, gallon, box, sheet). Work the quantity out from the working quantities or a scope item's quantity, plus waste, and put the W or S id it rests on in qty_ref. Code looks each item up in the Home Depot catalog and rejects case and multipack prices, so name it the way Home Depot sells it ("3-1/2 in. x 7/16 in. primed MDF casing, 8 ft"), not a description of the work. Small consumables (fasteners, caulk, tape, sandpaper) can be one line.
+   Allowances: every fixture or finish the client will pick - plumbing trim kits, showerheads, body sprays, faucets, light fixtures, lighted mirrors, sinks, tile - gets an allowance material line, even when a licensed sub installs it (the sub line covers the installation only). Never leave a selection out because the client chooses it. Name the line for what it buys and end the name with "allowance" ("Shower trim kit, raised showerhead and 2 body sprays allowance - oil rubbed bronze"), set "allowance": true, and price it at a mid-range retail cost. Its group's notes say it is an allowance and that the client's pick moves the price.
+   Disposal: on the group that holds the demolition (or the cleanup when nothing is demolished), set "haul_away_loads" to the trailer loads of debris - about 1 for a small bath gut or one room of flooring; 0 when nothing is hauled. Code adds OCC's Haul Away line. Don't add dump fees as materials.
+   Project management: code adds the Project Management group to every budget. Don't add one.
 5. Client-facing text - scope_lines and notes. Scope lines start with an imperative verb and describe the work, not the defect, in build sequence (demo, structure, rough-in, finish, cleanup). Notes cover what the price assumes (quantities, method, day rate or measured), what is excluded that a reasonable person would assume is included, what discovery would change the price, and honest tradeoffs and expectations (new paint matches closely, never exactly; a patched wall can show). Explain the mechanism, not just the disclaimer. A quantity marked (est.) or (assumed) that the price rests on is stated in notes as an assumption. No prices in the text.
 6. internal_notes are for Jason only and never print for the client: quantities never measured, prices that are yours, which anchors you leaned on and why, what to confirm with the sub, anything to catch before sending.
 7. Alternates: each optional add-on or either/or on the scope Page becomes an alternate, the same shape as a group, whose notes state its own tradeoff. [] if none.
@@ -139,6 +151,7 @@ WRITING RULES (every name, line and note)
 No markdown, asterisks, underscores or emoji. A spaced hyphen " - ", never a dash. Feet and inches as 13'-2". Group names: plain Title Case trade or area names, under 60 characters, no numbers in front. Say "the client", never "you". Spell out Owners Choice Construction if the company is named.
 
 cost_code is one of these exact names: {cost_codes}
+Pick the code for the group's trade. Subcontractor Labor and In-House Labor are not trade codes - never use them for a trade group. Tile goes under Flooring.
 
 OUTPUT
 Reply with one JSON object and nothing else:
@@ -147,7 +160,8 @@ Reply with one JSON object and nothing else:
    "notes": ["Pricing assumes 8 in. block walls; a different thickness changes the jamb stock."],
    "internal_notes": ["Block thickness assumed - measure before ordering jamb stock."],
    "labor": [{{"task": "Carpentry - jambs and casing", "hours": 14}}],
-   "materials": [{{"item": "1x10 in. x 8 ft primed finger-joint pine board", "qty": 8, "unit": "8 ft piece", "unit_cost": 21.98, "qty_ref": "S6"}}],
+   "materials": [{{"item": "1x10 in. x 8 ft primed finger-joint pine board", "qty": 8, "unit": "8 ft piece", "unit_cost": 21.98, "qty_ref": "S6", "allowance": false}}],
+   "haul_away_loads": 0,
    "subs": [{{"name": "Electrical relocation", "sub": "Redland Electric", "licensed_trade": "electrical", "cost": 600, "anchors": ["A10"], "basis": "two receptacle moves at about $150 each plus a trip, per A10"}}]}}],
  "alternates": []}}
 Use [] for a group's empty lists. "sub" and "licensed_trade" are null when they don't apply.
@@ -276,7 +290,8 @@ def clean_group(g):
             continue
         materials.append({"item": clean_text(x["item"]), "qty": _num(x.get("qty")) or 0,
                           "unit": clean_text(x.get("unit")), "unit_cost": _num(x.get("unit_cost")) or 0,
-                          "qty_ref": str(x.get("qty_ref") or "").strip().upper() or None})
+                          "qty_ref": str(x.get("qty_ref") or "").strip().upper() or None,
+                          "allowance": x.get("allowance") is True})
     subs = []
     for x in g.get("subs") or []:
         if not isinstance(x, dict) or not clean_text(x.get("name")):
@@ -290,7 +305,20 @@ def clean_group(g):
     return {"name": clean_name(g["name"]), "cost_code": str(g.get("cost_code") or "").strip(),
             "scope_item_ids": [str(s).strip().upper() for s in g.get("scope_item_ids") or [] if str(s).strip()],
             "scope_lines": _lines(g.get("scope_lines")), "notes": _lines(g.get("notes")),
-            "internal_notes": _lines(g.get("internal_notes")), "labor": labor, "materials": materials, "subs": subs}
+            "internal_notes": _lines(g.get("internal_notes")), "labor": labor, "materials": materials, "subs": subs,
+            "haul_away_loads": max(0, int(round(_num(g.get("haul_away_loads")) or 0)))}
+
+
+def strip_sub_name(name, sub):
+    """The work without the sub's name - line names print for the client
+    (Jason, Oct 20, 2026: sub names stay internal)."""
+    if not sub:
+        return name
+    pat = re.escape(sub)
+    out = re.sub(rf"\s*(?:-\s*{pat}\b|\(\s*{pat}\s*\)|\bby\s+{pat}\b)", "", name, flags=re.I)
+    out = re.sub(rf"^{pat}\s*-\s*", "", out, flags=re.I)
+    out = clean_text(re.sub(r"\s*-\s*$", "", out))
+    return out[:1].upper() + out[1:] if out else name
 
 
 def description(group):
@@ -337,7 +365,9 @@ def price_group(group, anchors, quantities, scope_items, page_ref):
         if unit_cost and licensed and not good:
             why = f"{licensed} work with no rate anchor behind the number"
             unit_cost = None
-        name = f"{s['name']} - {s['sub']}" if s["sub"] and s["sub"].lower() not in s["name"].lower() else s["name"]
+        name = strip_sub_name(s["name"], s["sub"])
+        if s["sub"]:
+            flags.append(f"'{name}' is for {s['sub']}.")
         if unit_cost:
             p = round(unit_cost * v2.SUB_MARKUP, 2)
             cost, price = cost + unit_cost, price + p
@@ -392,6 +422,14 @@ def price_group(group, anchors, quantities, scope_items, page_ref):
                 what = quantities.get(ref, {}).get("item") or f"scope item {ref}"
                 flags.append(f"'{m['item']}' quantity rests on {what} ({SRC_WORDS[src]}) - verify before ordering.")
 
+    if group["haul_away_loads"]:
+        n = group["haul_away_loads"]
+        cost, price = cost + n * HAUL_AWAY_COST, price + n * HAUL_AWAY_PRICE
+        items.append({"kind": "material", "args": {"name": HAUL_AWAY_NAME, "quantity": n, "unitCost": HAUL_AWAY_COST,
+                                                   "unitPrice": HAUL_AWAY_PRICE, "costCodeId": code_id,
+                                                   "costTypeId": v2.COST_TYPE_MATERIALS}})
+        flags.append(f"Haul Away: {n} load(s) at ${HAUL_AWAY_COST:,.0f} cost / ${HAUL_AWAY_PRICE:,.0f} each.")
+
     if group.get("licensed_ids") and not any(s["licensed_trade"] for s in group["subs"]):
         flags.append(f"Licensed-trade scope item(s) {', '.join(group['licensed_ids'])} sit in this group with no "
                      "licensed sub line - check none of the in-house lines is licensed work.")
@@ -402,6 +440,31 @@ def price_group(group, anchors, quantities, scope_items, page_ref):
                                             "unitPrice": 0, "description": notes_text, "showDescription": False,
                                             "costCodeId": code_id, "costTypeId": v2.COST_TYPE_OTHER}})
     return items, flags, {"cost": round(cost, 2), "price": round(price, 2), "tbd": tbd}
+
+
+def project_management(groups, page_ref):
+    """The Project Management group: PM_RATE of the other groups' price, all
+    margin ($0 cost), like OCC's past budgets. Options and $0 PRICING TBD lines
+    aren't in the base, so it is re-figured by hand once those are priced."""
+    base = round(sum(g["price"] for g in groups), 2)
+    fee = round(base * PM_RATE, 2)
+    code_id = v2.resolve_cost_code_id(PM_GROUP, context=PM_GROUP)
+    tbd = sum(g["tbd"] for g in groups)
+    flags = [f"{PM_RATE:.0%} of the budget price ${base:,.2f} (Jason, Oct 20, 2026), not counting the options"
+             + (f" or the {tbd} $0 PRICING TBD line(s) - re-figure once those are priced" if tbd else "") + ".",
+             f"Drafted by the Site Scope Tool from {page_ref}."]
+    items = [{"kind": "labor", "args": {"name": "Project management", "quantity": 1, "unitCost": 0, "unitPrice": fee,
+                                        "costCodeId": code_id, "costTypeId": v2.COST_TYPE_LABOR}},
+             {"kind": "notes", "args": {"name": v2.INTERNAL_NOTES_ITEM_NAME, "quantity": 1, "unitCost": 0,
+                                        "unitPrice": 0, "description": "\n".join(f"- {f}" for f in flags),
+                                        "showDescription": False, "costCodeId": code_id,
+                                        "costTypeId": v2.COST_TYPE_OTHER}}]
+    desc = description({"scope_lines": ["Schedule and coordinate the trades from demolition through final walkthrough",
+                                        "Order and track materials and the client's selections",
+                                        "Walk the job with the client at the start and at completion"],
+                        "notes": []})
+    return {"key": "pm", "name": PM_GROUP, "description": desc, "items": items,
+            "cost": 0.0, "price": fee, "tbd": 0}
 
 
 def make_plan(run, room_file, answer, quantities, page_title, jobtread_query, org_id, log=print):
@@ -415,7 +478,9 @@ def make_plan(run, room_file, answer, quantities, page_title, jobtread_query, or
     for g in groups + alternates:
         g["licensed_ids"] = [i for i in g["scope_item_ids"] if _licensed((scope.get(i) or {}).get("licensed_trade"))]
 
-    est = {"cost_groups": [{"material_lines": g["materials"]} for g in groups + alternates]}
+    # Allowances are a budget number for the client's pick, not a product to look up.
+    est = {"cost_groups": [{"material_lines": [m for m in g["materials"] if not m["allowance"]]}
+                           for g in groups + alternates]}
     try:
         _, stats = v2.resolve_material_lines_with_catalog(est, jobtread_query, org_id)
         log(f"Scope budget: Home Depot catalog - {stats}")
@@ -423,7 +488,8 @@ def make_plan(run, room_file, answer, quantities, page_title, jobtread_query, or
         log(f"Scope budget: catalog lookup failed, keeping the AI's material costs: {e}")
         for g in groups + alternates:
             for m in g["materials"]:
-                m["catalog_no_match"] = True
+                if not m["allowance"]:
+                    m["catalog_no_match"] = True
 
     anchors = dict(load_anchors())
     qmap = {wid: q for wid, q in quantities}
@@ -440,6 +506,8 @@ def make_plan(run, room_file, answer, quantities, page_title, jobtread_query, or
     for i, g in enumerate(groups):
         items, _, totals = price_group(g, anchors, qmap, scope_src, page_ref)
         out.append({"key": f"g{i}", "name": g["name"], "description": description(g), "items": items, **totals})
+    if out:
+        out.append(project_management(out, page_ref))
     for sid, names in doubled.items():
         warnings.append(f"Scope item {sid} is in more than one group ({', '.join(names)}) - check for double charging.")
     if missing:

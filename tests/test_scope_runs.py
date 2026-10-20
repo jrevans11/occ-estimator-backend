@@ -104,15 +104,30 @@ VIDEOS = [
 ]
 
 
+# A CompanyCam AI walkthrough summary Page (job 00870, Oct 15, 2026), trimmed.
+SUMMARY_PAGE = {"id": "sum1", "title": "Shower Remodel and Bathroom Vanity Updates",
+                "type": "Pages::WalkthroughSummary", "created_at": "2026-10-20T02:19:00Z"}
+SUMMARY_DOC = {"type": "doc", "content": [
+    {"type": "heading", "attrs": {"level": 3}, "content": [t("Bathroom and Closet Updates")]},
+    {"type": "bulletList", "content": [
+        {"type": "listItem", "content": [{"type": "paragraph", "content": [t("Replace supply lines on both sides")]}]},
+        {"type": "listItem", "content": [{"type": "paragraph", "content": [t("Add fixed shelving in the "),
+                                                                           t("closet", ITALIC)]}]}]},
+]}
+
+
 class FakeCC:
-    def __init__(self, notes=True, photos=PHOTOS, videos=VIDEOS):
-        self.notes, self.photos, self.videos = notes, photos, videos
+    def __init__(self, notes=True, photos=PHOTOS, videos=VIDEOS, summary=False):
+        self.notes, self.photos, self.videos, self.summary = notes, photos, videos, summary
         self.calls = []
 
     def __call__(self, method, path, params=None, body=None):
         self.calls.append((method, path))
         if path == f"/projects/{PROJECT_ID}/pages":
-            return env([{"id": "3006585", "title": "Site Visit Notes"}] if self.notes else [])
+            pages = [dict(SUMMARY_PAGE)] if self.summary else []
+            return env(pages + ([{"id": "3006585", "title": "Site Visit Notes"}] if self.notes else []))
+        if path == "/pages/sum1":
+            return env(dict(SUMMARY_PAGE, tiptap_content=copy.deepcopy(SUMMARY_DOC)))
         if path == "/pages/3006585":
             return env({"id": "3006585", "title": "Site Visit Notes", "tiptap_content": copy.deepcopy(NOTES_DOC)})
         if path == f"/projects/{PROJECT_ID}/photos":
@@ -323,6 +338,22 @@ class GatherTests(Base):
         with self.assertRaises(qp.QuickPassError):
             qp.gather_visit(PROJECT_ID, "2026-01-01")
 
+    def test_walkthrough_summary_is_read(self):
+        self.cc.summary = True
+        v = qp.gather_visit(PROJECT_ID)
+        self.assertEqual(len(v["notes"]), 3)                         # the notes Page is still found after it
+        self.assertEqual([c["text"] for c in v["summaries"]],
+                         ["Bathroom and Closet Updates\nReplace supply lines on both sides\n"
+                          "Add fixed shelving in the closet"])
+        content = qp.build_content(v, {"number": "00870", "name": "Test", "address": "7 Monet Dr"})
+        self.assertIn("1 CompanyCam AI walkthrough summary(ies)", content[0]["text"])
+        c1 = next(b["text"] for b in content if b["type"] == "text" and b["text"].startswith("C1"))
+        self.assertIn("Shower Remodel and Bathroom Vanity Updates", c1)
+        self.assertIn("10:19 PM", c1)
+        self.assertEqual(qp.gather_visit(PROJECT_ID, "2026-10-18")["summaries"], [])   # another day's visit
+        self.cc.notes, self.cc.photos, self.cc.videos = False, [], []
+        self.assertEqual(len(qp.gather_visit(PROJECT_ID)["summaries"]), 1)          # enough on its own
+
     def test_notes_only_visit(self):
         self.cc.photos, self.cc.videos = [], []
         v = qp.gather_visit(PROJECT_ID)
@@ -482,7 +513,8 @@ class QuickPassTests(Base):
         self.assertEqual(rf["project"]["companycam_project_id"], PROJECT_ID)
         self.assertEqual(rf["project"]["visit_date"], "2026-10-19")
         self.assertEqual([q["id"] for q in out["questions"]], ["Q1", "Q2", "Q3"])
-        self.assertEqual(out["inputs"], {"visit_date": "2026-10-19", "notes": 3, "photos": 3, "video_transcripts": 1})
+        self.assertEqual(out["inputs"], {"visit_date": "2026-10-19", "notes": 3, "photos": 3, "video_transcripts": 1,
+                                         "ai_summaries": 0})
         self.assertEqual(out["usage"]["cost_usd"], 0.285)
         self.assertEqual(out["usage"]["calls"], 1)
         self.assertTrue(any("cost=$0.2850" in line for line in logs))
