@@ -1,0 +1,36 @@
+parent,group,item,quantity,unit_cost,unit_price,cost,price,cost_type,cost_code
+Site Scope Draft - Oct 15 2026,Site Protection and Cleanup,"Protection setup, daily cleanup, debris haul and final clean labor",12,55,89,660,1068,Labor,Temporary Protection
+Site Scope Draft - Oct 15 2026,Site Protection and Cleanup,Ram Board 38 in. x 100 ft. temporary floor protection roll,1,74.98,123.72,74.98,123.72,Materials,Temporary Protection
+Site Scope Draft - Oct 15 2026,Site Protection and Cleanup,Husky 10 ft. x 25 ft. clear 6 mil plastic sheeting,2,24.98,41.22,49.96,82.44,Materials,Temporary Protection
+Site Scope Draft - Oct 15 2026,Site Protection and Cleanup,ScotchBlue 1.88 in. x 60 yd. painter's tape,2,8.98,14.82,17.96,29.64,Materials,Temporary Protection
+Site Scope Draft - Oct 15 2026,Site Protection and Cleanup,Husky 42 gal. contractor clean-up bags (32-count),1,26.98,44.52,26.98,44.52,Materials,Temporary Protection
+Site Scope Draft - Oct 15 2026,Demolition,"Demolition - shower tile, sub base, curb, door and vanity tops labor",28,55,89,1540,2492,Labor,Demolition
+Site Scope Draft - Oct 15 2026,Framing and Structural,Structural evaluation and bearing header if required (PRICING TBD),1,0,0,0,0,Subcontractor,Framing
+Site Scope Draft - Oct 15 2026,Framing and Structural,"Carpentry - wall removal, header, niche, blocking, bench base and backer board labor",25,55,89,1375,2225,Labor,Framing
+Site Scope Draft - Oct 15 2026,Framing and Structural,2 in. x 4 in. x 8 ft. 2 SPF stud,16,3.98,6.57,63.68,105.12,Materials,Framing
+Site Scope Draft - Oct 15 2026,Framing and Structural,2 in. x 6 in. x 8 ft. 2 SPF lumber,6,7.48,12.34,44.88,74.04,Materials,Framing
+Site Scope Draft - Oct 15 2026,Framing and Structural,Durock 1/2 in. x 3 ft. x 5 ft. cement board,12,14.48,23.89,173.76,286.68,Materials,Framing
+Site Scope Draft - Oct 15 2026,Framing and Structural,"Durock 1-1/4 in. cement board screws, 1 lb. box",2,10.98,18.12,21.96,36.24,Materials,Framing
+Site Scope Draft - Oct 15 2026,Framing and Structural,"GRK 3 in. R4 multi-purpose framing screws, 1 lb. box",1,15.97,26.35,15.97,26.35,Materials,Framing
+Site Scope Draft - Oct 15 2026,Plumbing,"Plumbing - linear drain, valve trim, raised head, body sprays, vanity disconnect and reconnect (PRICING TBD)",1,0,0,0,0,Subcontractor,Plumbing
+Site Scope Draft - Oct 15 2026,Electrical,"Electrical - shower light consolidation, vanity box relocation and lighted mirror install - David",1,1250,1812.5,1250,1812.5,Subcontractor,Electrical
+Site Scope Draft - Oct 15 2026,Electrical,48 in. W x 36 in. H frameless rectangular LED lighted bathroom vanity mirror,2,363.25,599.36,726.5,1198.72,Materials,Electrical
+Site Scope Draft - Oct 15 2026,Electrical,36 in. W x 30 in. H frameless rectangular LED lighted bathroom vanity mirror,1,159.99,263.98,159.99,263.98,Materials,Electrical
+Site Scope Draft - Oct 15 2026,Electrical,Halo 6 in. selectable CCT canless wet rated integrated LED recessed light,1,24.15,39.85,24.15,39.85,Materials,Electrical
+Site Scope Draft - Oct 15 2026,Tile,"Tile - waterproofing, wall and floor tile, niche, bench faces, linear drain and curb setting - Tile with Style",1,6365,9229.25,6365,9229.25,Subcontractor,Subcontractor Labor
+Site Scope Draft - Oct 15 2026,Tile,"One-piece solid quartz curb, 5'-3"" - Randall",1,350,507.5,350,507.5,Subcontractor,Subcontractor Labor
+Site Scope Draft - Oct 15 2026,Tile,24 in. x 48 in. matte porcelain floor and wall tile,178,3.29,5.43,585.62,966.54,Materials,Subcontractor Labor
+Site Scope Draft - Oct 15 2026,Tile,24 in. x 24 in. matte porcelain floor and wall tile,30,2.99,4.93,89.7,147.9,Materials,Subcontractor Labor
+Site Scope Draft - Oct 15 2026,Tile,Schluter Jolly 3/8 in. x 8 ft. 2-1/2 in. aluminum tile edging trim,3,24.98,41.22,74.94,123.66,Materials,Subcontractor Labor
+Site Scope Draft - Oct 15 2026,Shower Glass,Frameless fixed panel and hinged door,1,2200,3190,2200,3190,Subcontractor,Shower Glass
+Site Scope Draft - Oct 15 2026,Countertops,"Quartz vanity tops, backsplash and shower bench top - Randall",1,4400,6380,4400,6380,Subcontractor,Countertops
+Site Scope Draft - Oct 15 2026,Countertops,17 in. x 14 in. oval undermount vitreous china bathroom sink in white,2,64,105.6,128,211.2,Materials,Countertops
+Site Scope Draft - Oct 15 2026,Drywall and Paint,"Drywall and paint - shower ceiling, shower front wall, vanity walls and touch-ups - Shane",1,1800,2610,1800,2610,Subcontractor,Interior Paint
+Site Scope Draft - Oct 15 2026,Closet Shelving,Carpentry - closet shelf cleats and shelves labor,6,55,89,330,534,Labor,Trim & Millwork
+Site Scope Draft - Oct 15 2026,Closet Shelving,3/4 in. x 16 in. x 97 in. white melamine shelf board,2,24.98,41.22,49.96,82.44,Materials,Trim & Millwork
+Site Scope Draft - Oct 15 2026,Closet Shelving,1 in. x 2 in. x 8 ft. primed finger-joint pine board,3,4.28,7.06,12.84,21.18,Materials,Trim & Millwork
+Site Scope Draft - Oct 15 2026,Closet Shelving,"GRK 2-1/2 in. R4 multi-purpose screws, 1 lb. box",1,15.97,26.35,15.97,26.35,Materials,Trim & Millwork
+Optional Alternates,Option 1 - Cabinet Refinish,Cabinet refinishing - four cabinets - Shane,1,2800,4060,2800,4060,Subcontractor,Cabinetry
+Optional Alternates,Option 2 - Vanity Drawer Outlet,In-drawer outlet wiring - David,1,150,217.5,150,217.5,Subcontractor,Electrical
+Optional Alternates,Option 2 - Vanity Drawer Outlet,Carpentry - drawer modification and wall patch labor,2,55,89,110,178,Labor,Electrical
+Optional Alternates,Option 2 - Vanity Drawer Outlet,Docking Drawer Blade 2-outlet in-drawer power outlet,1,199,328.35,199,328.35,Materials,Electrical
