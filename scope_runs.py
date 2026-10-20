@@ -22,6 +22,11 @@ through scope_notes.handle_post, which app.py already routes every POST
     POST /scope/runs/status    {run_id} or {job}         a run's state (job = the newest on that job)
     POST /scope/runs/answers   {run_id, answers: {Q1: "..."}}   save answers (blank = suggested); starts the build
     POST /scope/runs/build     {run_id}                  finish a build that failed or stopped part way
+    POST /scope/runs/push      {run_id, push}            alerts turned on mid-run: keep the phone's subscription
+
+Start, answers and build also take `push` (the phone's PushSubscription JSON).
+When the questions are ready, or the build finishes, that phone gets an alert
+(phase 7, scope_push).
 
 Token counts and cost are logged per run and kept on the run (`usage`).
 """
@@ -33,6 +38,7 @@ import traceback
 
 import companycam_api as cc
 import scope_build
+import scope_push
 import scope_quickpass
 import scope_store
 import site_scope
@@ -116,6 +122,7 @@ def public(run, include_file=False):
         "flags": len(rf.get("flags") or []) + sum(len(r.get("flags") or []) for r in rf.get("rooms") or []),
     }
     out["build"] = scope_build.public(run)
+    out["push"] = scope_push.public(run)
     if include_file:
         out["room_file"] = rf
     return out
@@ -145,6 +152,8 @@ def _process(run_id, start_thread=None):
         _save(run)
         print(f"Scope run {run_id} (job {run['job'].get('number')}): {run['status']}"
               f"{', cost $%.4f' % run['usage']['cost_usd'] if (run.get('usage') or {}).get('cost_usd') is not None else ''}")
+        if run["status"] in ("questions", "failed"):
+            _alert(run)
     except Exception as e:
         print(f"Scope run {run_id}: could not save the result: {e}\n{traceback.format_exc()}")
         run = None
@@ -166,6 +175,7 @@ def _build(run_id, upload_kwargs=None):
             if run:
                 scope_build.run_build(run, _save, upload_kwargs=upload_kwargs,
                                       jobtread_query=_jobtread.get("query"), org_id=_jobtread.get("org_id"))
+                _alert(run)
     except Exception as e:
         print(f"Scope build {run_id} could not run: {e}\n{traceback.format_exc()}")
     finally:
@@ -187,6 +197,15 @@ def start_build(run, start_thread=None):
         raise
     print(f"Scope run {run['run_id']} (job {run['job'].get('number')}): build queued")
     (start_thread or _start_thread)(_build, run["run_id"])
+
+
+def _alert(run):
+    """Phone alert for the run's state (scope_push never raises); keep what happened."""
+    if scope_push.notify(run):
+        try:
+            _save(run)
+        except Exception as e:
+            print(f"Scope run {run.get('run_id')}: could not save the alert result: {e}")
 
 
 def _start_thread(fn, *args):
@@ -229,6 +248,7 @@ def start_run(payload, jobtread_query, org_id, start_thread=None):
             "inputs": None, "questions": [], "answers": None, "error": None, "warnings": [],
             "usage": {"model": scope_quickpass.model()},
         }
+        scope_push.attach(run, payload.get("push"))
         try:
             _save(run)
             scope_store.put(_latest_key(job["id"]), run_id)
@@ -276,6 +296,7 @@ def save_answers(payload, start_thread=None):
         answers.append({"id": q["id"], "question": q["question"], "answer": text or q.get("suggested_answer") or "",
                         "used_suggestion": not text or text == q.get("suggested_answer")})
     run.update(status="answered", answers=answers, answered_at=int(time.time()))
+    scope_push.attach(run, payload.get("push"))
     _save(run)
     used = sum(1 for a in answers if a["used_suggestion"])
     print(f"Scope run {run_id} (job {run['job'].get('number')}): {len(answers)} answers saved "
@@ -295,13 +316,28 @@ def retry_build(payload, start_thread=None):
     steps = build.get("steps") or {}
     finished = build.get("state") == "done" and all((steps.get(n) or {}).get("done") for n in scope_build.STEPS)
     if build.get("state") in ("queued", "building") or finished:
+        if scope_push.attach(run, payload.get("push")):
+            _save(run)
         return 200, public(run)
+    scope_push.attach(run, payload.get("push"))
     # A "done" build missing a step (one built before the budget existed) carries on with that step.
     with _running_lock:
         if len(_running) >= MAX_RUNNING:
             raise RunError("Two scope runs are already going on the server. Try again in a minute.", 429)
     start_build(run, start_thread)
     return 202, public(run)
+
+
+def set_push(payload):
+    """Alerts turned on while a run is going: keep the phone's subscription on it."""
+    run_id = str(payload.get("run_id") or "").strip()
+    run = load_run(run_id) if run_id else None
+    if not run:
+        raise RunError("No run with that id.", 404)
+    if not scope_push.attach(run, payload.get("push")):
+        raise RunError("push must be the phone's push subscription (endpoint and keys).")
+    _save(run)
+    return 200, public(run)
 
 
 def handle_post(path, payload, jobtread_query, org_id, start_thread=None):
@@ -317,6 +353,8 @@ def handle_post(path, payload, jobtread_query, org_id, start_thread=None):
             return save_answers(payload, start_thread)
         if path == "/scope/runs/build":
             return retry_build(payload, start_thread)
+        if path == "/scope/runs/push":
+            return set_push(payload)
         raise RunError("Not found.", 404)
     except RunError as e:
         return e.status, {"ok": False, "error": str(e)}
