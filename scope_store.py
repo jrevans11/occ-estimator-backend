@@ -46,6 +46,9 @@ def kind():
 def _command(*args):
     """Run one Redis command through the Upstash REST API. Returns `result`."""
     url, token = _config()
+    if not url.lower().startswith("https://"):
+        raise StoreError("UPSTASH_REDIS_REST_URL in Render should be the https://....upstash.io address from "
+                         "Upstash's REST API section (it looks like something else was pasted there).")
     req = urllib.request.Request(
         url, data=json.dumps([str(a) for a in args]).encode("utf-8"), method="POST",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})

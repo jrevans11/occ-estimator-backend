@@ -545,6 +545,14 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(seen["auth"], "Bearer t2")
         self.assertEqual(seen["body"][:3], ["SET", "occ-scope:k", "[1]"])
 
+    def test_upstash_url_that_is_not_a_link(self):
+        # Oct 20 live setup: the database ID got pasted as the URL -> urllib "unknown url type" 500s.
+        with mock.patch.dict(os.environ, {"UPSTASH_REDIS_REST_URL": "56c32af5205114a5c81058ae95f28575914f2708",
+                                          "UPSTASH_REDIS_REST_TOKEN": "t"}):
+            with self.assertRaises(scope_store.StoreError) as ctx:
+                scope_store.get("k")
+        self.assertIn("https://", str(ctx.exception))
+
     def test_upstash_bad_token(self):
         with mock.patch.dict(os.environ, {"UPSTASH_REDIS_REST_URL": "https://x", "UPSTASH_REDIS_REST_TOKEN": "bad"}), \
                 mock.patch.object(scope_store.urllib.request, "urlopen",
