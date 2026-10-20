@@ -50,6 +50,9 @@ PRICES = {
 
 MAX_PHOTOS = 40                # a visit is 10-20; past this is a whole-project dump
 MAX_VIDEOS = 10
+MAX_SUMMARIES = 3
+MAX_SUMMARY_CHARS = 12000
+WALKTHROUGH_SUMMARY_TYPE = "Pages::WalkthroughSummary"
 PHOTO_SIZE = "2000x2000"       # CompanyCam resizes on the fly; Opus reads up to ~1932 px
 INLINE_PHOTO_SIZE = "1600x1600"  # only if Claude can't fetch the links: sent inline, kept smaller
 INLINE_MAX_BYTES = 24 * 1024 * 1024
@@ -85,6 +88,28 @@ def _node_text(node):
     if node.get("type") == "text":
         return node.get("text") or ""
     return "".join(_node_text(c) for c in node.get("content") or [])
+
+
+def doc_text(doc):
+    """A TipTap document as plain text, one line per paragraph, heading or
+    list item."""
+    lines = []
+
+    def walk(node):
+        kids = node.get("content") or []
+        if node.get("type") in ("paragraph", "heading") or not any(isinstance(k, dict) and k.get("type") != "text"
+                                                                    for k in kids):
+            text = " ".join(_node_text(node).split())
+            if text:
+                lines.append(text)
+            return
+        for k in kids:
+            if isinstance(k, dict):
+                walk(k)
+
+    if isinstance(doc, dict):
+        walk(doc)
+    return "\n".join(lines)
 
 
 def _at(day, clock):
@@ -185,12 +210,18 @@ def gather_visit(project_id, visit_date=None):
 
     notes = []
     notes_page_id = None
+    summary_pages = []
     try:
         for pg in cc.list_project_pages(project_id):
-            if (pg.get("title") or "").strip().lower() == site_scope.SITE_VISIT_NOTES_TITLE.lower():
+            if pg.get("type") == WALKTHROUGH_SUMMARY_TYPE:
+                ts = cc.parse_timestamp(pg.get("created_at"))
+                if ts is not None:
+                    summary_pages.append({"id": str(pg.get("id")), "title": (pg.get("title") or "").strip(),
+                                          "at": _local(ts)})
+            elif notes_page_id is None and \
+                    (pg.get("title") or "").strip().lower() == site_scope.SITE_VISIT_NOTES_TITLE.lower():
                 notes_page_id = str(pg.get("id"))
                 notes = parse_notes_page(cc.get_page(notes_page_id).get("tiptap_content"))
-                break
     except cc.CompanyCamError as e:
         warnings.append(f"Could not read the Site Visit Notes Page ({e}).")
 
@@ -216,7 +247,8 @@ def gather_visit(project_id, visit_date=None):
 
     if not visit_date:
         # A note counts on the visit it's filed under, not the day it was recorded.
-        days = [n["visit_date"] for n in notes] + [x["at"].strftime("%Y-%m-%d") for x in photos + videos]
+        days = [n["visit_date"] for n in notes] + [x["at"].strftime("%Y-%m-%d")
+                                                   for x in photos + videos + summary_pages]
         if not days:
             raise QuickPassError("There are no notes, photos or videos on this job yet. Record a note "
                                  "or take photos with the CompanyCam camera, then tap Start.")
@@ -245,11 +277,23 @@ def gather_visit(project_id, visit_date=None):
         else:
             warnings.append(f"The {_clock(v['at'])} video has no transcript yet, so it was skipped.")
 
-    if not notes and not photos and not transcripts:
+    # CompanyCam's own AI summary of a walkthrough recording - real scope Jason
+    # said on site (Oct 20, 2026, job 00870: faucets, shutoffs, closet shelving).
+    summaries = []
+    for pg in sorted((x for x in summary_pages if on_day(x["at"])), key=lambda x: x["at"])[:MAX_SUMMARIES]:
+        try:
+            text = doc_text(cc.get_page(pg["id"]).get("tiptap_content"))
+        except cc.CompanyCamError as e:
+            warnings.append(f"Could not read the CompanyCam walkthrough summary \"{pg['title']}\" ({e}).")
+            continue
+        if text:
+            summaries.append({**pg, "text": text[:MAX_SUMMARY_CHARS]})
+
+    if not notes and not photos and not transcripts and not summaries:
         raise QuickPassError(f"Nothing from {site_scope._pretty_date(visit_date)} to read yet - no notes, "
                              "photos or video transcripts.")
     return {"visit_date": visit_date, "notes": notes, "photos": photos, "transcripts": transcripts,
-            "notes_page_id": notes_page_id, "warnings": warnings}
+            "summaries": summaries, "notes_page_id": notes_page_id, "warnings": warnings}
 
 
 # ── The prompt ───────────────────────────────────────────────────────────────
@@ -265,7 +309,8 @@ def _read_doc(name):
 INSTRUCTIONS = """You are the quick pass of Owners Choice Construction's Site Scope Tool. OCC is a residential repair and remodel contractor in Greenville, SC. Jason Evans (the owner) has just walked a job. He took photos with the CompanyCam camera and dictated notes into his phone. You turn that visit into one structured room file and a short round of follow-up questions he answers on his phone while he is still on site. Nothing you write goes to the client; later steps build the drawings, the scope write-up and the budget from your file and his answers.
 
 WHAT YOU GET
-- Everything from the visit in the order it happened, Greenville local time. Photos are labeled P1, P2...; dictated notes N1, N2...; video transcripts V1, V2....
+- Everything from the visit in the order it happened, Greenville local time. Photos are labeled P1, P2...; dictated notes N1, N2...; video transcripts V1, V2...; CompanyCam AI walkthrough summaries C1, C2....
+- A CompanyCam AI walkthrough summary is CompanyCam's own machine summary of a walkthrough Jason recorded. Treat its scope like a note: work it lists belongs in scope_items even if nothing else mentions it. Its numbers are weaker than Jason's - where it disagrees with his notes, videos or answers, theirs win; add a conflict.
 - Jason's habit: photograph a room or area, then dictate it. Photos taken just before (or during) a note usually show what that note describes. Use the times to tie photos to notes and to walls.
 - Notes are speech-to-text. Trade words are sometimes misheard ("Wayne's coat" is wainscot, "jam" is jamb, "p trap" is P-trap, "joist" may be plural). Read those as the trade word. NUMBERS ARE DIFFERENT: never silently change a dictated number. If a number looks misheard or impossible next to the photos (a 20 ft soffit run dictated as 12, a vanity wider than its wall), keep the dictated number, add a flag, and ask about it.
 
@@ -323,13 +368,18 @@ def build_content(visit, job):
     for i, v in enumerate(visit["transcripts"], 1):
         v["ref"] = f"V{i}"
         events.append((v["at"], 2, "video", v))
+    for i, c in enumerate(visit.get("summaries") or [], 1):
+        c["ref"] = f"C{i}"
+        events.append((c["at"], 3, "summary", c))
     events.sort(key=lambda e: (e[0], e[1]))
 
     pretty = site_scope._pretty_date(visit["visit_date"])
     later = sum(1 for n in visit["notes"] if n.get("filed_later"))
     intro = (f"Job {job.get('number')} - {job.get('name') or ''}, {job.get('address') or 'no address on file'}. "
              f"Site visit on {pretty}: {len(visit['notes'])} dictated note(s), {len(visit['photos'])} photo(s), "
-             f"{len(visit['transcripts'])} video transcript(s). Everything follows in the order it happened.")
+             f"{len(visit['transcripts'])} video transcript(s)"
+             + (f", {len(visit['summaries'])} CompanyCam AI walkthrough summary(ies)" if visit.get("summaries") else "")
+             + ". Everything follows in the order it happened.")
     if later:
         intro += (f" {later} of the notes were recorded on a later day while looking back at this visit's "
                   "photos, so they come last; tie them to photos by what they describe, not by time.")
@@ -352,6 +402,9 @@ def build_content(visit, job):
                         "about this visit's photos")
             tag = " (Jason's correction of an earlier note)" if item["corrected"] else ""
             content.append({"type": "text", "text": f"{item['ref']} - dictated note, {span}{tag}:\n{item['text']}"})
+        elif kind == "summary":
+            content.append({"type": "text", "text": f"{item['ref']} - CompanyCam AI walkthrough summary \"{item['title']}\", "
+                                                    f"written {_clock(at)}:\n{item['text']}"})
         else:
             dur = f", {int(item['duration'] // 60)}:{int(item['duration'] % 60):02d} long" if item["duration"] else ""
             content.append({"type": "text",
@@ -645,7 +698,7 @@ def run_quick_pass(job, project_id, visit_date=None, log=print):
     t0 = time.time()
     visit = gather_visit(project_id, visit_date)
     inputs = {"visit_date": visit["visit_date"], "notes": len(visit["notes"]), "photos": len(visit["photos"]),
-              "video_transcripts": len(visit["transcripts"])}
+              "video_transcripts": len(visit["transcripts"]), "ai_summaries": len(visit.get("summaries") or [])}
     log(f"Scope quick pass job {job.get('number')}: {inputs}")
 
     obj, usage_sum = ask_for_json(system_blocks(), build_content(visit, job), parse_answer,

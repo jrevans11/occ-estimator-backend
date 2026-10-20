@@ -216,7 +216,7 @@ class PricingTests(tr.Base):
         elec = self.items(plan, "g1")[0]
         self.assertEqual((elec["unitCost"], elec["unitPrice"]), (300, 435.0))
         self.assertEqual(elec["costTypeId"], v2.COST_TYPE_SUB)
-        self.assertEqual(elec["name"], "Receptacles - Redland Electric")
+        self.assertEqual(elec["name"], "Receptacles")
         lintel = self.items(plan, "g2")[0]
         self.assertEqual((lintel["unitCost"], lintel["unitPrice"]), (0, 0))
         self.assertTrue(lintel["name"].endswith("(PRICING TBD)"))
@@ -226,7 +226,7 @@ class PricingTests(tr.Base):
     def test_names_descriptions_totals_and_checks(self):
         plan = self.plan()
         names = [g["name"] for g in plan["groups"]]
-        self.assertEqual(names, ["Trim and Carpentry", "Electrical", "Structural"])
+        self.assertEqual(names, ["Trim and Carpentry", "Electrical", "Structural", "Project Management"])
         desc = plan["groups"][0]["description"]
         self.assertTrue(desc.startswith("Scope Includes:\n\n- Install a prehung door"))
         self.assertNotIn("*", desc)
@@ -234,11 +234,49 @@ class PricingTests(tr.Base):
         self.assertIn("\n\nNOTES:\n- Pricing assumes", desc)
         expected_cost = 6 * 55 + 5 * 8.98 + 120 + 300
         self.assertAlmostEqual(plan["cost"], expected_cost, places=2)
-        self.assertAlmostEqual(plan["price"], 6 * 89 + 5 * round(8.98 * 1.65, 2) + round(120 * 1.65, 2) + 435,
-                               places=2)
+        base = 6 * 89 + 5 * round(8.98 * 1.65, 2) + round(120 * 1.65, 2) + 435
+        self.assertAlmostEqual(plan["price"], base + round(base * 0.10, 2), places=2)   # + project management
         self.assertTrue(any("S1 is in more than one group" in w for w in plan["warnings"]))
         self.assertEqual(plan["alternates"][0]["name"], "Option 1 - Solid-core door")
         self.assertEqual(plan["parent_name"], "Site Scope Draft - Oct 19, 2026")
+
+    def test_sub_names_stay_off_client_lines(self):
+        self.assertEqual(bud.strip_sub_name("Quartz vanity tops and bench top - Randall", "Randall"),
+                         "Quartz vanity tops and bench top")
+        self.assertEqual(bud.strip_sub_name("Tile with Style - shower tile", "Tile with Style"), "Shower tile")
+        self.assertEqual(bud.strip_sub_name("Mirror wiring (David)", "David"), "Mirror wiring")
+        self.assertEqual(bud.strip_sub_name("Drywall by Shane", "Shane"), "Drywall")
+        self.assertEqual(bud.strip_sub_name("Davidson trim", "David"), "Davidson trim")
+        self.assertEqual(bud.strip_sub_name("Shane", "Shane"), "Shane")         # nothing left - keep it
+        notes = self.items(self.plan(), "g1")[-1]["description"]
+        self.assertIn("'Receptacles' is for Redland Electric.", notes)
+
+    def test_allowances_haul_away_and_project_management(self):
+        ans = json.loads(budget_answer())
+        ans["groups"][0]["materials"].append(
+            {"item": "Prehung door casing allowance", "qty": 1, "unit": "ea", "unit_cost": 200, "allowance": True})
+        ans["groups"][0]["haul_away_loads"] = 2
+        plan = self.plan(json.dumps(ans), jt=FakeJobTread(products={"casing": CASING}))
+        searched = [q["homeDepotProducts"]["$"]["searchQuery"] for q in self.jt.calls if "homeDepotProducts" in q]
+        self.assertFalse(any("allowance" in q.lower() for q in searched))      # allowances skip the catalog
+        trim = self.items(plan, "g0")
+        allowance = next(i for i in trim if i["name"] == "Prehung door casing allowance")
+        self.assertEqual((allowance["unitCost"], allowance["unitPrice"]), (200, 330.0))
+        haul = next(i for i in trim if i["name"] == "Haul Away")
+        self.assertEqual((haul["quantity"], haul["unitCost"], haul["unitPrice"]), (2, 228.0, 350.0))
+        self.assertEqual(haul["costTypeId"], v2.COST_TYPE_MATERIALS)
+        self.assertIn("Haul Away: 2 load(s)", trim[-1]["description"])
+        pm = plan["groups"][-1]
+        base = sum(g["price"] for g in plan["groups"][:-1])
+        self.assertEqual((pm["name"], pm["cost"], pm["price"]), ("Project Management", 0.0, round(base * 0.10, 2)))
+        fee = pm["items"][0]["args"]
+        self.assertEqual((fee["unitCost"], fee["unitPrice"], fee["costTypeId"]),
+                         (0, round(base * 0.10, 2), v2.COST_TYPE_LABOR))
+        self.assertEqual(fee["costCodeId"], v2.COST_CODE_MAP["Project Management"])
+        self.assertIn("1 $0 PRICING TBD line(s)", pm["items"][1]["args"]["description"])
+        self.assertFalse(pm["items"][1]["args"]["showDescription"])
+        self.assertTrue(pm["description"].startswith("Scope Includes:\n\n- Schedule and coordinate"))
+        self.assertNotIn("Project Management", [g["name"] for g in plan["alternates"]])
 
     def test_missing_scope_item_and_unpriced_sub(self):
         ans = json.loads(budget_answer())
@@ -292,14 +330,14 @@ class WriteTests(tr.Base):
         writes = [q for q in jt.calls if "createCostGroup" in q or "createCostItem" in q]
         self.assertTrue(all(len(q) == 1 for q in writes))           # one mutation per call
         pub = bud.public(self.run)
-        self.assertEqual((pub["groups"], pub["alternates"], pub["tbd"]), (3, 1, 1))
+        self.assertEqual((pub["groups"], pub["alternates"], pub["tbd"]), (4, 1, 1))
         self.assertEqual(pub["parent"], "Site Scope Draft - Oct 19, 2026 (2)")
         self.assertIn(tr.JOB["id"], pub["job_url"])
         stored = scope_runs.load_run("r1")["build"]["steps"]["budget"]
         self.assertEqual(stored["written"]["parent_id"], parent["id"])
 
     def test_network_failure_resumes_without_duplicates(self):
-        jt = FakeJobTread(fail_items={"Receptacles - Redland Electric": urllib.error.URLError("timed out")})
+        jt = FakeJobTread(fail_items={"Receptacles": urllib.error.URLError("timed out")})
         with self.assertRaises(bud.BudgetError) as ctx:
             self.go(jt)
         self.assertIn("tap Build", str(ctx.exception))
@@ -310,7 +348,7 @@ class WriteTests(tr.Base):
         self.assertTrue(step["done"])
         self.assertEqual(len([g for g in jt.groups if g["name"].startswith("Site Scope Draft")]), 1)
         self.assertEqual(len([g for g in jt.groups if g["name"] == "Electrical"]), 1)
-        self.assertEqual(len([i for i in jt.items if i["name"] == "Receptacles - Redland Electric"]), 1)
+        self.assertEqual(len([i for i in jt.items if i["name"] == "Receptacles"]), 1)
         self.assertGreater(len(jt.items), written_before)
         names = [i["name"] for i in jt.items]
         self.assertEqual(len(names), len(set(zip(names, [i["costGroupId"] for i in jt.items]))))
@@ -318,7 +356,7 @@ class WriteTests(tr.Base):
     def test_refused_item_is_skipped_and_fallbacks_used(self):
         bad = urllib.error.HTTPError("https://api.jobtread.com/pave", 400, "bad", {}, io.BytesIO(b"x"))
         jt = FakeJobTread(products={"casing": CASING}, fail_items={
-            "2-1/4 in. primed MDF casing, 7 ft": bad, "Receptacles - Redland Electric": bad}, fail_selection=True)
+            "2-1/4 in. primed MDF casing, 7 ft": bad, "Receptacles": bad}, fail_selection=True)
         step = self.go(jt)
         self.assertTrue(step["done"])
         casing = [i for i in jt.items if i["name"].startswith("2-1/4")]
@@ -351,7 +389,7 @@ class BuildWithBudgetTests(tb.BuildBase):
         self.assertIn("Install a new door", json.dumps(fake.bodies[1]["messages"]))
         pub = sb.public(run)
         self.assertTrue(pub["steps"]["budget"])
-        self.assertEqual(pub["budget"]["groups"], 3)
+        self.assertEqual(pub["budget"]["groups"], 4)   # 3 trade groups + Project Management
         self.assertEqual(pub["usage"]["calls"], 2)
         self.assertAlmostEqual(pub["usage"]["cost_usd"],
                                b["usage"]["cost_usd"] + b["steps"]["budget"]["usage"]["cost_usd"], places=4)

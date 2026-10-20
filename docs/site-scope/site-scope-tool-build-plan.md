@@ -319,3 +319,12 @@ Jason wants to be able to upload photos from an earlier site visit and record no
   4. No project management, disposal/dump fee or permit lines.
   5. The CompanyCam AI walkthrough summary Page isn't read by the quick pass, though it held real scope (faucets, shutoffs, closet shelving).
   6. Possible double count: in-house Durock backer board plus Tile with Style setting/waterproofing materials (flagged in the notes).
+- **Decisions (Jason, Oct 20) and fixes (backend PR "phase 8 run 1 fixes"):**
+  - **Allowances:** every fixture or finish the client picks (plumbing trim, showerheads, body sprays, faucets, light fixtures, mirrors, sinks, tile) gets an allowance material line, even when a licensed sub installs it. Lines end in "allowance", carry `"allowance": true`, skip the Home Depot catalog, and take the normal 1.65 markup.
+  - **Sub names stay internal:** `strip_sub_name()` takes the sub's name off client-visible line names ("... - Randall", "(David)", "by Shane"); the internal NOTES line says which sub each line is for.
+  - **Project Management group on every budget:** one "Project management" line at 10% of the other groups' price, $0 cost (all margin), Labor type, code 110. Options and $0 PRICING TBD lines aren't in the base, and the NOTES line says to re-figure it once those are priced (JobTread won't update it on its own).
+  - **Disposal:** Claude sets `haul_away_loads` on the demo or cleanup group; code adds "Haul Away" at $228 cost / $350 price per load (the line Jason's budgets used 17 times; not the 1.65 markup).
+  - **Cost codes:** the prompt says Subcontractor Labor / In-House Labor are not trade codes, and tile goes under Flooring.
+  - **CompanyCam AI walkthrough summary Pages** (`type: Pages::WalkthroughSummary`) from the visit day are now read by the quick pass as C1, C2... (up to 3, 12,000 characters each). Their scope counts like a note; where they disagree with notes, videos or answers, those win and a conflict is added. The scope Page header counts them.
+  - **Not changed:** the possible backer-board double count (in-house Durock plus Tile with Style setting materials) - still flagged in the notes; need to ask Tile with Style what "setting materials" covers.
+- **Next for this job:** Jason corrects the 00870 draft into the budget he'd send (plumbing bid in), then compare line by line. A re-run picks up the fixes above but writes a second "Site Scope Draft (2)" parent.

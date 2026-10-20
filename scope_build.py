@@ -311,6 +311,8 @@ def page_doc(run, room_file, page, drawings, photo_ids, photos=True, tables=True
     made = [f"{inputs.get('notes', 0)} dictated note(s)", f"{inputs.get('photos', 0)} photo(s)"]
     if inputs.get("video_transcripts"):
         made.append(f"{inputs['video_transcripts']} video transcript(s)")
+    if inputs.get("ai_summaries"):
+        made.append(f"{inputs['ai_summaries']} CompanyCam AI walkthrough summary(ies)")
     italic = [{"type": "italic"}]
     content = [_p(_t(f"Draft by the OCC Site Scope Tool from the {visit} visit ({', '.join(made)}) and "
                      f"Jason's answers to {len(answers)} question(s). A working draft for OCC and its subs - not a "
