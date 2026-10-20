@@ -15,13 +15,15 @@ only redoes what didn't work:
     page          the scope Page, "<Scope type> - Draft from <date> Site
                   Visit", with the drawings, conflicts, working quantities
                   (scope_quantities, code), answers and missing info
+    budget        the JobTread budget (phase 6, scope_budget) under one
+                  parent group "Site Scope Draft - <date>" on the job
 
 CompanyCam makes every Page shared (public link) and the API can't turn that
 off (phase 3 live test), so the run says so and Jason turns sharing off in
 CompanyCam (his call, Oct 20, 2026).
 
 The JobTread budget (phase 6) builds from the same updated room file.
-See docs/site-scope/site-scope-tool-build-plan.md (Phase 5 notes).
+See docs/site-scope/site-scope-tool-build-plan.md (Phase 5 and 6 notes).
 """
 
 import json
@@ -30,11 +32,12 @@ import time
 import traceback
 
 import companycam_api as cc
+import scope_budget
 import scope_quickpass as qp
 import scope_uploads
 import site_scope
 
-STEPS = ("write", "descriptions", "drawings", "page")
+STEPS = ("write", "descriptions", "drawings", "page", "budget")
 MAX_DESCRIPTION_CHARS = 5000      # CompanyCam's limit on a photo description
 MAX_KEY_PHOTOS = 12
 PAGE_WIDTH = 624                  # table widths in a Page sum to at most this (Letter, 1" margins)
@@ -63,7 +66,7 @@ A working draft for Jason and his subs, not a client document.
 - "client_goals": short sentences, from the file.
 - "trades": scope grouped by trade, in build order (demolition, framing/structure, plumbing, electrical, HVAC, insulation and drywall, doors/windows/trim, cabinets and countertops, tile, flooring, paint, exterior, cleanup). Group by trade, not by finding. Every scope item lands in exactly one trade. Each trade: {"trade": "Demolition and Framing", "sub": "the sub Jason addressed, or null", "lines": ["verb-first scope lines in build sequence"], "not_in_scope": ["things Jason said are out, or []"]}. A line with an (est.) or (assumed) number says so. Licensed-trade work (electrical, plumbing, HVAC, gas, structural) is described as Jason said it, never sized or engineered further; say "by a licensed sub" where that applies.
 - "alternates": optional add-ons or either/or choices Jason mentioned: [{"name", "description" (what it changes and its tradeoff)}]. [] if none.
-- "missing_info": what still has to be checked, measured or decided before bidding, one item each. Include the open flags.
+- "missing_info": what still has to be checked, measured or decided before bidding, one item each. Leave out anything the file's flags already say - code adds the flags to this list.
 - "key_photos": 4 to 10 photos that best show the work: [{"ref": "P3", "caption": "one plain sentence"}]. Only refs that are in the file's photos list.
 
 WRITING RULES
@@ -443,10 +446,11 @@ def write_page(run, room_file, page, drawings, photo_ids, log=print):
 
 # ── The whole build ──────────────────────────────────────────────────────────
 
-def run_build(run, save, log=print, upload_kwargs=None):
+def run_build(run, save, log=print, upload_kwargs=None, jobtread_query=None, org_id=None):
     """Run the steps not done yet. Updates run["build"] (and run["room_file"]
     once the answers are applied), calling save(run) after each step. Never
-    raises - a failure is recorded on the run."""
+    raises - a failure is recorded on the run. jobtread_query / org_id are
+    app.py's, for the budget."""
     b = run.setdefault("build", {})
     steps = b.setdefault("steps", {})
     b.update(state="building", error=None, started_at=int(time.time()), finished_at=None)
@@ -467,7 +471,7 @@ def run_build(run, save, log=print, upload_kwargs=None):
                 return
             try:
                 steps[name] = fn()
-            except (BuildError, cc.CompanyCamError) as e:
+            except (BuildError, cc.CompanyCamError, scope_budget.BudgetError, qp.QuickPassError, qp.ClaudeError) as e:
                 steps[name] = dict(steps.get(name) or {}, done=False, error=str(e))
                 log(f"Scope build {name} failed: {e}")
             except Exception as e:
@@ -480,6 +484,8 @@ def run_build(run, save, log=print, upload_kwargs=None):
                                                      .get("uploads"), log, **(upload_kwargs or {})))
         step("page", lambda: write_page(run, room_file, page, (steps.get("drawings") or {}).get("uploads") or [],
                                         (steps.get("descriptions") or {}).get("photo_ids") or {}, log))
+        budget = steps.setdefault("budget", {})
+        step("budget", lambda: scope_budget.run_budget(run, budget, lambda: save(run), jobtread_query, org_id, log))
         left = [n for n in STEPS if not steps.get(n, {}).get("done")]
         b["state"] = "partial" if left else "done"
         b["error"] = ("Not everything finished: " + ", ".join(left) + ". Tap Build to finish it.") if left else None
@@ -495,10 +501,23 @@ def run_build(run, save, log=print, upload_kwargs=None):
         save(run)
     except Exception as e:
         log(f"Scope build: could not save the result: {e}")
-    cost = (b.get("usage") or {}).get("cost_usd")
+    cost = total_usage(b).get("cost_usd")
     log(f"Scope build job {run['job'].get('number')}: {b['state']}"
         f"{', cost $%.4f' % cost if cost is not None else ''}, {b['seconds']}s")
     return run
+
+
+def total_usage(b):
+    """The build's Claude usage: the write step plus the budget's call."""
+    out = dict(b.get("usage") or {})
+    extra = ((b.get("steps") or {}).get("budget") or {}).get("usage") or {}
+    for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens",
+              "calls", "cost_usd"):
+        if extra.get(k) is not None:
+            out[k] = (out.get(k) or 0) + extra[k]
+    if out.get("cost_usd") is not None:
+        out["cost_usd"] = round(out["cost_usd"], 4)
+    return out
 
 
 def public(run):
@@ -509,7 +528,7 @@ def public(run):
     steps = b.get("steps") or {}
     desc, dwg, pg = steps.get("descriptions") or {}, steps.get("drawings") or {}, steps.get("page") or {}
     uploads = dwg.get("uploads") or []
-    usage = b.get("usage") or {}
+    usage = total_usage(b)
     out = {
         "state": b.get("state"), "error": b.get("error"), "seconds": b.get("seconds"),
         "started_at": b.get("started_at"), "finished_at": b.get("finished_at"),
@@ -526,6 +545,7 @@ def public(run):
                                             "cache_read_input_tokens", "cache_creation_input_tokens",
                                             "cost_usd", "calls")},
         "project_url": f"https://app.companycam.com/projects/{run.get('project_id')}",
+        "budget": scope_budget.public(run),
     }
     if pg.get("page_id") and pg.get("shared"):
         out["sharing_note"] = SHARING_NOTE

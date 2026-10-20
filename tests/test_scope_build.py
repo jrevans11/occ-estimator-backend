@@ -168,6 +168,11 @@ class BuildBase(tr.Base):
         u = mock.patch.object(sb.scope_uploads, "upload_drawings", side_effect=lambda *a, **k: self.upload(*a, **k))
         u.start()
         self.addCleanup(u.stop)
+        # The budget (phase 6) is stubbed here; tests/test_scope_budget.py runs it for real.
+        self.real_budget = mock.patch.object(sb.scope_budget, "run_budget",
+                                             side_effect=lambda run, state, *a, **k: dict(state, done=True))
+        self.real_budget.start()
+        self.addCleanup(mock.patch.stopall)
         self.logs = []
 
     def log(self, msg):
@@ -387,7 +392,8 @@ class RunBuildTests(BuildBase):
         self.assertIn("9001", ids)
         self.assertTrue(any(i.startswith("771") for i in ids))      # the drawings
         pub = sb.public(run)
-        self.assertEqual(pub["steps"], {"write": True, "descriptions": True, "drawings": True, "page": True})
+        self.assertEqual(pub["steps"], {"write": True, "descriptions": True, "drawings": True, "page": True,
+                                        "budget": True})
         self.assertEqual(pub["descriptions"]["written"], 2)
         self.assertEqual(pub["drawings"]["in_companycam"], pub["drawings"]["total"])
         self.assertIn("turn sharing off", pub["sharing_note"])
