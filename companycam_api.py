@@ -10,7 +10,8 @@ https://developers.companycam.com/openapi/public_api_v1.yaml
 Every response is a {data, errors, meta} envelope; lists page with a cursor
 (?after=meta.next_cursor); IDs are strings and timestamps ISO 8601.
 
-Phase 1 reads; phase 2 adds photo uploads (create_project_photo). Uploads go
+Phase 1 reads; phase 2 adds photo uploads (create_project_photo); phase 3
+adds Page writes (create_page, update_page) for the Site Visit Notes Page. Uploads go
 by URL here - CompanyCam downloads the image itself - so a drawing must sit
 at a public URL first (scope_uploads serves it briefly).
 
@@ -179,6 +180,23 @@ def get_video_transcript(video_id):
 
 def list_project_pages(project_id):
     return _list_all(f"/projects/{project_id}/pages", max_pages=5)
+
+
+def get_page(page_id):
+    """One Page with its TipTap document (tiptap_content: {type: "doc", content: [...]})."""
+    return _data(_get(f"/pages/{page_id}", {"include": "tiptap_content"})) or {}
+
+
+def create_page(project_id, title, doc):
+    """New Page on a project. doc is a TipTap document ({type: "doc", content: [...]}).
+    Body is unwrapped (title/tiptap_content at the top level), per the spec."""
+    return _data(_post(f"/projects/{project_id}/pages", {"title": title, "tiptap_content": doc})) or {}
+
+
+def update_page(page_id, doc):
+    """Replace a Page's whole TipTap document. There is no append call, so to
+    add to a Page: get_page, add nodes to its content, update_page."""
+    return _data(_request("PATCH", f"/pages/{page_id}", body={"tiptap_content": doc})) or {}
 
 
 def search_projects(query):

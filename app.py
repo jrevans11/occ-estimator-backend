@@ -24,6 +24,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import estimate_v2_draft as v2
 import site_scope
 import scope_uploads
+import scope_notes
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -4224,6 +4225,12 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_scope_preview()
         elif path == "/scope/drawings-test":
             self._handle_scope_drawings_test()
+        elif path == "/scope/notes/status":
+            params = urllib.parse.parse_qs(self.path.partition("?")[2])
+            self._send_scope_json(*scope_notes.handle_status_request(params, self.headers))
+        elif path == "/scope/notes-test":
+            params = urllib.parse.parse_qs(self.path.partition("?")[2])
+            self._send_scope_json(*scope_notes.handle_test_request(params, self.headers, jobtread_query, JOBTREAD_ORG))
         elif path.startswith(scope_uploads.FILES_PATH):
             self._handle_scope_file(path)
         else:
@@ -4279,6 +4286,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _send_scope_json(self, status, body):
+        payload = json.dumps(body, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def _handle_scope_file(self, path, head=False):
         """A drawing held briefly so CompanyCam can download it. See scope_uploads.py."""
         status, content_type, data = scope_uploads.handle_file_request(path)
@@ -4324,6 +4339,11 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/").lower()
 
         print(f"POST received: path={path} length={length}")
+
+        # Site Scope Tool notes answer with a real JSON status (see scope_notes.py).
+        if path.startswith("/scope/"):
+            self._send_scope_json(*scope_notes.handle_post(path, body, self.headers, jobtread_query, JOBTREAD_ORG))
+            return
 
         # Respond to Wufoo immediately — it has a short timeout
         try:
