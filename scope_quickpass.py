@@ -601,7 +601,8 @@ def ask_for_json(system, content, parse, label, log, refused, retry_hint):
     room the drawings can't read, cut off) is sent back once with the problem.
     parse(text) returns the answer object or raises ValueError. Returns
     (answer, usage) - usage sums every call. Raises QuickPassError / ClaudeError.
-    Also used by the build step (scope_build)."""
+    Also used by the build step (scope_build) and the budget (scope_budget,
+    whose answer has no room file to check)."""
     calls, total_cost, usage_sum, served = 0, 0.0, {}, None
     obj, last_problem = None, None
     for attempt in (1, 2):
@@ -619,7 +620,7 @@ def ask_for_json(system, content, parse, label, log, refused, retry_hint):
         else:
             try:
                 obj = parse(text)
-                problems = room_problems(obj["room_file"])
+                problems = room_problems(obj["room_file"]) if "room_file" in obj else []
                 if not problems:
                     break
                 last_problem = "; ".join(problems)

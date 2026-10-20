@@ -5,9 +5,10 @@ thread here (so a closed page or dropped signal doesn't stop it):
 
     reading    -> the quick pass is reading the notes, photos and transcripts
     questions  -> 3-6 cost-driver questions are waiting for answers
-    answered   -> answers saved; the full build starts on its own (phase 5,
-                  scope_build) and reports under `build`: queued -> building ->
-                  done, or partial / failed with `error` (Build finishes it)
+    answered   -> answers saved; the full build starts on its own (phases 5-6,
+                  scope_build: CompanyCam side, then the JobTread budget) and
+                  reports under `build`: queued -> building -> done, or
+                  partial / failed with `error` (Build finishes it)
     failed     -> something went wrong; `error` says what, and Start tries again
 
 A run is kept in scope_store (Upstash Redis, or memory if that isn't set up),
@@ -41,6 +42,7 @@ RESTART_GRACE_SECONDS = 90   # a "reading" run not running here after this was c
 MAX_ANSWER_CHARS = 1000
 
 _running = set()
+_jobtread = {}   # app.py's jobtread_query and org id, handed in with every request (the budget needs them)
 _build_slot = threading.Semaphore(1)   # one build at a time (drawings use ~20 MB)
 _running_lock = threading.Lock()
 _job_locks = {}
@@ -162,7 +164,8 @@ def _build(run_id, upload_kwargs=None):
         with _build_slot:
             run = scope_store.get(_run_key(run_id))
             if run:
-                scope_build.run_build(run, _save, upload_kwargs=upload_kwargs)
+                scope_build.run_build(run, _save, upload_kwargs=upload_kwargs,
+                                      jobtread_query=_jobtread.get("query"), org_id=_jobtread.get("org_id"))
     except Exception as e:
         print(f"Scope build {run_id} could not run: {e}\n{traceback.format_exc()}")
     finally:
@@ -288,8 +291,12 @@ def retry_build(payload, start_thread=None):
         raise RunError("No run with that id. Tap Start to run it again.", 404)
     if run.get("status") != "answered":
         raise RunError(f"This run has no answers to build from yet (it's {run.get('status')}).", 409)
-    if (run.get("build") or {}).get("state") in ("queued", "building", "done"):
+    build = run.get("build") or {}
+    steps = build.get("steps") or {}
+    finished = build.get("state") == "done" and all((steps.get(n) or {}).get("done") for n in scope_build.STEPS)
+    if build.get("state") in ("queued", "building") or finished:
         return 200, public(run)
+    # A "done" build missing a step (one built before the budget existed) carries on with that step.
     with _running_lock:
         if len(_running) >= MAX_RUNNING:
             raise RunError("Two scope runs are already going on the server. Try again in a minute.", 429)
@@ -299,6 +306,8 @@ def retry_build(payload, start_thread=None):
 
 def handle_post(path, payload, jobtread_query, org_id, start_thread=None):
     """Routed from scope_notes.handle_post (key already checked, body parsed)."""
+    if jobtread_query:
+        _jobtread.update(query=jobtread_query, org_id=org_id)
     try:
         if path == "/scope/runs":
             return start_run(payload, jobtread_query, org_id, start_thread)
