@@ -58,6 +58,9 @@ class FakeCompanyCamWrites:
     def __call__(self, method, path, params=None, body=None):
         if method == "POST" and path.endswith("/photos"):
             photo = body["photo"]
+            if not isinstance(photo.get("captured_at"), int):
+                raise cc.CompanyCamError(f"CompanyCam POST returned HTTP 422: invalid value for Integer(): "
+                                         f"{photo.get('captured_at')!r}", 422)
             name = photo["uri"].rsplit("/", 1)[1]
             if name in self.refuse:
                 raise cc.CompanyCamError("CompanyCam POST returned HTTP 422: uri invalid", 422)
@@ -107,9 +110,8 @@ class CompanyCamPhotoCallTests(Base):
                                             description="Plan")
         (method, path), kwargs = seen[0]
         self.assertEqual((method, path), ("POST", "/projects/117058039/photos"))
-        # The Public API takes captured_at as an ISO 8601 string, not Unix seconds.
-        self.assertEqual(kwargs["body"], {"photo": {"uri": "https://x/y.png",
-                                                    "captured_at": "2025-10-19T18:53:20Z",
+        # Integer Unix seconds: the live API 422s an ISO string here, whatever the spec says.
+        self.assertEqual(kwargs["body"], {"photo": {"uri": "https://x/y.png", "captured_at": 1760900000,
                                                     "description": "Plan"}})
         self.assertEqual(photo["id"], "1")
 
