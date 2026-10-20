@@ -74,7 +74,7 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 - Sonnet 5.5: $2 / $10 per million tokens (input/output). Opus 5.5: $4 / $20. Cache hits on both are 0.05x input price.
 - Photos: Opus 5.5 is on the high-resolution image tier - a full-size phone photo is downscaled to ~1932 px square, ~4,800 input tokens (~$0.02 each on Opus). Resizing to ~1,100 px cuts that to ~1,500 tokens at some cost to small details.
 - Two calls per visit (quick pass + build). Test (1) (9 photos + short transcript): ~$0.55-0.70 on Opus, ~$0.30-0.35 on Sonnet. A 20-photo visit ~$1.00-1.20 on Opus. Per month at 13-22 visits: ~$8-25 Opus, ~$4-12 Sonnet.
-- **Model: Opus 5.5 (decided Oct 20, Jason)** - reading photos + talk into exact wall lengths and opening positions is the hardest step, and mistakes carry into drawings and budget. Effort `high` at first; **trying `medium` from Oct 20** (see Phase 4 live test). Render env `SCOPE_MODEL` / `SCOPE_EFFORT` switch it without a code change (e.g. `claude-sonnet-5-5`).
+- **Model: Opus 5.5 (decided Oct 20, Jason)** - reading photos + talk into exact wall lengths and opening positions is the hardest step, and mistakes carry into drawings and budget. Effort **`medium` (decided Oct 20 after a side-by-side test; was `high`)** - see Phase 4 live test. Render env `SCOPE_MODEL` / `SCOPE_EFFORT` switch it without a code change (e.g. `claude-sonnet-5-5`).
 - Speech-to-text: ~$0.50-1.50/month, covered by free credits.
 - Log token count and cost per run so real numbers replace estimates.
 
@@ -125,7 +125,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | `COMPANYCAM_CREATOR_EMAIL` (optional) | Render | Phase 2 | Which CompanyCam user shows as creator on drawings/Pages; already used the same way in Vercel |
 | `DEEPGRAM_API_KEY` | Render | Phase 3 | Deepgram console -> API Keys -> new key, expiration Never. Transcription runs on Render (decided Oct 20) |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Render | Phase 4 | console.upstash.com -> Create Database (free) -> REST API section, .env tab. Holds runs (status, questions, answers, room file) for 30 days. Without them runs live in memory and a restart forgets them (the status reply says `store: memory`) |
-| `SCOPE_MODEL`, `SCOPE_EFFORT` (optional) | Render | Phase 4 | Default `claude-opus-5-5` / `medium` (trial from Oct 20; was `high`). If `SCOPE_EFFORT` is set in Render it wins over the default |
+| `SCOPE_MODEL`, `SCOPE_EFFORT` (optional) | Render | Phase 4 | Default `claude-opus-5-5` / `medium` (decided Oct 20; was `high`). If `SCOPE_EFFORT` is set in Render it wins over the default |
 | `SCOPE_BACKEND_URL` | Vercel | Phase 3 | `https://occ-estimator.onrender.com` |
 | Web push keys (VAPID) | Vercel | Phase 7 | Generated, no account. iPhone: Home Screen app + allow notifications once |
 | RingCentral SMS | - | Only if push fails | Not checked yet whether OCC's number can send |
@@ -196,7 +196,7 @@ Decided Oct 20: Opus 5.5 throughout (~$8-25/month), not Sonnet 5.5.
 - **Known UI issue (sales-lead-tool-wide, not scope-specific):** in the Home Screen app, the page's top bar (Back + title) sits under the iPhone status bar. No page in the app pads for the status bar (`env(safe-area-inset-top)`).
 
 ## Phase 4 notes (Oct 20)
-- **Decisions (Jason, Oct 20):** Opus 5.5 (effort high) for the quick pass; Upstash Redis for run state, on Render only.
+- **Decisions (Jason, Oct 20):** Opus 5.5 for the quick pass (effort high at first, `medium` after the effort trial below); Upstash Redis for run state, on Render only.
 - **Endpoints** - all `POST` with JSON and `X-Scope-Key`, through the same `/scope/*` POST route as the notes, so **app.py did not change** (`scope_notes.handle_post` hands `/scope/runs*` to `scope_runs.py`):
   - `/scope/runs` `{job, date?, restart?}` - starts a run (202) on a background thread. If one is already reading, or questions are waiting, it returns that run instead (200); `restart: true` starts over when questions are waiting. At most 2 runs at once on the server.
   - `/scope/runs/status` `{run_id}` or `{job}` (newest run on that job; `{status: "none"}` if there isn't one). `include_file: true` adds the whole room file.
@@ -233,3 +233,5 @@ Jason wants to be able to upload photos from an earlier site visit and record no
 - Worked out from the code and inputs (Render's logs weren't reachable from the session): of the $0.63, roughly $0.09 was reading (instructions ~6k tokens, 4 photos + note ~15k) and ~$0.55 was output, most of it the model thinking at effort `high` (~20k+ of ~25k output tokens; output is billed at 5x input). The same ~25k output tokens explain the 250 s. Smaller photos would save little.
 - Trial: default effort `medium` (still Opus 5.5). The questions card now also shows model, effort and tokens in/out, so each run reports its real numbers.
 - Test: "Read the visit again" on the Oct 20 00489 visit and compare the questions with the `high` run (window wall / block, 6'-0" vs 6'-8" openings, keep doors, engineer and steel lintels, framed vs block, interior vs outside wall). Keep `medium` if they're as good; otherwise set it back to `high` or try Sonnet 5.5.
+- **Result (Oct 20, ~9:25 AM, same 4-photo + 1-note visit): keep `medium`.** $0.41 and 152 s (vs $0.63 / 250 s on `high`); the card's new line read "Opus 5.5 · medium · 24.4k in / 15.0k out tokens", so `high` was about 25k out and the estimate above held. Questions were as good: it still caught 6'-0" openings vs ~6'-8" doors, the exterior block window wall with both windows out, and steel lintels with an engineer's letter (adding an "engineer site visit first" choice), and it added three useful ones `high` didn't ask (where each opening sits, relocating the surface conduit/outlets/box in the opening paths, jamb with casing vs wrapped returns). One quiet assumption: it treated the smooth drywall transom wall as framed ("three openings go through block") instead of asking, which `high` did. Watch for that kind of assumption on real jobs; if it repeats, add a prompt rule to ask framed vs block when a wall's construction isn't visible.
+- Per-visit quick pass now ~$0.40 and 2-3 minutes; 13-22 visits a month is ~$5-9 for this step.
