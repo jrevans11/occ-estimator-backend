@@ -391,7 +391,6 @@ def price_group(group, anchors, quantities, scope_items, page_ref):
             if src in ("est", "assumed"):
                 what = quantities.get(ref, {}).get("item") or f"scope item {ref}"
                 flags.append(f"'{m['item']}' quantity rests on {what} ({SRC_WORDS[src]}) - verify before ordering.")
-    flags += v2._internal_note_flags({"material_lines": group["materials"]})
 
     if group.get("licensed_ids") and not any(s["licensed_trade"] for s in group["subs"]):
         flags.append(f"Licensed-trade scope item(s) {', '.join(group['licensed_ids'])} sit in this group with no "

@@ -196,14 +196,18 @@ class PricingTests(tr.Base):
         self.assertEqual(casing["customFieldValues"]["SKU"], "111")
         door = next(i for i in trim if i["name"].startswith("28 in."))
         self.assertEqual(door["unitCost"], 120)                    # case price rejected, AI cost kept
-        self.assertFalse(door["showDescription"])
+        # No Home Depot notes next to items (Jason, Oct 20, 2026).
+        for i in trim:
+            if i["costTypeId"] == v2.COST_TYPE_MATERIALS:
+                self.assertNotIn("description", i)
         self.assertFalse(any(i["name"] == "wood filler" for i in trim))   # no cost -> dropped
         notes = trim[-1]
         self.assertEqual(notes["name"], v2.INTERNAL_NOTES_ITEM_NAME)
         self.assertEqual((notes["unitCost"], notes["unitPrice"], notes["showDescription"]), (0, 0, False))
         self.assertIn("Door size assumed", notes["description"])
         self.assertIn("Office - q5 (est. from photos)", notes["description"])
-        self.assertIn("case/multipack", notes["description"])
+        self.assertNotIn("case/multipack", notes["description"])   # catalog caveats stay out of NOTES
+        self.assertNotIn("Home Depot", notes["description"])
         self.assertIn("Office Remodel Scope - Draft", notes["description"])
         self.assertEqual(trim[0]["costCodeId"], v2.COST_CODE_MAP["Trim & Millwork"])
 

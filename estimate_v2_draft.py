@@ -1062,6 +1062,34 @@ def _inch_dimensions(text):
     return set(re.findall(r"\d+\s*/\s*\d+", (text or "").lower().replace(" ", "")))
 
 
+_SIZE_IN = re.compile(r"(?<![\d./-])(\d+-\d+/\d+|\d+/\d+|\d+(?:\.\d+)?)\s*(?:in\b|inch|\")")
+_SIZE_LUMBER = re.compile(r"\b(\d{1,2})\s*x\s*(\d{1,2})\b(?!\s*(?:in\b|inch|ft\b|\"|'))")
+
+
+def _size_value(token):
+    """'2-1/4' -> 2.25, '11/16' -> 0.6875, '36' -> 36.0"""
+    if "-" in token:
+        whole, frac = token.split("-", 1)
+        return float(whole) + _size_value(frac)
+    if "/" in token:
+        num, den = token.split("/", 1)
+        return float(num) / float(den) if float(den) else 0.0
+    return float(token)
+
+
+def _inch_sizes(text):
+    """Every inch size a name states, as numbers: '2 in. x 6 in.', '4 in.',
+    '36 in. x 80 in.', '2-1/4 in.', '1/2 in.', and nominal lumber '2x6' /
+    '2 x 4'. Feet are left out (8 ft and 96 in. would read as a conflict).
+    Oct 20, 2026 (job 00489): the fractional-only check let a 2x6 become a
+    1x4 board and 4 in. flashing tape become 9 in. tape."""
+    t = (text or "").lower()
+    sizes = {round(_size_value(m), 4) for m in _SIZE_IN.findall(t)}
+    for a, b in _SIZE_LUMBER.findall(t):
+        sizes.update({float(a), float(b)})
+    return sizes
+
+
 def _catalog_match_is_plausible(query, product_name):
     """Semantic plausibility gate applied BEFORE the price sanity check.
 
@@ -1106,6 +1134,14 @@ def _catalog_match_is_plausible(query, product_name):
         return False, (f"size mismatch — wanted {sorted(q_dims)}, "
                        f"product is {sorted(p_dims)}")
 
+    # Every inch size the line asks for must be in the product name (when the
+    # product states sizes at all).
+    q_sizes = _inch_sizes(query)
+    p_sizes = _inch_sizes(product_name)
+    if q_sizes and p_sizes and not q_sizes <= p_sizes:
+        missing = ", ".join(f"{v:g} in." for v in sorted(q_sizes - p_sizes))
+        return False, f"size mismatch - product doesn't have {missing}"
+
     return True, ""
 
 
@@ -1133,6 +1169,16 @@ CATALOG_MULTIPACK_TOKENS = (
 # whose unit cost exceeds roughly 3x the intuitive single-unit price must be
 # re-derived before emitting."
 CATALOG_PRICE_RATIO_LIMIT = 3.0
+
+# Tighter for big-ticket items (Oct 20, 2026, job 00489): a $1,071 decorative
+# glass door replaced a ~$400 6-panel estimate at 2.7x and slipped under 3x.
+# A small consumable can easily cost 2-3x a guess; a $150+ item that does is
+# almost always a different product.
+CATALOG_BIG_TICKET_COST = 150.0
+CATALOG_BIG_TICKET_RATIO_LIMIT = 2.0
+# A catalog price under a quarter of the estimate is usually a different, smaller
+# product (a $0.84 flashing shingle for a $12 kick-out flashing).
+CATALOG_PRICE_RATIO_FLOOR = 0.25
 
 
 def _looks_like_multipack(product_name):
@@ -1198,6 +1244,13 @@ def _catalog_price_passes_sanity_check(llm_cost, product,
         return False, (f"${catalog_cost:.2f} is {ratio:.1f}x the estimated "
                        f"${llm_cost:.2f} (limit {ratio_limit:.0f}x) — likely a "
                        f"case/multipack SKU ('{name[:60]}')")
+    if catalog_cost >= CATALOG_BIG_TICKET_COST and ratio > CATALOG_BIG_TICKET_RATIO_LIMIT:
+        return False, (f"${catalog_cost:.2f} is {ratio:.1f}x the estimated ${llm_cost:.2f} "
+                       f"(limit {CATALOG_BIG_TICKET_RATIO_LIMIT:.0f}x on items over "
+                       f"${CATALOG_BIG_TICKET_COST:.0f}) - likely a different product ('{name[:60]}')")
+    if ratio < CATALOG_PRICE_RATIO_FLOOR:
+        return False, (f"${catalog_cost:.2f} is under a quarter of the estimated ${llm_cost:.2f} "
+                       f"- likely a different, smaller product ('{name[:60]}')")
     if multipack and catalog_cost > llm_cost:
         return False, (f"product name looks like a multipack/case ('{name[:60]}') "
                        f"and ${catalog_cost:.2f} exceeds the estimated ${llm_cost:.2f}")
@@ -2004,19 +2057,33 @@ def _internal_note_flags(group):
     qty_note = (group.get("quantity_note") or "").strip()
     confidence = (group.get("confidence") or "").strip().lower()
     if confidence and confidence != "high":
-        flags.append(f"Confidence: {confidence} — spot-check before sending.")
+        flags.append(f"Confidence: {confidence} - spot-check before sending.")
     if qty_note:
         flags.append(f"Quantity assumption: {qty_note}")
+    return flags
+
+
+def _catalog_flags(group):
+    """Per-material Home Depot catalog caveats, for the run log only.
+
+    Jason (Oct 20, 2026): the Home Depot notes next to items and in the NOTES
+    line were "super busy and can get confusing", so they are no longer
+    written to JobTread at all - not on the cost items, not in the internal
+    NOTES item. A matched product still lands in the item's SKU / Product
+    Link / Brand / Model Number fields. This keeps the detail in the Render
+    log for debugging.
+    """
+    flags = []
     for line in group.get("material_lines", []) or []:
         item = (line.get("item") or "material").strip()
         if line.get("catalog_wrong_product"):
-            flags.append(f"Catalog match rejected as the wrong product on '{item}' — cost is AI-estimated, verify before ordering.")
+            flags.append(f"Catalog match rejected as the wrong product on '{item}' - cost is AI-estimated.")
         elif line.get("catalog_price_rejected"):
-            flags.append(f"Catalog price rejected as a likely case/multipack SKU on '{item}' — cost is AI-estimated, verify before ordering.")
+            flags.append(f"Catalog price rejected as a likely case/multipack SKU on '{item}' - cost is AI-estimated.")
         elif line.get("catalog_no_match"):
-            flags.append(f"No Home Depot catalog match on '{item}' — cost is AI-estimated, verify before ordering.")
+            flags.append(f"No Home Depot catalog match on '{item}' - cost is AI-estimated.")
         elif line.get("catalog_candidates"):
-            flags.append(f"Catalog match not confident on '{item}' — candidate products are listed on that line item.")
+            flags.append(f"Catalog match not confident on '{item}'.")
     return flags
 
 
@@ -2052,7 +2119,7 @@ def log_internal_review_notes(estimate):
 
     for group in estimate.get("cost_groups", []) or []:
         title = (group.get("title", "") or "Untitled group").strip()
-        flags = _internal_note_flags(group)
+        flags = _internal_note_flags(group) + _catalog_flags(group)
         if flags:
             lines.append(f"  - {title}: " + " ".join(flags))
 
@@ -2162,7 +2229,7 @@ def _build_material_custom_field_values(line):
     return values
 
 
-def _build_material_description(line):
+def _build_material_description(line, include_catalog_notes=False):
     """Build a short free-text description for a material cost item.
     Confirmed via the Pave API (Jul 2026) that costItem.description is a
     real, currently-unused field (queried an existing item, got back null).
@@ -2175,9 +2242,15 @@ def _build_material_description(line):
     no single clean value to put in a structured field, so the candidate
     list stays here as free text.
     """
+    # Jason (Oct 20, 2026): no Home Depot notes next to items at all - they
+    # were busy and confusing. A confident match's SKU / link / brand / model
+    # go in the item's custom fields (_build_material_custom_field_values),
+    # so the description stays empty. The text below is kept only for
+    # include_catalog_notes=True callers (none today).
+    if not include_catalog_notes:
+        return ""
     catalog_match = line.get("catalog_match")
     if catalog_match:
-        # Clean real product name — safe to show a client.
         return catalog_match.get("name") or ""
 
     candidates = line.get("catalog_candidates")
