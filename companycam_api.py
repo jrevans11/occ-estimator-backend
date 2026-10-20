@@ -189,10 +189,12 @@ def search_projects(query):
 def create_project_photo(project_id, uri, captured_at=None, description=None, tags=None):
     """Add a photo to a project from a public URL. CompanyCam downloads the
     image itself, after this returns, so the URL has to keep working for a
-    while. captured_at: Unix seconds (default now), sent as ISO 8601 as the
-    API expects. Returns the new photo."""
-    ts = captured_at if captured_at is not None else time.time()
-    photo = {"uri": uri, "captured_at": iso_timestamp(ts)}
+    while. captured_at: Unix seconds (default now). Returns the new photo.
+
+    captured_at goes as an integer: the spec lists it as a string, but the
+    live API rejects an ISO string with 422 "invalid value for Integer()"
+    (Render test, Oct 20, 2026)."""
+    photo = {"uri": uri, "captured_at": int(captured_at if captured_at is not None else time.time())}
     if description:
         photo["description"] = description
     if tags:
@@ -202,12 +204,6 @@ def create_project_photo(project_id, uri, captured_at=None, description=None, ta
 
 def get_photo(photo_id):
     return _data(_get(f"/photos/{photo_id}")) or {}
-
-
-def iso_timestamp(ts):
-    """Unix seconds -> '2026-10-19T20:35:49Z' (UTC)."""
-    from datetime import datetime, timezone
-    return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def photo_is_ready(photo):
