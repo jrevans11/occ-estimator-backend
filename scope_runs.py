@@ -1,11 +1,13 @@
-"""Site Scope Tool - scope runs (phase 4: Start, questions, answers).
+"""Site Scope Tool - scope runs (phase 4: Start, questions, answers; phase 5: the build).
 
 Jason taps Start on the scope page. The run then works on its own background
 thread here (so a closed page or dropped signal doesn't stop it):
 
     reading    -> the quick pass is reading the notes, photos and transcripts
     questions  -> 3-6 cost-driver questions are waiting for answers
-    answered   -> answers saved; the full build (phases 5-6) picks up from here
+    answered   -> answers saved; the full build starts on its own (phase 5,
+                  scope_build) and reports under `build`: queued -> building ->
+                  done, or partial / failed with `error` (Build finishes it)
     failed     -> something went wrong; `error` says what, and Start tries again
 
 A run is kept in scope_store (Upstash Redis, or memory if that isn't set up),
@@ -17,7 +19,8 @@ through scope_notes.handle_post, which app.py already routes every POST
 /scope/* to, so this phase needs no app.py change:
     POST /scope/runs           {job, date?, restart?}   start a run (or return the one going)
     POST /scope/runs/status    {run_id} or {job}         a run's state (job = the newest on that job)
-    POST /scope/runs/answers   {run_id, answers: {Q1: "..."}}   save answers (blank = suggested)
+    POST /scope/runs/answers   {run_id, answers: {Q1: "..."}}   save answers (blank = suggested); starts the build
+    POST /scope/runs/build     {run_id}                  finish a build that failed or stopped part way
 
 Token counts and cost are logged per run and kept on the run (`usage`).
 """
@@ -28,6 +31,7 @@ import time
 import traceback
 
 import companycam_api as cc
+import scope_build
 import scope_quickpass
 import scope_store
 import site_scope
@@ -37,6 +41,7 @@ RESTART_GRACE_SECONDS = 90   # a "reading" run not running here after this was c
 MAX_ANSWER_CHARS = 1000
 
 _running = set()
+_build_slot = threading.Semaphore(1)   # one build at a time (drawings use ~20 MB)
 _running_lock = threading.Lock()
 _job_locks = {}
 _job_locks_lock = threading.Lock()
@@ -81,6 +86,13 @@ def _mark_if_cut_off(run, now=None):
             run["status"] = "failed"
             run["error"] = "The server restarted while this run was reading the visit. Tap Start to run it again."
             _save(run)
+    build = run.get("build") or {}
+    if build.get("state") in ("queued", "building"):
+        with _running_lock:
+            here = run["run_id"] in _running
+        if not here and now - (run.get("updated_at") or 0) > RESTART_GRACE_SECONDS:
+            build.update(state="failed", error="The server restarted during the build. Tap Build to finish it.")
+            _save(run)
     return run
 
 
@@ -101,6 +113,7 @@ def public(run, include_file=False):
         "photos_described": len(rf.get("photos") or []),
         "flags": len(rf.get("flags") or []) + sum(len(r.get("flags") or []) for r in rf.get("rooms") or []),
     }
+    out["build"] = scope_build.public(run)
     if include_file:
         out["room_file"] = rf
     return out
@@ -108,8 +121,9 @@ def public(run, include_file=False):
 
 # ── The background work ──────────────────────────────────────────────────────
 
-def _process(run_id):
-    """Background thread: the quick pass. Never raises."""
+def _process(run_id, start_thread=None):
+    """Background thread: the quick pass, then (with no questions) the build. Never raises."""
+    run = None
     try:
         run = scope_store.get(_run_key(run_id))
         try:
@@ -131,9 +145,45 @@ def _process(run_id):
               f"{', cost $%.4f' % run['usage']['cost_usd'] if (run.get('usage') or {}).get('cost_usd') is not None else ''}")
     except Exception as e:
         print(f"Scope run {run_id}: could not save the result: {e}\n{traceback.format_exc()}")
+        run = None
     finally:
         with _running_lock:
             _running.discard(run_id)
+    if run and run.get("status") == "answered":
+        try:
+            start_build(run, start_thread)
+        except Exception as e:
+            print(f"Scope run {run_id}: could not start the build: {e}")
+
+
+def _build(run_id, upload_kwargs=None):
+    """Background thread: the full build. Never raises."""
+    try:
+        with _build_slot:
+            run = scope_store.get(_run_key(run_id))
+            if run:
+                scope_build.run_build(run, _save, upload_kwargs=upload_kwargs)
+    except Exception as e:
+        print(f"Scope build {run_id} could not run: {e}\n{traceback.format_exc()}")
+    finally:
+        with _running_lock:
+            _running.discard(run_id)
+
+
+def start_build(run, start_thread=None):
+    """Queue the build for an answered run (keeping steps already done)."""
+    build = run.setdefault("build", {})
+    build.update(state="queued", error=None)
+    with _running_lock:
+        _running.add(run["run_id"])
+    try:
+        _save(run)
+    except Exception:
+        with _running_lock:
+            _running.discard(run["run_id"])
+        raise
+    print(f"Scope run {run['run_id']} (job {run['job'].get('number')}): build queued")
+    (start_thread or _start_thread)(_build, run["run_id"])
 
 
 def _start_thread(fn, *args):
@@ -160,6 +210,8 @@ def start_run(payload, jobtread_query, org_id, start_thread=None):
             return 200, public(latest)
         if latest and latest.get("status") == "questions" and not payload.get("restart"):
             return 200, public(latest)
+        if latest and (latest.get("build") or {}).get("state") in ("queued", "building"):
+            return 200, public(latest)
         with _running_lock:
             if len(_running) >= MAX_RUNNING:
                 raise RunError("Two scope runs are already going on the server. Try again in a minute.", 429)
@@ -182,7 +234,7 @@ def start_run(payload, jobtread_query, org_id, start_thread=None):
                 _running.discard(run_id)
             raise
     print(f"Scope run {run_id} started for job {job.get('number')} (store: {scope_store.kind()})")
-    (start_thread or _start_thread)(_process, run_id)
+    (start_thread or _start_thread)(_process, run_id, start_thread)
     return 202, public(run)
 
 
@@ -202,13 +254,16 @@ def run_status(payload, jobtread_query, org_id):
     return 200, public(run, include_file=bool(payload.get("include_file")))
 
 
-def save_answers(payload):
+def save_answers(payload, start_thread=None):
     run_id = str(payload.get("run_id") or "").strip()
     run = load_run(run_id) if run_id else None
     if not run:
         raise RunError("No run with that id. Tap Start to run it again.", 404)
     if run.get("status") not in ("questions", "answered"):
         raise RunError(f"This run isn't waiting for answers (it's {run.get('status')}).", 409)
+    if run.get("build"):
+        raise RunError("The build already started from the answers sent earlier. Tap Start to read the visit "
+                       "again if something changed.", 409)
     given = payload.get("answers") or {}
     if not isinstance(given, dict):
         raise RunError("answers must be an object like {\"Q1\": \"...\"}.")
@@ -222,7 +277,24 @@ def save_answers(payload):
     used = sum(1 for a in answers if a["used_suggestion"])
     print(f"Scope run {run_id} (job {run['job'].get('number')}): {len(answers)} answers saved "
           f"({used} suggested as-is)")
+    start_build(run, start_thread)
     return 200, public(run)
+
+
+def retry_build(payload, start_thread=None):
+    run_id = str(payload.get("run_id") or "").strip()
+    run = load_run(run_id) if run_id else None
+    if not run:
+        raise RunError("No run with that id. Tap Start to run it again.", 404)
+    if run.get("status") != "answered":
+        raise RunError(f"This run has no answers to build from yet (it's {run.get('status')}).", 409)
+    if (run.get("build") or {}).get("state") in ("queued", "building", "done"):
+        return 200, public(run)
+    with _running_lock:
+        if len(_running) >= MAX_RUNNING:
+            raise RunError("Two scope runs are already going on the server. Try again in a minute.", 429)
+    start_build(run, start_thread)
+    return 202, public(run)
 
 
 def handle_post(path, payload, jobtread_query, org_id, start_thread=None):
@@ -233,7 +305,9 @@ def handle_post(path, payload, jobtread_query, org_id, start_thread=None):
         if path == "/scope/runs/status":
             return run_status(payload, jobtread_query, org_id)
         if path == "/scope/runs/answers":
-            return save_answers(payload)
+            return save_answers(payload, start_thread)
+        if path == "/scope/runs/build":
+            return retry_build(payload, start_thread)
         raise RunError("Not found.", 404)
     except RunError as e:
         return e.status, {"ok": False, "error": str(e)}

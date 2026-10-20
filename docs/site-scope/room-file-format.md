@@ -1,6 +1,6 @@
 # Room File Format (`occ-scope-rooms/1`)
 
-The structured file the Site Scope Tool works from. Phase 4's quick pass writes it from the dictated notes and photos (plus the question-round answers). `scope_drawings.py` draws it (phase 2). Phases 5-6 read it for the scope Page and the budget. Drawing rules: `floor-plan-drawing-rules.md`. Worked example: `samples/test1-office-2026-10-19.json` (the Oct 19 Test (1) office).
+The structured file the Site Scope Tool works from. Phase 4's quick pass writes it from the dictated notes and photos; phase 5's build step applies the question-round answers to it (answered numbers become `confirmed`). `scope_drawings.py` draws it (phase 2). Phases 5-6 read it for the scope Page and the budget. Drawing rules: `floor-plan-drawing-rules.md`. Worked example: `samples/test1-office-2026-10-19.json` (the Oct 19 Test (1) office).
 
 To draw a file and look at the PNGs: `python3 scope_drawings.py <file.json> <output folder>`.
 
