@@ -11,7 +11,8 @@ Every response is a {data, errors, meta} envelope; lists page with a cursor
 (?after=meta.next_cursor); IDs are strings and timestamps ISO 8601.
 
 Phase 1 reads; phase 2 adds photo uploads (create_project_photo); phase 3
-adds Page writes (create_page, update_page) for the Site Visit Notes Page. Uploads go
+adds Page writes (create_page, update_page) for the Site Visit Notes Page;
+phase 5 adds photo descriptions (set_photo_description). Uploads go
 by URL here - CompanyCam downloads the image itself - so a drawing must sit
 at a public URL first (scope_uploads serves it briefly).
 
@@ -222,6 +223,13 @@ def create_project_photo(project_id, uri, captured_at=None, description=None, ta
 
 def get_photo(photo_id):
     return _data(_get(f"/photos/{photo_id}")) or {}
+
+
+def set_photo_description(photo_id, content):
+    """Set a photo's description. A photo has ONE description and this call
+    replaces it, so to add to what's there: read it (photo_description), join,
+    then send the whole text. Returns the updated photo."""
+    return _data(_post(f"/photos/{photo_id}/descriptions", {"description": {"content": content}})) or {}
 
 
 def photo_is_ready(photo):

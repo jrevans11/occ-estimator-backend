@@ -544,6 +544,24 @@ def _clean_questions(raw):
     return out
 
 
+def check_rooms(room_file):
+    """Add the closure and wall checks to each room's flags (code's checks, not
+    the AI's). Returns [(room name, closure result)]."""
+    import scope_drawings
+    out = []
+    for room in room_file.get("rooms") or []:
+        parsed = scope_drawings.parse_room(room)
+        closure = scope_drawings.check_closure(parsed)
+        found = [] if closure["closes"] else [closure["message"]]
+        found += scope_drawings.wall_flags(parsed)
+        room.setdefault("flags", [])
+        for f in found:
+            if f not in room["flags"]:
+                room["flags"].append(f)
+        out.append((parsed["name"], closure))
+    return out
+
+
 def finish_room_file(obj, job, project_id, visit):
     """Fill in what code owns (project block, closure checks) and return
     (room_file, questions)."""
@@ -560,16 +578,7 @@ def finish_room_file(obj, job, project_id, visit):
             rf[key] = []
     questions = _clean_questions(obj["questions"])
 
-    for room in rf["rooms"]:
-        parsed = scope_drawings.parse_room(room)
-        name = parsed["name"]
-        closure = scope_drawings.check_closure(parsed)
-        found = [] if closure["closes"] else [closure["message"]]
-        found += scope_drawings.wall_flags(parsed)
-        room.setdefault("flags", [])
-        for f in found:
-            if f not in room["flags"]:
-                room["flags"].append(f)
+    for name, closure in check_rooms(rf):
         if not closure["closes"]:
             asked = any(name.lower() in (q["question"] + " ".join(q["refs"])).lower()
                         and ("close" in q["question"].lower() or "length" in q["question"].lower())
@@ -587,17 +596,12 @@ def finish_room_file(obj, job, project_id, visit):
 
 # ── The whole pass ───────────────────────────────────────────────────────────
 
-def run_quick_pass(job, project_id, visit_date=None, log=print):
-    """Gather, ask Claude, check. Returns a dict with room_file, questions,
-    inputs, usage, warnings. Raises QuickPassError / ClaudeError."""
-    t0 = time.time()
-    visit = gather_visit(project_id, visit_date)
-    inputs = {"visit_date": visit["visit_date"], "notes": len(visit["notes"]), "photos": len(visit["photos"]),
-              "video_transcripts": len(visit["transcripts"])}
-    log(f"Scope quick pass job {job.get('number')}: {inputs}")
-
-    system = system_blocks()
-    content = build_content(visit, job)
+def ask_for_json(system, content, parse, label, log, refused, retry_hint):
+    """Call Claude and parse its JSON answer; an unusable answer (bad JSON, a
+    room the drawings can't read, cut off) is sent back once with the problem.
+    parse(text) returns the answer object or raises ValueError. Returns
+    (answer, usage) - usage sums every call. Raises QuickPassError / ClaudeError.
+    Also used by the build step (scope_build)."""
     calls, total_cost, usage_sum, served = 0, 0.0, {}, None
     obj, last_problem = None, None
     for attempt in (1, 2):
@@ -607,16 +611,14 @@ def run_quick_pass(job, project_id, visit_date=None, log=print):
         total_cost += cost
         for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"):
             usage_sum[k] = usage_sum.get(k, 0) + (usage.get(k) or 0)
-        log(f"Scope quick pass job {job.get('number')} call {attempt}: model={served}, stop={stop}, "
-            f"usage={usage}, cost=${cost:.4f}")
+        log(f"{label} call {attempt}: model={served}, stop={stop}, usage={usage}, cost=${cost:.4f}")
         if stop == "refusal":
-            raise QuickPassError("Claude declined to read this visit. Try Start again; if it repeats, "
-                                 "check the photos and notes.")
+            raise QuickPassError(refused)
         if stop == "max_tokens":
             last_problem = "the answer was cut off (too long)"
         else:
             try:
-                obj = parse_answer(text)
+                obj = parse(text)
                 problems = room_problems(obj["room_file"])
                 if not problems:
                     break
@@ -625,16 +627,35 @@ def run_quick_pass(job, project_id, visit_date=None, log=print):
             except ValueError as e:
                 last_problem = str(e)
         if attempt == 1:
-            log(f"Scope quick pass job {job.get('number')}: answer not usable ({last_problem}); asking again")
+            log(f"{label}: answer not usable ({last_problem}); asking again")
             content = content + [
                 {"type": "text", "text": f"Your previous answer could not be used: {last_problem}. "
                                          "Answer again with one complete JSON object that follows the format."}]
     if obj is None:
-        raise QuickPassError(f"The AI's answer couldn't be used ({last_problem}). Tap Start to try again.")
+        raise QuickPassError(f"The AI's answer couldn't be used ({last_problem}). {retry_hint}")
+    usage_sum.update({"calls": calls, "cost_usd": round(total_cost, 4), "model": served or model(),
+                      "effort": effort()})
+    return obj, usage_sum
+
+
+def run_quick_pass(job, project_id, visit_date=None, log=print):
+    """Gather, ask Claude, check. Returns a dict with room_file, questions,
+    inputs, usage, warnings. Raises QuickPassError / ClaudeError."""
+    t0 = time.time()
+    visit = gather_visit(project_id, visit_date)
+    inputs = {"visit_date": visit["visit_date"], "notes": len(visit["notes"]), "photos": len(visit["photos"]),
+              "video_transcripts": len(visit["transcripts"])}
+    log(f"Scope quick pass job {job.get('number')}: {inputs}")
+
+    obj, usage_sum = ask_for_json(system_blocks(), build_content(visit, job), parse_answer,
+                                  f"Scope quick pass job {job.get('number')}", log,
+                                  refused="Claude declined to read this visit. Try Start again; if it repeats, "
+                                          "check the photos and notes.",
+                                  retry_hint="Tap Start to try again.")
 
     room_file, questions = finish_room_file(obj, job, project_id, visit)
-    usage_sum.update({"calls": calls, "cost_usd": round(total_cost, 4), "model": served or model(),
-                      "effort": effort(), "seconds": round(time.time() - t0, 1)})
+    total_cost = usage_sum["cost_usd"]
+    usage_sum["seconds"] = round(time.time() - t0, 1)
     log(f"Scope quick pass job {job.get('number')} done: {len(questions)} questions, "
         f"{len(room_file['rooms'])} rooms, {len(room_file['scope_items'])} scope items, "
         f"tokens in={usage_sum.get('input_tokens')} out={usage_sum.get('output_tokens')} "
