@@ -10,11 +10,16 @@ https://developers.companycam.com/openapi/public_api_v1.yaml
 Every response is a {data, errors, meta} envelope; lists page with a cursor
 (?after=meta.next_cursor); IDs are strings and timestamps ISO 8601.
 
+Phase 1 reads; phase 2 adds photo uploads (create_project_photo). Uploads go
+by URL here - CompanyCam downloads the image itself - so a drawing must sit
+at a public URL first (scope_uploads serves it briefly).
+
 Standard library only, so it adds nothing to the Render service's memory.
 """
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -179,6 +184,44 @@ def list_project_pages(project_id):
 def search_projects(query):
     """Projects matching a name or address fragment (first page only)."""
     return _data(_get("/projects/search", {"query": query, "limit": 25})) or []
+
+
+def create_project_photo(project_id, uri, captured_at=None, description=None, tags=None):
+    """Add a photo to a project from a public URL. CompanyCam downloads the
+    image itself, after this returns, so the URL has to keep working for a
+    while. captured_at: Unix seconds (default now), sent as ISO 8601 as the
+    API expects. Returns the new photo."""
+    ts = captured_at if captured_at is not None else time.time()
+    photo = {"uri": uri, "captured_at": iso_timestamp(ts)}
+    if description:
+        photo["description"] = description
+    if tags:
+        photo["tags"] = list(tags)
+    return _data(_post(f"/projects/{project_id}/photos", {"photo": photo})) or {}
+
+
+def get_photo(photo_id):
+    return _data(_get(f"/photos/{photo_id}")) or {}
+
+
+def iso_timestamp(ts):
+    """Unix seconds -> '2026-10-19T20:35:49Z' (UTC)."""
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def photo_is_ready(photo):
+    """True once CompanyCam has downloaded and processed the image, False
+    while it is still working, None if it failed."""
+    status = str((photo or {}).get("processing_status") or "").lower()
+    if status in ("processing_error", "error", "failed"):
+        return None
+    if status in ("processed", "complete", "completed", "duplicate"):
+        return True
+    if status:
+        return False
+    # No status field: treat a real original image link as done.
+    return bool(photo_uri(photo or {}, "original"))
 
 
 def parse_timestamp(value):

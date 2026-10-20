@@ -300,7 +300,8 @@ A second tool being built in this repo: Jason records notes and takes photos on 
 - `site-scope-tool-build-plan.md` — every decision made so far (capture method, trigger, push notifications, transcription service options, costs, test run results, open items). **Source of truth — update it in the same PR when a decision changes.**
 - `site-visit-writeup-process.md` — the write-up steps and the scope-Page-to-JobTread-budget mapping.
 - `floor-plan-drawing-rules.md` — drawing rules (wall thicknesses, colors, elevation labels dictated / (est.) / (assumed)).
-- `prototype_drawings.py` — geometry reference from the Oct 19 test; not for deployment.
+- `room-file-format.md` — the structured room file (`occ-scope-rooms/1`) that `scope_drawings.py` draws and phases 4-6 produce/consume. Sample in `samples/`.
+- `prototype_drawings.py` — geometry reference from the Oct 19 test; superseded by `scope_drawings.py` (Pillow); not for deployment.
 
 **Working rules for this tool:**
 - New code goes in **new files** (e.g. `site_scope.py`, `scope_drawings.py`). Change `app.py` only to register the new endpoints — keep that diff small. Never rewrite `app.py` wholesale.

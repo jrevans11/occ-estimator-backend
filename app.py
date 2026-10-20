@@ -23,6 +23,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 # add_cost_groups() and the flat-price schema in SYSTEM_PROMPT.
 import estimate_v2_draft as v2
 import site_scope
+import scope_uploads
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -4221,6 +4222,10 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_send_followups()
         elif path == "/scope/preview":
             self._handle_scope_preview()
+        elif path == "/scope/drawings-test":
+            self._handle_scope_drawings_test()
+        elif path.startswith(scope_uploads.FILES_PATH):
+            self._handle_scope_file(path)
         else:
             self.send_response(200)
             self.end_headers()
@@ -4262,6 +4267,36 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
+
+    def _handle_scope_drawings_test(self):
+        """Site Scope Tool phase 2 test: draw the Oct 19 office, upload to CompanyCam. See scope_uploads.py."""
+        params = urllib.parse.parse_qs(self.path.partition("?")[2])
+        status, body = scope_uploads.handle_drawing_test_request(params, self.headers)
+        payload = json.dumps(body, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _handle_scope_file(self, path, head=False):
+        """A drawing held briefly so CompanyCam can download it. See scope_uploads.py."""
+        status, content_type, data = scope_uploads.handle_file_request(path)
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if not head:
+            self.wfile.write(data)
+
+    def do_HEAD(self):
+        path = self.path.split("?")[0]
+        if path.startswith(scope_uploads.FILES_PATH):
+            self._handle_scope_file(path, head=True)
+        else:
+            self.send_response(200)
+            self.end_headers()
 
     def _handle_refresh(self):
         """Pull all closing repair cost groups from JobTread and update pricing."""

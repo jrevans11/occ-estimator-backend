@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **phase 1 of 8 built (Oct 19) - see Build phases.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step) and `floor-plan-drawing-rules.md` (drawing rules). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phases 1-2 of 8 built (Oct 19) - see Build phases.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -92,10 +92,10 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 
 ## To verify before/while building
 1. CompanyCam API token available to the backend (`COMPANYCAM_API_KEY` exists in Vercel; add to Render, or have Vercel make the CompanyCam calls).
-2. Photo upload (create upload -> S3 PUT -> register photo) works from Render, so drawings land in CompanyCam.
+2. Photo upload works from Render, so drawings land in CompanyCam. **Method decided Oct 19 (phase 2):** Render serves each drawing briefly at an unguessable link and sends CompanyCam that link (`POST /projects/{id}/photos` with `uri`). The Public API can also take the file itself (`multipart/form-data`) - kept as the fallback if CompanyCam can't reach the Render links. Confirm with the phase 2 test.
 3. Pick the transcription service; test accuracy on a real jobsite note (background noise, numbers, trade words).
 4. Web push from the Home Screen app on Jason's iPhone.
-5. Lightweight drawing renderer runs within the shared 512 MB on Render.
+5. Lightweight drawing renderer runs within the shared 512 MB on Render. **Measured Oct 19 (phase 2):** Pillow, about 30-40 MB on top of the server for a full set (see Phase 2 notes); the phase 2 test reports the real Render number.
 6. ~~CompanyCam REST API returns video transcripts~~ - yes, through the new Public API (see CompanyCam API finding).
 
 ## Constraints
@@ -108,7 +108,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | # | Phase | Where | How Jason tests it | Verifies (list above) |
 |---|---|---|---|---|
 | 1 | **"What did we find" check** - JobTread job -> CompanyCam project via `companycamId`; lists the visit's photos, videos (transcript ready or not), whether a Site Visit Notes Page exists, and duplicate projects at the same address. Read-only. `GET /scope/preview`. **Built Oct 19** (`site_scope.py`, `companycam_api.py`). | Render | Open a link in a browser with a job number | 1, 6 |
-| 2 | **Drawings** - `scope_drawings.py` draws floor plan + elevations from a structured room file with Pillow; a test endpoint draws the Oct 19 office data and uploads it to CompanyCam "Test (1)" | Render | Drawings appear on the Test (1) project | 2, 5 |
+| 2 | **Drawings** - `scope_drawings.py` draws floor plan + elevations from a structured room file with Pillow; a test endpoint draws the Oct 19 office data and uploads it to CompanyCam "Test (1)". `GET /scope/drawings-test`. **Built Oct 19** (`scope_drawings.py`, `scope_uploads.py`, `room-file-format.md`). | Render | Drawings appear on the Test (1) project | 2, 5 |
 | 3 | **Scope page v1** - `/intake/scope` with job picker, Record/Stop notes, server transcription with OCC trade-word hints, notes appended to the "Site Visit Notes" Page, phase 1 check shown before Start | sales-lead-tool + Render | Record two notes on the phone; read them in CompanyCam | 3 |
 | 4 | **Quick pass + questions** - Start runs in a Render background thread; Claude reads notes + photos into the structured file and writes 3-6 questions with suggested answers; run state saved so questions wait; tokens and cost logged per run | both | Tap Start on Test (1); answer the questions | - |
 | 5 | **Full build, CompanyCam side** - photo descriptions (appended, never overwrite), drawings uploaded, scope Page with sharing off | Render | Check Test (1) for descriptions, drawings, scope Page | 2 |
@@ -147,3 +147,16 @@ Decision still open before phase 4: Opus 5.5 throughout (~$8-25/month) or Sonnet
 - A token CompanyCam rejects gives a clear "make a new Personal Access Token" message in the preview.
 - **Photo timing:** job 00768's 15 photos all show 2:25 PM while its videos were 10:10-10:17 AM - photos added from the camera roll carry the upload time, not the capture time. Notes can't be matched to those by time, so site photos should be taken with the CompanyCam camera. The preview now warns when most of a visit's photos share one capture minute.
 - Verify list: item 6 (video transcripts via the API) is answered - yes, through the new API.
+- **Confirmed live on Render after PR #4 merged (Oct 19):** `/scope/preview?job=00768` read Pages with no error (`site_visit_notes_page.exists: false`), all 5 videos showed `transcript: ready`, and the batch-upload photo warning appeared.
+
+## Phase 2 notes (Oct 19)
+- **Room file format** defined in `room-file-format.md` (`occ-scope-rooms/1`). Phase 4 writes it; phases 5-6 read it. Sample: `samples/test1-office-2026-10-19.json` (Test (1) office with the Oct 19 answers: Wall 4 = 13', new opening gets a door clear of the HVAC chase, same-size window, Wall 3 surface-mount outlet).
+- **Drawings** (`scope_drawings.py`, Pillow only): one floor plan per room plus an elevation for each wall with something on it. Walls with mitred corners and thickness by construction, door swings, every opening type in the rules, cabinets with door divisions and countertop, baseboard/crown/chair rail/wainscot/tile/backsplash, dimension strings with (est.)/(assumed) tags, wall number badges, notes, a red "CHECK BEFORE PRICING" list, legend and source key. Handles L-shaped rooms (`"turn": -90`).
+- **Closure check:** if the walls don't meet within 1", the plan draws the gap in red ("DOES NOT CLOSE - off 0'-4"") and adds it to the flags. Also flags openings past the wall end and overlapping openings.
+- A dimension that is exactly one opening keeps that opening's width source, so a dictated 8'-0" window stays 8'-0" even when its offset is (est.); gaps between things take the weaker source.
+- **Memory** (macOS, Pillow 13, Oct 19 sample): Pillow adds about 11 MB once loaded; a full set (plan + 4 elevations, ~0.4 s) peaks about 30-40 MB above that. Drawing at 2x and shrinking (smoother arcs) peaked about 75-100 MB, for little visible gain on straight-line drawings, so it is off (`SS = 1` in `scope_drawings.py`). `app.py` only loads Pillow when a drawing is actually made, so the estimator's normal memory doesn't change. The test endpoint records the real Render numbers (whole-process memory before and after drawing) in its status view and the logs.
+- **Upload to CompanyCam** (`scope_uploads.py`): each PNG is held in memory for 1 hour (25 MB cap) under a random token and served at `/scope/files/<token>/<name>.png` - no key, since CompanyCam can't send one; the token is the lock. Then `POST /projects/{id}/photos` with that URL on the Public API (`captured_at` sent as an ISO 8601 string; the reply is unwrapped from its `data` envelope), and the code checks `GET /photos/{id}` until `processing_status` is `processed` (field confirmed on a real Test (1) photo). It also records whether CompanyCam actually fetched the link. Render sets `RENDER_EXTERNAL_URL` automatically; `SCOPE_PUBLIC_URL` overrides it. Uploads made on Oct 19 from a chat workspace failed only because that sandbox blocked the upload host.
+- **Test endpoint:** `GET /scope/drawings-test?key=<SCOPE_API_KEY>` answers right away and runs on a background thread (one at a time; errors are caught and recorded, like `/send-followups`). It draws the sample and uploads the 5 drawings to CompanyCam project 117058039 "Test (1)". `&status=1` shows how the last run went: each drawing's status, whether CompanyCam downloaded it, render time and memory.
+- Drawings uploaded by the test are plain project photos with a description saying they are a phase 2 test. Delete them in CompanyCam after looking if they're in the way.
+- Tests: `python3 -m unittest discover tests` - drawing tests skip without Pillow; the upload tests run a full round trip on a local server with a fake CompanyCam that downloads each drawing.
+- **Moved to the Public API (Oct 19, after PR #4):** the upload was first written against the legacy API. It now sends `captured_at` as ISO 8601 and reads the photo out of the `data` envelope. Without that, every upload would have looked failed, because the photo ID came back empty. The fake CompanyCam in the tests now answers in the same envelope.
