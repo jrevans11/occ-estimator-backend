@@ -15,13 +15,16 @@ only redoes what didn't work:
     page          the scope Page, "<Scope type> - Draft from <date> Site
                   Visit", with the drawings, conflicts, working quantities
                   (scope_quantities, code), answers and missing info
+    budget        the JobTread budget (phase 6, scope_budget): one Claude call
+                  groups and sizes the scope; code does the quantities, rate
+                  anchors, markups, catalog check and the writes
 
 CompanyCam makes every Page shared (public link) and the API can't turn that
 off (phase 3 live test), so the run says so and Jason turns sharing off in
 CompanyCam (his call, Oct 20, 2026).
 
-The JobTread budget (phase 6) builds from the same updated room file.
-See docs/site-scope/site-scope-tool-build-plan.md (Phase 5 notes).
+The budget builds from the same updated room file and Page content.
+See docs/site-scope/site-scope-tool-build-plan.md (Phase 5 and 6 notes).
 """
 
 import json
@@ -30,11 +33,12 @@ import time
 import traceback
 
 import companycam_api as cc
+import scope_budget
 import scope_quickpass as qp
 import scope_uploads
 import site_scope
 
-STEPS = ("write", "descriptions", "drawings", "page")
+STEPS = ("write", "descriptions", "drawings", "page", "budget")
 MAX_DESCRIPTION_CHARS = 5000      # CompanyCam's limit on a photo description
 MAX_KEY_PHOTOS = 12
 PAGE_WIDTH = 624                  # table widths in a Page sum to at most this (Letter, 1" margins)
@@ -63,7 +67,7 @@ A working draft for Jason and his subs, not a client document.
 - "client_goals": short sentences, from the file.
 - "trades": scope grouped by trade, in build order (demolition, framing/structure, plumbing, electrical, HVAC, insulation and drywall, doors/windows/trim, cabinets and countertops, tile, flooring, paint, exterior, cleanup). Group by trade, not by finding. Every scope item lands in exactly one trade. Each trade: {"trade": "Demolition and Framing", "sub": "the sub Jason addressed, or null", "lines": ["verb-first scope lines in build sequence"], "not_in_scope": ["things Jason said are out, or []"]}. A line with an (est.) or (assumed) number says so. Licensed-trade work (electrical, plumbing, HVAC, gas, structural) is described as Jason said it, never sized or engineered further; say "by a licensed sub" where that applies.
 - "alternates": optional add-ons or either/or choices Jason mentioned: [{"name", "description" (what it changes and its tradeoff)}]. [] if none.
-- "missing_info": what still has to be checked, measured or decided before bidding, one item each. Include the open flags.
+- "missing_info": what still has to be checked, measured or decided before bidding, one item each. Leave out anything already in the room file's flags (the file's or a room's) - code adds those to the same list, so repeating one in other words shows it twice.
 - "key_photos": 4 to 10 photos that best show the work: [{"ref": "P3", "caption": "one plain sentence"}]. Only refs that are in the file's photos list.
 
 WRITING RULES
@@ -443,10 +447,11 @@ def write_page(run, room_file, page, drawings, photo_ids, log=print):
 
 # ── The whole build ──────────────────────────────────────────────────────────
 
-def run_build(run, save, log=print, upload_kwargs=None):
+def run_build(run, save, log=print, upload_kwargs=None, jobtread=None):
     """Run the steps not done yet. Updates run["build"] (and run["room_file"]
     once the answers are applied), calling save(run) after each step. Never
-    raises - a failure is recorded on the run."""
+    raises - a failure is recorded on the run. jobtread: (jobtread_query,
+    org_id) for the budget step."""
     b = run.setdefault("build", {})
     steps = b.setdefault("steps", {})
     b.update(state="building", error=None, started_at=int(time.time()), finished_at=None)
@@ -467,7 +472,7 @@ def run_build(run, save, log=print, upload_kwargs=None):
                 return
             try:
                 steps[name] = fn()
-            except (BuildError, cc.CompanyCamError) as e:
+            except (BuildError, scope_budget.BudgetError, cc.CompanyCamError) as e:
                 steps[name] = dict(steps.get(name) or {}, done=False, error=str(e))
                 log(f"Scope build {name} failed: {e}")
             except Exception as e:
@@ -480,6 +485,9 @@ def run_build(run, save, log=print, upload_kwargs=None):
                                                      .get("uploads"), log, **(upload_kwargs or {})))
         step("page", lambda: write_page(run, room_file, page, (steps.get("drawings") or {}).get("uploads") or [],
                                         (steps.get("descriptions") or {}).get("photo_ids") or {}, log))
+        title = (steps.get("page") or {}).get("title") or page_title(page, run.get("visit_date"))
+        step("budget", lambda: scope_budget.run_budget(run, steps.setdefault("budget", {}), title,
+                                                       lambda: save(run), jobtread, log))
         left = [n for n in STEPS if not steps.get(n, {}).get("done")]
         b["state"] = "partial" if left else "done"
         b["error"] = ("Not everything finished: " + ", ".join(left) + ". Tap Build to finish it.") if left else None
@@ -522,6 +530,7 @@ def public(run):
                      "note": dwg.get("note")} if dwg else None,
         "page": {"id": pg.get("page_id"), "title": pg.get("title"), "shared": pg.get("shared")}
         if pg.get("page_id") else None,
+        "budget": scope_budget.public(steps.get("budget")),
         "usage": {k: usage.get(k) for k in ("model", "effort", "input_tokens", "output_tokens",
                                             "cache_read_input_tokens", "cache_creation_input_tokens",
                                             "cost_usd", "calls")},

@@ -42,6 +42,7 @@ Jason says something like "write up the site visit for [address / job #]." In th
 | "Not in scope" items from photo descriptions and notes | Exclusions in that group's client-facing NOTES |
 | Measurement conflicts, (est.) and (assumed) quantities, missing info | The group's internal NOTES item ($0, "NOTES (internal - not shown on client documents)", showDescription false) so Jason sees them on review |
 | Floor plan, elevations, scope Page | Referenced in the internal NOTES item with the CompanyCam Page title, so the budget traces back to its source |
+| Budget groups already on the job | Left alone; the tool's groups go inside one "Site Scope Draft - <date> Visit" parent group (built tool, phase 6) |
 
 ## Quantities from the drawings
 The drawings exist partly to produce budget quantities. Each quantity keeps its weakest source label - if any input is (est.) or (assumed), the quantity is too.
