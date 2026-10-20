@@ -13,10 +13,16 @@ closed page after Stop still gets the note saved. The page polls
 GET /scope/notes/status for the text; if Jason fixes a misheard number, POST
 /scope/notes/fix swaps the text on the Page.
 
+A note can be filed under an earlier visit (Jason uploads photos from an
+earlier visit and dictates about them later): the italic line then says
+"Filed under the Oct 19, 2026 visit." and the quick pass reads it with that
+visit instead of the day it was recorded.
+
 Endpoints (registered in app.py; all need X-Scope-Key):
-    POST /scope/notes          {note_id, job, audio_url | text, started_at, saved_at}
+    POST /scope/notes          {note_id, job, audio_url | text, started_at, saved_at, visit_date?}
     GET  /scope/notes/status?id=<note_id>
     POST /scope/notes/fix      {job, heading, old_text, new_text}
+    POST /scope/notes/visit    {job, heading, text, visit_date}   file a saved note under another visit
     POST /scope/runs...        phase 4 runs - handed to scope_runs.py
     GET  /scope/notes-test?key=..&job=..&text=..   typed test note, from a browser
 
@@ -30,9 +36,11 @@ import re
 import threading
 import time
 import traceback
+from datetime import datetime
 from urllib.parse import urlparse
 
 import companycam_api as cc
+import scope_quickpass
 import scope_runs
 import scope_transcribe
 import site_scope
@@ -47,6 +55,7 @@ MAX_KEPT = 500
 PAGE_INTRO = ("Word-for-word notes dictated on site visits, added by the OCC scope page. "
               "Each note is under the time it was started; the newest is at the bottom.")
 META_PREFIXES = ("Recorded ", "Typed ")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _notes = {}
 _notes_lock = threading.Lock()
@@ -72,6 +81,11 @@ def note_heading(started_ts):
     return f"{t.strftime('%b')} {t.day}, {t.year} - {_clock(started_ts)}"
 
 
+def visit_sentence(visit_date):
+    """"Filed under the Oct 19, 2026 visit." - read back by scope_quickpass.VISIT_RE."""
+    return f"Filed under the {site_scope._pretty_date(visit_date)} visit."
+
+
 def _duration(seconds):
     s = int(round(seconds))
     return f"{s // 60}:{s % 60:02d}"
@@ -94,20 +108,23 @@ def text_paragraphs(text):
     return [_paragraph(_text(" ".join(b.split()))) for b in blocks]
 
 
-def note_nodes(heading, text, started_ts, saved_ts, duration=None, audio_url=None, link_audio=True):
-    """The TipTap nodes for one note: heading, an italic "when" line, the text."""
+def note_nodes(heading, text, started_ts, saved_ts, duration=None, audio_url=None, link_audio=True,
+               visit_date=None):
+    """The TipTap nodes for one note: heading, an italic "when" line, the text.
+    visit_date: the earlier visit this note is filed under, or None."""
     italic = [{"type": "italic"}]
+    filed = f"{visit_sentence(visit_date)} " if visit_date else ""
     if audio_url:
         span = f"Recorded {_clock(started_ts, True)} to {_clock(saved_ts, True)}"
         if duration:
             span += f" ({_duration(duration)} of audio)"
-        meta = [_text(span + ". ", italic)]
+        meta = [_text(span + ". " + filed, italic)]
         if link_audio:
             meta.append(_text("Play the recording", italic + [{"type": "link", "attrs": {"href": audio_url}}]))
         else:
             meta.append(_text(f"Recording: {audio_url}", italic))
     else:
-        meta = [_text(f"Typed note, saved {_clock(saved_ts, True)}.", italic)]
+        meta = [_text(f"Typed note, saved {_clock(saved_ts, True)}. {filed}".rstrip(), italic)]
     return ([{"type": "heading", "attrs": {"level": 2}, "content": [_text(heading)]}, _paragraph(*meta)]
             + text_paragraphs(text))
 
@@ -152,25 +169,67 @@ def _write(project_id, add_nodes):
     return str(created.get("id") or "")
 
 
-def append_note(project_id, heading, text, started_ts, saved_ts, duration=None, audio_url=None):
+def append_note(project_id, heading, text, started_ts, saved_ts, duration=None, audio_url=None,
+                visit_date=None):
     """Add one note to the project's Site Visit Notes Page. If CompanyCam
     refuses the audio link, the link goes in as plain text instead."""
     with _project_lock(project_id):
         try:
-            return _write(project_id, note_nodes(heading, text, started_ts, saved_ts, duration, audio_url))
+            return _write(project_id, note_nodes(heading, text, started_ts, saved_ts, duration, audio_url,
+                                                 visit_date=visit_date))
         except cc.CompanyCamError as e:
             if not audio_url or e.status not in (400, 422):
                 raise
             print(f"Site Visit Notes: CompanyCam refused the audio link ({e}); saving it as plain text")
             return _write(project_id, note_nodes(heading, text, started_ts, saved_ts, duration, audio_url,
-                                                 link_audio=False))
+                                                 link_audio=False, visit_date=visit_date))
+
+
+def _notes_under(content, heading):
+    """Each note under `heading` on the Page, newest first, as
+    (heading index, meta line index or None, body start, end)."""
+    starts = [i for i, n in enumerate(content)
+              if n.get("type") == "heading" and _norm(node_text(n)) == _norm(heading)]
+    for h in reversed(starts):
+        end = next((i for i in range(h + 1, len(content)) if content[i].get("type") == "heading"), len(content))
+        meta = h + 1 if h + 1 < end and node_text(content[h + 1]).startswith(META_PREFIXES) else None
+        yield h, meta, (meta + 1 if meta is not None else h + 1), end
+
+
+def _body_matches(content, body_start, end, text):
+    return _norm(" ".join(node_text(n) for n in content[body_start:end])) == _norm(text)
+
+
+def _filed_visit(meta_node):
+    """The visit a note's italic line files it under, or None."""
+    m = scope_quickpass.VISIT_RE.search(node_text(meta_node)) if meta_node else None
+    return scope_quickpass.visit_iso(m) if m else None
+
+
+def _refile_meta(meta_node, visit_date):
+    """The italic line with its "Filed under ..." sentence swapped for
+    visit_date's (or dropped when visit_date is None). Everything else on
+    the line, like the recording link, is kept."""
+    meta = json.loads(json.dumps(meta_node))
+    parts = [c for c in meta.get("content") or [] if c.get("type") == "text"]
+    for c in parts:
+        old = c.get("text") or ""
+        if scope_quickpass.VISIT_RE.search(old):
+            new = re.sub(r"\s*" + scope_quickpass.VISIT_RE.pattern, "", old).rstrip()
+            c["text"] = new + (" " if new and old.endswith(" ") else "")
+    if visit_date and parts:
+        first = next((c for c in parts if c["text"]), parts[0])
+        trailing = first["text"].endswith(" ")
+        first["text"] = (first["text"].rstrip() + " " + visit_sentence(visit_date)).lstrip() + (" " if trailing else "")
+    meta["content"] = [c for c in meta.get("content") or [] if c.get("type") != "text" or c.get("text")]
+    return meta
 
 
 def replace_note_text(project_id, heading, old_text, new_text, now=None):
     """Swap a note's text on the Page. Finds the newest note under `heading`
     whose text still matches old_text. If someone has since edited it in
-    CompanyCam, the fix is added as a new note instead, so nothing is lost.
-    Returns "replaced" or "added"."""
+    CompanyCam, the fix is added as a new note instead (filed under the same
+    visit), so nothing is lost. Returns "replaced" or "added"."""
     now = time.time() if now is None else now
     with _project_lock(project_id):
         page = find_notes_page(project_id)
@@ -178,21 +237,60 @@ def replace_note_text(project_id, heading, old_text, new_text, now=None):
             raise NoteError("This project has no Site Visit Notes Page yet.", 404)
         doc = cc.get_page(page["id"]).get("tiptap_content") or {}
         content = list(doc.get("content") or [])
-        starts = [i for i, n in enumerate(content)
-                  if n.get("type") == "heading" and _norm(node_text(n)) == _norm(heading)]
-        for h in reversed(starts):
-            end = next((i for i in range(h + 1, len(content)) if content[i].get("type") == "heading"), len(content))
-            body_start = h + 1
-            if body_start < end and node_text(content[body_start]).startswith(META_PREFIXES):
-                body_start += 1
-            body = content[body_start:end]
-            if _norm(" ".join(node_text(n) for n in body)) == _norm(old_text):
+        visit_date = None
+        for _, meta, body_start, end in _notes_under(content, heading):
+            if visit_date is None and meta is not None:
+                visit_date = _filed_visit(content[meta])
+            if _body_matches(content, body_start, end, old_text):
                 doc["content"] = content[:body_start] + text_paragraphs(new_text) + content[end:]
                 cc.update_page(page["id"], doc)
                 return "replaced"
-        doc["content"] = content + note_nodes(f"{heading} (corrected)", new_text, now, now)
+        doc["content"] = content + note_nodes(f"{heading} (corrected)", new_text, now, now, visit_date=visit_date)
         cc.update_page(page["id"], doc)
         return "added"
+
+
+def recorded_day(heading):
+    """"Oct 20, 2026 - 9:02 AM" -> "2026-10-20" (None if it isn't a note heading)."""
+    m = re.match(r"^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) - ", _norm(heading))
+    if not m:
+        return None
+    return datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}", "%b %d %Y").strftime("%Y-%m-%d")
+
+
+def _check_visit_date(visit_date, recorded):
+    """A note can be filed under its recording day or an earlier visit.
+    Returns the date to write on the Page (None = the recording day)."""
+    if not visit_date:
+        return None
+    if not DATE_RE.match(visit_date):
+        raise NoteError("visit_date must look like 2026-10-19.")
+    if recorded and visit_date > recorded:
+        raise NoteError("A note can't be filed under a visit after the day it was recorded.")
+    return None if visit_date == recorded else visit_date
+
+
+def set_note_visit(project_id, heading, text, visit_date):
+    """File a saved note under another visit (or back under the day it was
+    recorded) by rewriting its italic line. Finds the newest note under
+    `heading` whose text matches. Returns the visit date it's now under."""
+    recorded = recorded_day(heading)
+    filed = _check_visit_date(visit_date, recorded)
+    with _project_lock(project_id):
+        page = find_notes_page(project_id)
+        if not page:
+            raise NoteError("This project has no Site Visit Notes Page yet.", 404)
+        doc = cc.get_page(page["id"]).get("tiptap_content") or {}
+        content = list(doc.get("content") or [])
+        for _, meta, body_start, end in _notes_under(content, heading):
+            if meta is None or not _body_matches(content, body_start, end, text):
+                continue
+            content[meta] = _refile_meta(content[meta], filed)
+            doc["content"] = content
+            cc.update_page(page["id"], doc)
+            return filed or recorded
+        raise NoteError("Couldn't find that note on the Site Visit Notes Page as it was saved (it may have been "
+                        "edited in CompanyCam). Change its \"Filed under\" line there instead.", 404)
 
 
 # ── Note status (in memory) ──────────────────────────────────────────────────
@@ -207,7 +305,7 @@ def _forget_old(now):
 def _public(record):
     return {"ok": True, **{k: record.get(k) for k in (
         "note_id", "status", "text", "heading", "error", "job_number", "project_id", "page_id",
-        "duration_seconds", "page_result")}}
+        "duration_seconds", "page_result", "visit_date")}}
 
 
 def _update(note_id, **fields):
@@ -237,7 +335,7 @@ def _process(note_id):
                 return
             _update(note_id, status="saving", text=text, duration_seconds=duration)
         page_id = append_note(r["project_id"], r["heading"], text, r["started_ts"], r["saved_ts"],
-                              duration, r["audio_url"])
+                              duration, r["audio_url"], r["filed_under"])
         _update(note_id, status="saved", page_id=page_id)
         print(f"Site Visit Notes {note_id}: saved to page {page_id} on project {r['project_id']} "
               f"(job {r['job_number']}, {len(text)} chars)")
@@ -293,12 +391,14 @@ def submit_note(payload, jobtread_query, org_id, start_thread=None, now=None):
     job, project_id = _project_for_job(payload.get("job"), jobtread_query, org_id)
     saved_ts = _timestamp(payload.get("saved_at"), int(now))
     started_ts = _timestamp(payload.get("started_at"), saved_ts)
+    recorded = site_scope.to_local(started_ts).strftime("%Y-%m-%d")
+    filed_under = _check_visit_date(str(payload.get("visit_date") or "").strip(), recorded)
     record = {
         "note_id": note_id, "created": now, "status": "transcribing" if audio_url else "saving",
         "audio_url": audio_url, "text": text, "error": None,
         "job_number": job.get("number"), "project_id": project_id, "page_id": None,
         "started_ts": started_ts, "saved_ts": saved_ts, "heading": note_heading(started_ts),
-        "duration_seconds": None,
+        "duration_seconds": None, "filed_under": filed_under, "visit_date": filed_under or recorded,
     }
     with _notes_lock:
         if note_id in _notes:     # a retry raced this one
@@ -308,6 +408,19 @@ def submit_note(payload, jobtread_query, org_id, start_thread=None, now=None):
         reply = _public(record)   # before the thread starts changing it
     (start_thread or _start_thread)(_process, note_id)
     return 202, reply
+
+
+def refile_note(payload, jobtread_query, org_id):
+    heading = str(payload.get("heading") or "").strip()
+    visit_date = str(payload.get("visit_date") or "").strip()
+    if not heading or not visit_date:
+        raise NoteError("Send heading, text and visit_date.")
+    _, project_id = _project_for_job(payload.get("job"), jobtread_query, org_id)
+    now_under = set_note_visit(project_id, heading, payload.get("text") or "", visit_date)
+    note_id = str(payload.get("note_id") or "")
+    if note_id:
+        _update(note_id, visit_date=now_under)
+    return {"ok": True, "visit_date": now_under}
 
 
 def fix_note(payload, jobtread_query, org_id):
@@ -353,6 +466,8 @@ def handle_post(path, body, headers, jobtread_query, org_id, start_thread=None):
             return submit_note(payload, jobtread_query, org_id, start_thread)
         if path == "/scope/notes/fix":
             return 200, fix_note(payload, jobtread_query, org_id)
+        if path == "/scope/notes/visit":
+            return 200, refile_note(payload, jobtread_query, org_id)
         if path.startswith("/scope/runs"):
             # Phase 4 runs (scope_runs.py) share this route so app.py needs no change.
             return scope_runs.handle_post(path, payload, jobtread_query, org_id, start_thread)

@@ -3,9 +3,10 @@
 Phase 1 (this file today): the "what did we find" check. Given a JobTread
 job, find its CompanyCam project through job.companycamId and report what the
 site visit captured - photos, videos (and whether their transcripts are
-ready), and whether the project already has a "Site Visit Notes" Page. This
-is what the scope page shows before Jason taps Start, and it proves the
-backend can reach CompanyCam.
+ready), the dictated notes filed under the visit, and whether the project
+already has a "Site Visit Notes" Page. It also lists every visit day on the
+project (the scope page's "Which visit?" picker). This is what the scope page
+shows before Jason taps Start.
 
 Read-only: nothing here writes to CompanyCam or JobTread.
 
@@ -15,6 +16,7 @@ See docs/site-scope/site-scope-tool-build-plan.md for the full plan.
 import hmac
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import companycam_api as cc
@@ -26,6 +28,11 @@ MIN_VIDEO_SECONDS = 5
 MAX_TRANSCRIPT_CHECKS = 10
 # This many photos sharing one capture minute = a camera-roll batch upload.
 BATCH_UPLOAD_MIN_PHOTOS = 5
+# The tool's own drawings say this in their description; they aren't visit photos.
+DRAWING_MARK = "Site Scope Tool"
+# Days offered in the "Which visit?" picker (newest first).
+MAX_VISIT_DAYS = 20
+NOTE_SNIPPET_CHARS = 140
 
 
 class PreviewError(Exception):
@@ -66,6 +73,15 @@ def _fmt_local(ts):
 def _pretty_date(iso_date):
     d = datetime.strptime(iso_date, "%Y-%m-%d")
     return f"{d.strftime('%b')} {d.day}, {d.year}"
+
+
+def today_local(now=None):
+    """Today's date in Greenville, "YYYY-MM-DD"."""
+    return to_local(int(time.time() if now is None else now)).strftime("%Y-%m-%d")
+
+
+def _day(ts):
+    return to_local(ts).strftime("%Y-%m-%d") if ts is not None else None
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -123,11 +139,21 @@ def _video_duration(video):
     return None
 
 
-def _pick_visit_date(date_param, photos, videos):
-    """Which day counts as "this visit".
+def is_tool_drawing(photo):
+    return DRAWING_MARK.lower() in _photo_description(photo).lower()
 
-    Default: the day of the newest photo or video, so a preview run the day
-    after a visit still finds it. "all" = everything on the project.
+
+def _counts_as_visit_video(video):
+    duration = _video_duration(video)
+    return duration is None or duration >= MIN_VIDEO_SECONDS
+
+
+def _pick_visit_date(date_param, days):
+    """Which day counts as "this visit". days: the visit days on the project.
+
+    Default: the newest day with a photo, video or note (a note counts on the
+    visit it's filed under), so a check the day after a visit still finds it -
+    the same rule Start uses. "all" = everything on the project.
     """
     date_param = (date_param or "").strip().lower()
     if date_param == "all":
@@ -136,11 +162,35 @@ def _pick_visit_date(date_param, photos, videos):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_param):
             raise PreviewError("date must look like 2026-10-19, or be 'all'.", 400)
         return date_param, "date you asked for"
-    stamps = [cc.parse_timestamp(m.get("captured_at")) for m in photos + videos]
-    stamps = [s for s in stamps if s is not None]
-    if not stamps:
-        return None, "no photos or videos yet"
-    return to_local(max(stamps)).strftime("%Y-%m-%d"), "day of the newest photo or video"
+    if not days:
+        return None, "no photos, videos or notes yet"
+    return max(days), "newest day with photos, videos or notes"
+
+
+def visit_days(photos, videos, notes, today, keep=None):
+    """The "Which visit?" list: one entry per day with something on it,
+    newest first, plus today (so a new visit can be picked before anything
+    is on it). keep: a day that must stay on the list (the one picked)."""
+    counts = {}
+
+    def bump(day, kind):
+        if day:
+            counts.setdefault(day, {"photos": 0, "notes": 0, "videos": 0})[kind] += 1
+
+    for p in photos:
+        if not is_tool_drawing(p):
+            bump(_day(cc.parse_timestamp(p.get("captured_at"))), "photos")
+    for v in videos:
+        if _counts_as_visit_video(v):
+            bump(_day(cc.parse_timestamp(v.get("captured_at"))), "videos")
+    for n in notes:
+        bump(n["visit_date"], "notes")
+    counts.setdefault(today, {"photos": 0, "notes": 0, "videos": 0})
+    days = sorted(counts, reverse=True)
+    shown = days[:MAX_VISIT_DAYS]
+    if keep and keep in counts and keep not in shown:
+        shown.append(keep)
+    return [{"date": d, "today": d == today, **counts[d]} for d in shown]
 
 
 def _in_visit(item, visit_date):
@@ -182,9 +232,31 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
         videos = []
         warnings.append(f"Could not list videos ({e}). Videos are optional, so the run can still go ahead.")
 
-    visit_date, visit_rule = _pick_visit_date(date_param, photos, videos)
+    notes_page, notes = {"exists": False}, []
+    try:
+        for pg in cc.list_project_pages(project_id):
+            title = (pg.get("title") or pg.get("name") or "").strip()
+            if title.lower() == SITE_VISIT_NOTES_TITLE.lower():
+                notes_page = {"exists": True, "id": str(pg.get("id")), "title": title}
+                break
+    except cc.CompanyCamError as e:
+        notes_page = {"exists": None}
+        warnings.append(f"Could not list Pages ({e}).")
+    if notes_page.get("exists"):
+        import scope_quickpass   # it imports this module, so not at the top
+        try:
+            notes = scope_quickpass.parse_notes_page(cc.get_page(notes_page["id"]).get("tiptap_content"))
+        except cc.CompanyCamError as e:
+            warnings.append(f"Could not read the Site Visit Notes Page ({e}).")
 
-    visit_photos = [p for p in photos if _in_visit(p, visit_date)]
+    today = today_local()
+    days = visit_days(photos, videos, notes, today)
+    visit_date, visit_rule = _pick_visit_date(
+        date_param, [d["date"] for d in days if d["photos"] or d["notes"] or d["videos"]])
+    if visit_date:
+        days = visit_days(photos, videos, notes, today, keep=visit_date)
+
+    visit_photos = [p for p in photos if _in_visit(p, visit_date) and not is_tool_drawing(p)]
     photo_items = []
     for p in visit_photos:
         ts = cc.parse_timestamp(p.get("captured_at"))
@@ -230,16 +302,19 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
         video_items.append(item)
     video_items.sort(key=lambda x: x["captured_at"] or "")
 
-    notes_page = {"exists": False}
-    try:
-        for pg in cc.list_project_pages(project_id):
-            title = (pg.get("title") or pg.get("name") or "").strip()
-            if title.lower() == SITE_VISIT_NOTES_TITLE.lower():
-                notes_page = {"exists": True, "id": str(pg.get("id")), "title": title}
-                break
-    except cc.CompanyCamError as e:
-        notes_page = {"exists": None}
-        warnings.append(f"Could not list Pages ({e}).")
+    note_items = []
+    for n in notes:
+        if visit_date is not None and n["visit_date"] != visit_date:
+            continue
+        text = n["text"].replace("\n\n", " ")
+        note_items.append({
+            "heading": n["heading"],
+            "recorded_at": n["started"].strftime("%Y-%m-%d %I:%M %p"),
+            "visit_date": n["visit_date"],
+            "filed_later": n["filed_later"],
+            "corrected": n["corrected"],
+            "snippet": text if len(text) <= NOTE_SNIPPET_CHARS else text[:NOTE_SNIPPET_CHARS].rstrip() + "…",
+        })
 
     other_projects = _other_projects_at_address(project, warnings)
 
@@ -252,9 +327,12 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
             "url": project.get("project_url") or f"https://app.companycam.com/projects/{project_id}",
             "photo_count_on_project": len(photos),
         },
+        "today": today,
         "visit_date": visit_date,
         "visit_date_rule": visit_rule,
+        "visits": days,
         "photos": {"count": len(photo_items), "items": photo_items},
+        "notes": {"count": len(note_items), "items": note_items},
         "videos": {"count": len(video_items), "items": video_items},
         "site_visit_notes_page": notes_page,
         "other_projects_at_address": other_projects,
@@ -325,13 +403,17 @@ def _other_projects_at_address(project, warnings):
 def summarize(result):
     """One plain-English line for the top of the response."""
     photos = result["photos"]["count"]
+    notes = result["notes"]["count"]
     videos = [v for v in result["videos"]["items"] if not v["skipped"]]
     when = _pretty_date(result["visit_date"]) if result["visit_date"] else "the whole project"
     parts = [f"{photos} photo{'s' if photos != 1 else ''}"]
+    if notes:
+        parts.append(f"{notes} note{'s' if notes != 1 else ''}")
     if videos:
         ready = sum(1 for v in videos if v["transcript"] == "ready")
         parts.append(f"{len(videos)} video{'s' if len(videos) != 1 else ''} ({ready} with a transcript ready)")
-    line = f"Job {result['job']['number']}: {' and '.join(parts)} from {when}."
+    listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    line = f"Job {result['job']['number']}: {listed} from {when}."
     page = result["site_visit_notes_page"]
     if page.get("exists") is True:
         line += " The project already has a Site Visit Notes Page."

@@ -53,7 +53,7 @@ MAX_VIDEOS = 10
 PHOTO_SIZE = "2000x2000"       # CompanyCam resizes on the fly; Opus reads up to ~1932 px
 INLINE_PHOTO_SIZE = "1600x1600"  # only if Claude can't fetch the links: sent inline, kept smaller
 INLINE_MAX_BYTES = 24 * 1024 * 1024
-DRAWING_MARK = "Site Scope Tool"   # the tool's own drawings say this in their description
+DRAWING_MARK = site_scope.DRAWING_MARK
 MAX_QUESTIONS = 6
 
 _DOCS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs", "site-scope")
@@ -76,6 +76,9 @@ def effort():
 _HEADING_RE = re.compile(r"^([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) - (\d{1,2}:\d{2} [AP]M)( \(corrected\))?$")
 _RECORDED_RE = re.compile(r"^Recorded (\d{1,2}:\d{2}:\d{2} [AP]M) to (\d{1,2}:\d{2}:\d{2} [AP]M)")
 _TYPED_RE = re.compile(r"^Typed note, saved (\d{1,2}:\d{2}:\d{2} [AP]M)")
+# "Filed under the Oct 19, 2026 visit." on the italic line: a note recorded
+# after the visit about its photos (scope_notes.visit_sentence writes it).
+VISIT_RE = re.compile(r"Filed under the ([A-Z][a-z]{2}) (\d{1,2}), (\d{4}) visit\.")
 
 
 def _node_text(node):
@@ -94,10 +97,12 @@ def _at(day, clock):
 def parse_notes_page(doc):
     """The notes on a Site Visit Notes Page (scope_notes.note_nodes format).
 
-    Returns [{"heading", "started", "ended", "text", "corrected"}], times as
-    naive Greenville-local datetimes. Paragraphs under a heading that isn't a
-    note heading (someone typed their own in CompanyCam) stay with the note
-    above them; text before the first note heading is the Page intro."""
+    Returns [{"heading", "started", "ended", "text", "corrected", "visit_date",
+    "filed_later"}], times as naive Greenville-local datetimes. visit_date
+    ("YYYY-MM-DD") is the visit the note is filed under - the recording day
+    unless the italic line says otherwise. Paragraphs under a heading that
+    isn't a note heading (someone typed their own in CompanyCam) stay with the
+    note above them; text before the first note heading is the Page intro."""
     notes, current = [], None
     for node in (doc or {}).get("content") or []:
         text = " ".join(_node_text(node).split())
@@ -107,7 +112,7 @@ def parse_notes_page(doc):
                 day = datetime.strptime(f"{m.group(1)} {m.group(2)} {m.group(3)}", "%b %d %Y")
                 start = _at(day, m.group(4))
                 current = {"heading": text, "started": start, "ended": start, "text": [],
-                           "corrected": bool(m.group(5)), "_day": day, "_meta_seen": False}
+                           "corrected": bool(m.group(5)), "_day": day, "_meta_seen": False, "_filed": None}
                 notes.append(current)
                 continue
         if current is None or not text:
@@ -119,15 +124,26 @@ def parse_notes_page(doc):
                 if rec:
                     current["started"] = _at(current["_day"], rec.group(1))
                     current["ended"] = _at(current["_day"], rec.group(2))
+                filed = VISIT_RE.search(text)
+                if filed:
+                    current["_filed"] = visit_iso(filed)
                 continue
         current["text"].append(text)
     out = []
     for n in notes:
         body = "\n\n".join(n["text"]).strip()
         if body:
+            recorded_day = n["_day"].strftime("%Y-%m-%d")
+            visit = n["_filed"] or recorded_day
             out.append({"heading": n["heading"], "started": n["started"], "ended": n["ended"],
-                        "text": body, "corrected": n["corrected"]})
+                        "text": body, "corrected": n["corrected"], "visit_date": visit,
+                        "filed_later": visit != recorded_day})
     return out
+
+
+def visit_iso(match):
+    """A VISIT_RE match -> "YYYY-MM-DD"."""
+    return datetime.strptime(f"{match.group(1)} {match.group(2)} {match.group(3)}", "%b %d %Y").strftime("%Y-%m-%d")
 
 
 # ── Gathering the visit ──────────────────────────────────────────────────────
@@ -135,8 +151,7 @@ def parse_notes_page(doc):
 photo_description = site_scope._photo_description
 
 
-def is_tool_drawing(photo):
-    return DRAWING_MARK.lower() in photo_description(photo).lower()
+is_tool_drawing = site_scope.is_tool_drawing
 
 
 def sized_photo_url(photo):
@@ -200,16 +215,17 @@ def gather_visit(project_id, visit_date=None):
         warnings.append(f"Could not list videos ({e}).")
 
     if not visit_date:
-        stamps = [n["started"] for n in notes] + [p["at"] for p in photos] + [v["at"] for v in videos]
-        if not stamps:
+        # A note counts on the visit it's filed under, not the day it was recorded.
+        days = [n["visit_date"] for n in notes] + [x["at"].strftime("%Y-%m-%d") for x in photos + videos]
+        if not days:
             raise QuickPassError("There are no notes, photos or videos on this job yet. Record a note "
                                  "or take photos with the CompanyCam camera, then tap Start.")
-        visit_date = max(stamps).strftime("%Y-%m-%d")
+        visit_date = max(days)
 
     def on_day(dt):
         return dt.strftime("%Y-%m-%d") == visit_date
 
-    notes = [n for n in notes if on_day(n["started"])]
+    notes = [n for n in notes if n["visit_date"] == visit_date]
     photos = sorted((p for p in photos if on_day(p["at"])), key=lambda p: p["at"])
     videos = sorted((v for v in videos if on_day(v["at"])), key=lambda v: v["at"])
 
@@ -310,10 +326,14 @@ def build_content(visit, job):
     events.sort(key=lambda e: (e[0], e[1]))
 
     pretty = site_scope._pretty_date(visit["visit_date"])
-    content = [{"type": "text", "text": (
-        f"Job {job.get('number')} - {job.get('name') or ''}, {job.get('address') or 'no address on file'}. "
-        f"Site visit on {pretty}: {len(visit['notes'])} dictated note(s), {len(visit['photos'])} photo(s), "
-        f"{len(visit['transcripts'])} video transcript(s). Everything follows in the order it happened.")}]
+    later = sum(1 for n in visit["notes"] if n.get("filed_later"))
+    intro = (f"Job {job.get('number')} - {job.get('name') or ''}, {job.get('address') or 'no address on file'}. "
+             f"Site visit on {pretty}: {len(visit['notes'])} dictated note(s), {len(visit['photos'])} photo(s), "
+             f"{len(visit['transcripts'])} video transcript(s). Everything follows in the order it happened.")
+    if later:
+        intro += (f" {later} of the notes were recorded on a later day while looking back at this visit's "
+                  "photos, so they come last; tie them to photos by what they describe, not by time.")
+    content = [{"type": "text", "text": intro}]
     for at, _, kind, item in events:
         if kind == "photo":
             p = item["raw"]
@@ -327,6 +347,9 @@ def build_content(visit, job):
                 content.append({"type": "image", "source": {"type": "url", "url": url}})
         elif kind == "note":
             span = f"{_clock(item['started'], True)} to {_clock(item['ended'], True)}"
+            if item.get("filed_later"):
+                span = (f"recorded later, {item['started'].strftime('%b')} {item['started'].day} {span}, "
+                        "about this visit's photos")
             tag = " (Jason's correction of an earlier note)" if item["corrected"] else ""
             content.append({"type": "text", "text": f"{item['ref']} - dictated note, {span}{tag}:\n{item['text']}"})
         else:
