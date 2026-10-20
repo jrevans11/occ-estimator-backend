@@ -275,6 +275,31 @@ class NotesPageTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("Typed in CompanyCam later.", notes[0]["text"])
 
+    def test_note_filed_under_an_earlier_visit(self):
+        notes = qp.parse_notes_page(FILED_DOC)
+        self.assertEqual([(n["visit_date"], n["filed_later"]) for n in notes],
+                         [("2026-10-19", True), ("2026-10-19", True)])
+        self.assertEqual(notes[0]["started"], datetime(2026, 10, 21, 8, 30, 5))   # still the recording time
+        self.assertEqual(notes[0]["text"], "Looking at the kitchen photos again, the window is 36 wide.")
+        self.assertNotIn("Filed under", notes[1]["text"])
+        plain = qp.parse_notes_page(NOTES_DOC)
+        self.assertEqual([(n["visit_date"], n["filed_later"]) for n in plain],
+                         [("2026-10-19", False), ("2026-10-19", False), ("2026-10-18", False),
+                          ("2026-10-19", False)])
+
+
+# Recorded Oct 21 about the Oct 19 photos: one dictated, one typed.
+FILED_DOC = {"type": "doc", "content": [
+    {"type": "heading", "attrs": {"level": 2}, "content": [t("Oct 21, 2026 - 8:30 AM")]},
+    {"type": "paragraph", "content": [
+        t("Recorded 8:30:05 AM to 8:31:00 AM (0:55 of audio). Filed under the Oct 19, 2026 visit. ", ITALIC),
+        t("Play the recording", ITALIC + [{"type": "link", "attrs": {"href": "https://x"}}])]},
+    {"type": "paragraph", "content": [t("Looking at the kitchen photos again, the window is 36 wide.")]},
+    {"type": "heading", "attrs": {"level": 2}, "content": [t("Oct 21, 2026 - 8:40 AM")]},
+    {"type": "paragraph", "content": [t("Typed note, saved 8:40:00 AM. Filed under the Oct 19, 2026 visit.", ITALIC)]},
+    {"type": "paragraph", "content": [t("Fascia is 20 feet, not 12.")]},
+]}
+
 
 class GatherTests(Base):
     def test_newest_day_drawings_short_videos_and_missing_transcripts(self):
@@ -321,6 +346,24 @@ class GatherTests(Base):
         self.assertIn("Description already on it: Kitchen wide shot", content[1]["text"])
         n1 = next(b["text"] for b in content if b["type"] == "text" and b["text"].startswith("N1"))
         self.assertIn("10:12:58 PM to 10:13:42 PM", n1)
+
+    def test_notes_filed_under_the_visit_are_read_with_it(self):
+        doc = {"type": "doc", "content": NOTES_DOC["content"] + FILED_DOC["content"]}
+        with mock.patch.dict(globals(), {"NOTES_DOC": doc}):
+            v = qp.gather_visit(PROJECT_ID)
+            # Recorded Oct 21, but filed under Oct 19 - so Oct 19 is still the newest visit.
+            self.assertEqual(v["visit_date"], "2026-10-19")
+            self.assertEqual(len(v["notes"]), 5)
+            with self.assertRaises(qp.QuickPassError):
+                qp.gather_visit(PROJECT_ID, "2026-10-21")
+        content = qp.build_content(v, {"number": "00489", "name": "Test", "address": "1 Main"})
+        self.assertIn("2 of the notes were recorded on a later day", content[0]["text"])
+        labels = [b["text"].split(" - ")[0] for b in content if b["type"] == "text" and " - " in b["text"][:5]]
+        self.assertEqual(labels[-2:], ["N4", "N5"])   # after everything from the visit itself
+        n4 = next(b["text"] for b in content if b["type"] == "text" and b["text"].startswith("N4"))
+        self.assertIn("recorded later, Oct 21 8:30:05 AM to 8:31:00 AM, about this visit's photos", n4)
+        n1 = next(b["text"] for b in content if b["type"] == "text" and b["text"].startswith("N1"))
+        self.assertNotIn("later", n1)
 
     def test_system_prompt_carries_the_rules_docs(self):
         text = qp.system_blocks()[0]["text"]

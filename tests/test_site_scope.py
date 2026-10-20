@@ -82,6 +82,35 @@ PAGES = [
     {"id": "pg1", "title": "Site Visit Notes"},
 ]
 
+
+def _t(text, italic=False):
+    n = {"type": "text", "text": text}
+    if italic:
+        n["marks"] = [{"type": "italic"}]
+    return n
+
+
+def _h(text):
+    return {"type": "heading", "attrs": {"level": 2}, "content": [_t(text)]}
+
+
+def _p(text, italic=False):
+    return {"type": "paragraph", "content": [_t(text, italic)]}
+
+
+# One note during the Oct 19 visit, and one recorded Oct 20 about the Oct 10 photos.
+NOTES_DOC = {"type": "doc", "content": [
+    _p("Word-for-word notes dictated on site visits, added by the OCC scope page.", True),
+    _h("Oct 19, 2026 - 12:22 PM"),
+    _p("Recorded 12:22:00 PM to 12:23:10 PM (1:10 of audio). ", True),
+    _p("Office wall 1 is 13 feet."),
+    _h("Oct 20, 2026 - 9:05 AM"),
+    _p("Recorded 9:05:00 AM to 9:06:00 AM (1:00 of audio). Filed under the Oct 10, 2026 visit. ", True),
+    _p("Back porch from the earlier photos. The bottom step is rotted."),
+]}
+
+TODAY = "2026-10-20"
+
 SEARCH = [
     PROJECT,
     {"id": "999", "name": "3140 Wade Hampton Blvd", "archived": False, "photo_count": 2,
@@ -131,6 +160,8 @@ class FakeCompanyCam:
             if self.pages_status:
                 raise cc.CompanyCamError(f"HTTP {self.pages_status}", self.pages_status)
             return env(self.pages)
+        if path == "/pages/pg1":
+            return env({"id": "pg1", "title": "Site Visit Notes", "tiptap_content": NOTES_DOC})
         if path == "/projects/search":
             return env(SEARCH)
         raise cc.CompanyCamError(f"unexpected path {path}", 404)
@@ -159,6 +190,9 @@ class BaseCase(unittest.TestCase):
         p = mock.patch.object(cc, "_get", self.cc)
         p.start()
         self.addCleanup(p.stop)
+        d = mock.patch.object(site_scope, "today_local", return_value=TODAY)
+        d.start()
+        self.addCleanup(d.stop)
 
     def preview(self, job="00035", date="", jt=None):
         return site_scope.build_visit_preview(job, jt or fake_jobtread(), ORG, date)
@@ -309,7 +343,7 @@ class PreviewTests(BaseCase):
         s = self.preview()["summary"]
         self.assertEqual(
             s,
-            "Job 00035: 3 photos and 1 video (1 with a transcript ready) from Oct 19, 2026. "
+            "Job 00035: 3 photos, 1 note and 1 video (1 with a transcript ready) from Oct 19, 2026. "
             "The project already has a Site Visit Notes Page. "
             "Heads up: 1 other CompanyCam project(s) share this address.")
 
@@ -320,7 +354,64 @@ class PreviewTests(BaseCase):
         paths = {c[0] for c in self.cc.calls}
         self.assertTrue(paths <= {"/projects/117058039", "/projects/117058039/photos",
                                   "/projects/117058039/videos", "/videos/v1",
-                                  "/projects/117058039/pages", "/projects/search"})
+                                  "/projects/117058039/pages", "/pages/pg1", "/projects/search"})
+
+    # ── "Which visit?" picker and notes filed under a visit ──
+
+    def test_visit_days_list(self):
+        r = self.preview()
+        self.assertEqual(r["today"], TODAY)
+        self.assertEqual(r["visits"], [
+            # Today is always offered; the Oct 20 note is filed under Oct 10, so today is empty.
+            {"date": "2026-10-20", "today": True, "photos": 0, "notes": 0, "videos": 0},
+            # The 3-second video is an accidental tap and isn't counted.
+            {"date": "2026-10-19", "today": False, "photos": 3, "notes": 1, "videos": 1},
+            {"date": "2026-10-10", "today": False, "photos": 1, "notes": 1, "videos": 1},
+        ])
+        self.assertEqual(r["visit_date"], "2026-10-19")   # newest day with something, not empty today
+
+    def test_notes_for_the_visit(self):
+        notes = self.preview()["notes"]
+        self.assertEqual(notes["count"], 1)
+        self.assertEqual(notes["items"][0]["snippet"], "Office wall 1 is 13 feet.")
+        self.assertEqual(notes["items"][0]["recorded_at"], "2026-10-19 12:22 PM")
+        self.assertFalse(notes["items"][0]["filed_later"])
+        earlier = self.preview(date="2026-10-10")["notes"]["items"]
+        self.assertEqual([(n["visit_date"], n["filed_later"], n["recorded_at"]) for n in earlier],
+                         [("2026-10-10", True, "2026-10-20 09:05 AM")])
+        self.assertEqual(self.preview(date="all")["notes"]["count"], 2)
+        self.assertEqual(self.preview(date=TODAY)["notes"]["count"], 0)
+
+    def test_note_filed_under_the_newest_visit_sets_the_default(self):
+        doc = {"type": "doc", "content": [_h("Oct 20, 2026 - 9:05 AM"),
+                                          _p("Typed note, saved 9:05:10 AM.", True), _p("Today's note.")]}
+        with mock.patch.dict(globals(), {"NOTES_DOC": doc}):
+            r = self.preview()
+        self.assertEqual(r["visit_date"], TODAY)
+        self.assertEqual(r["visits"][0], {"date": TODAY, "today": True, "photos": 0, "notes": 1, "videos": 0})
+
+    def test_tool_drawings_are_not_visit_photos(self):
+        drawing = photo("d1", "2026-10-20T12:00:00Z", "Office - Floor Plan - drawn by the Site Scope Tool.")
+        with mock.patch.object(sys.modules[__name__], "PHOTOS", PHOTOS + [drawing]):
+            r = self.preview()
+            self.assertEqual(r["visit_date"], "2026-10-19")
+            self.assertEqual(r["visits"][0]["photos"], 0)
+            self.assertEqual(self.preview(date=TODAY)["photos"]["count"], 0)
+
+    def test_picked_day_stays_on_a_long_list(self):
+        many = [photo(f"m{i}", f"2026-09-{i:02d}T14:00:00Z") for i in range(1, 29)]
+        with mock.patch.object(sys.modules[__name__], "PHOTOS", many):
+            r = self.preview(date="2026-09-01")
+        dates = [d["date"] for d in r["visits"]]
+        self.assertEqual(len(dates), site_scope.MAX_VISIT_DAYS + 1)
+        self.assertEqual(dates[-1], "2026-09-01")
+
+    def test_unreadable_notes_page_is_a_warning(self):
+        with mock.patch.dict(globals(), {"NOTES_DOC": None}):
+            self.cc.pages = [{"id": "pg9", "title": "Site Visit Notes"}]   # the fake doesn't serve pg9
+            r = self.preview()
+        self.assertEqual(r["notes"]["count"], 0)
+        self.assertTrue(any("Site Visit Notes Page" in w for w in r["warnings"]))
 
 
 class PhotoPagingTests(BaseCase):

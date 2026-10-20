@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import companycam_api as cc  # noqa: E402
 import scope_notes  # noqa: E402
+import scope_quickpass  # noqa: E402
 import scope_transcribe  # noqa: E402
 
 KEY = "test-scope-key"
@@ -329,6 +330,115 @@ class FixTests(BaseCase):
         self.assertEqual(texts[-1], "Wall 1 is 13 feet.")
 
 
+class VisitFilingTests(BaseCase):
+    """Notes recorded after a visit, about its photos (build plan, Phase 4 live test)."""
+
+    HEADING = "Oct 21, 2026 - 2:14 PM"
+
+    def notes(self):
+        return scope_quickpass.parse_notes_page(self.cc.notes_page()["tiptap_content"])
+
+    def test_note_filed_under_an_earlier_visit(self):
+        code, body = self.submit(visit_date="2026-10-19")
+        self.assertEqual(body["visit_date"], "2026-10-19")
+        self.assertEqual(self.cc.notes_text()[-3],
+                         "Recorded 2:14:05 PM to 2:15:47 PM (1:42 of audio). Filed under the Oct 19, 2026 visit. "
+                         "Play the recording")
+        note = self.notes()[0]
+        self.assertEqual((note["visit_date"], note["filed_later"]), ("2026-10-19", True))
+        self.assertEqual(note["text"], self.transcript)
+
+    def test_same_day_or_no_visit_date_writes_no_filing_line(self):
+        code, body = self.submit(visit_date="2026-10-21")
+        self.assertEqual(body["visit_date"], "2026-10-21")
+        self.submit("note-0002", started_at="2026-10-21T18:20:00Z")
+        self.assertFalse(any("Filed under" in t for t in self.cc.notes_text()))
+
+    def test_typed_note_filed(self):
+        scope_notes.submit_note({"note_id": "note-typed-1", "job": "00999", "text": "Porch step is rotted.",
+                                 "saved_at": SAVED, "visit_date": "2026-10-10"},
+                                fake_jobtread(), ORG, start_thread=run_inline)
+        self.assertIn("Typed note, saved 2:15:47 PM. Filed under the Oct 10, 2026 visit.", self.cc.notes_text())
+        self.assertEqual(self.notes()[0]["visit_date"], "2026-10-10")
+
+    def test_bad_visit_dates(self):
+        for bad, msg in (("10/19/2026", "look like"), ("2026-10-22", "after the day it was recorded")):
+            with self.assertRaises(scope_notes.NoteError) as e:
+                self.submit(f"note-bad-{bad[:2]}", visit_date=bad)
+            self.assertIn(msg, str(e.exception))
+        self.assertIsNone(self.cc.notes_page())   # nothing written
+
+    def refile(self, visit_date, text=None, heading=None):
+        return scope_notes.refile_note({"job": "00999", "note_id": "note-0001", "heading": heading or self.HEADING,
+                                        "text": self.transcript if text is None else text,
+                                        "visit_date": visit_date}, fake_jobtread(), ORG)
+
+    def test_refile_a_saved_note_and_back(self):
+        self.submit()
+        self.assertEqual(self.refile("2026-10-19"), {"ok": True, "visit_date": "2026-10-19"})
+        meta = self.cc.notes_text()[-3]
+        self.assertEqual(meta, "Recorded 2:14:05 PM to 2:15:47 PM (1:42 of audio). Filed under the Oct 19, 2026 visit. "
+                               "Play the recording")
+        self.assertEqual(scope_notes.note_status("note-0001")["visit_date"], "2026-10-19")
+        # Link to the recording survives.
+        node = self.cc.notes_page()["tiptap_content"]["content"][-3]
+        self.assertTrue(has_link([node]))
+        # Another visit replaces the line rather than adding a second one.
+        self.refile("2026-10-10")
+        self.assertEqual(self.cc.notes_text()[-3].count("Filed under"), 1)
+        self.assertEqual(self.notes()[0]["visit_date"], "2026-10-10")
+        # Back to the day it was recorded: the line goes away, spacing intact.
+        self.assertEqual(self.refile("2026-10-21")["visit_date"], "2026-10-21")
+        self.assertEqual(self.cc.notes_text()[-3], "Recorded 2:14:05 PM to 2:15:47 PM (1:42 of audio). Play the recording")
+        self.assertFalse(self.notes()[0]["filed_later"])
+
+    def test_refile_when_companycam_merged_the_italic_text(self):
+        # CompanyCam may join neighbouring text with the same marks into one node.
+        self.submit(visit_date="2026-10-19")
+        meta = self.cc.notes_page()["tiptap_content"]["content"][-3]
+        meta["content"] = [{"type": "text", "text": scope_notes.node_text(meta), "marks": [{"type": "italic"}]}]
+        self.refile("2026-10-21")
+        self.assertEqual(self.cc.notes_text()[-3], "Recorded 2:14:05 PM to 2:15:47 PM (1:42 of audio). Play the recording")
+
+    def test_refile_typed_note(self):
+        scope_notes.submit_note({"note_id": "note-0001", "job": "00999", "text": "Typed one.", "saved_at": SAVED,
+                                 "started_at": STARTED}, fake_jobtread(), ORG, start_thread=run_inline)
+        self.refile("2026-10-19", text="Typed one.")
+        self.assertIn("Typed note, saved 2:15:47 PM. Filed under the Oct 19, 2026 visit.", self.cc.notes_text())
+        self.refile("2026-10-21", text="Typed one.")
+        self.assertIn("Typed note, saved 2:15:47 PM.", self.cc.notes_text())
+
+    def test_refile_only_touches_its_own_note(self):
+        self.submit()
+        first = self.transcript
+        self.transcript = "Second note, same minute."
+        self.submit("note-0002", started_at="2026-10-21T18:14:40Z")
+        self.refile("2026-10-19", text=first)
+        notes = self.notes()
+        self.assertEqual([(n["text"][:6], n["visit_date"]) for n in notes],
+                         [("Wall 1", "2026-10-19"), ("Second", "2026-10-21")])
+
+    def test_refile_errors(self):
+        self.submit()
+        with self.assertRaises(scope_notes.NoteError) as e:
+            self.refile("2026-10-19", text="Edited in CompanyCam since.")
+        self.assertEqual(e.exception.status, 404)
+        with self.assertRaises(scope_notes.NoteError) as e:
+            self.refile("2026-10-25")
+        self.assertIn("after the day it was recorded", str(e.exception))
+
+    def test_corrected_note_stays_on_the_same_visit(self):
+        self.submit(visit_date="2026-10-19")
+        page = self.cc.notes_page()
+        page["tiptap_content"]["content"][-1]["content"][0]["text"] = "Edited in CompanyCam."
+        out = scope_notes.fix_note({"job": "00999", "heading": self.HEADING, "old_text": self.transcript,
+                                    "new_text": "Wall 1 is 13 feet."}, fake_jobtread(), ORG)
+        self.assertEqual(out["result"], "added")
+        corrected = self.notes()[-1]
+        self.assertTrue(corrected["corrected"])
+        self.assertEqual(corrected["visit_date"], "2026-10-19")
+
+
 class DeepgramTests(unittest.TestCase):
     def test_request_url(self):
         url = scope_transcribe.request_url()
@@ -443,6 +553,17 @@ class HttpEndpointTests(BaseCase):
                                {"job": "00999", "note_id": "note-http-2", "heading": "Oct 21, 2026 - 2:14 PM",
                                 "old_text": self.transcript, "new_text": "Fixed."}, {"X-Scope-Key": KEY})
         self.assertEqual((code, body), (200, {"ok": True, "result": "replaced"}))
+
+    def test_post_visit(self):
+        self.call("POST", "/scope/notes", {"note_id": "note-http-4", "job": "00999", "audio_url": AUDIO,
+                                           "started_at": STARTED, "saved_at": SAVED}, {"X-Scope-Key": KEY})
+        self.wait_for("note-http-4")
+        code, body = self.call("POST", "/scope/notes/visit",
+                               {"job": "00999", "note_id": "note-http-4", "heading": "Oct 21, 2026 - 2:14 PM",
+                                "text": self.transcript, "visit_date": "2026-10-19"}, {"X-Scope-Key": KEY})
+        self.assertEqual((code, body), (200, {"ok": True, "visit_date": "2026-10-19"}))
+        code, body = self.call("GET", "/scope/notes/status?id=note-http-4", headers={"X-Scope-Key": KEY})
+        self.assertEqual(body["visit_date"], "2026-10-19")
 
     def test_wrong_key_and_bad_body(self):
         code, body = self.call("POST", "/scope/notes", {"note_id": "note-http-3"}, {"X-Scope-Key": "nope"})
