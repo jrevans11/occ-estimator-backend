@@ -17,6 +17,7 @@ Endpoints (registered in app.py; all need X-Scope-Key):
     POST /scope/notes          {note_id, job, audio_url | text, started_at, saved_at}
     GET  /scope/notes/status?id=<note_id>
     POST /scope/notes/fix      {job, heading, old_text, new_text}
+    POST /scope/runs...        phase 4 runs - handed to scope_runs.py
     GET  /scope/notes-test?key=..&job=..&text=..   typed test note, from a browser
 
 Note status lives in memory only (a few seconds per note). The lasting record
@@ -32,6 +33,7 @@ import traceback
 from urllib.parse import urlparse
 
 import companycam_api as cc
+import scope_runs
 import scope_transcribe
 import site_scope
 
@@ -351,6 +353,9 @@ def handle_post(path, body, headers, jobtread_query, org_id, start_thread=None):
             return submit_note(payload, jobtread_query, org_id, start_thread)
         if path == "/scope/notes/fix":
             return 200, fix_note(payload, jobtread_query, org_id)
+        if path.startswith("/scope/runs"):
+            # Phase 4 runs (scope_runs.py) share this route so app.py needs no change.
+            return scope_runs.handle_post(path, payload, jobtread_query, org_id, start_thread)
         raise NoteError("Not found.", 404)
     return _guard(run)
 

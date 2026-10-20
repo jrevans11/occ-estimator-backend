@@ -24,9 +24,21 @@ To draw a file and look at the PNGs: `python3 scope_drawings.py <file.json> <out
 | Field | Required | Notes |
 |---|---|---|
 | `schema` | yes | `"occ-scope-rooms/1"` |
-| `project` | no | `name`, `address`, `visit_date` (`YYYY-MM-DD`) are printed under the drawing titles; `companycam_project_id` and `jobtread_job_id` are carried for the later phases |
-| `rooms` | yes | One or more rooms (below). Each room gets its own plan. |
+| `project` | no | `name`, `address`, `visit_date` (`YYYY-MM-DD`) are printed under the drawing titles; `companycam_project_id`, `jobtread_job_id` and `job_number` are carried for the later phases. The quick pass fills this block in by code, not by the AI. |
+| `rooms` | yes | Rooms (below). Each room gets its own plan. The quick pass may write `[]` when nothing was dictated wall by wall (an exterior-only or single-repair visit) - then there is nothing to draw and the work lives in `scope_items`. |
 | `flags` | no | Open questions for the whole visit, as plain sentences. Printed in red under "CHECK BEFORE PRICING" on the first plan. |
+
+### Added by the quick pass (phase 4)
+The drawing code ignores these; the scope Page (phase 5) and budget (phase 6) read them.
+
+| Field | Notes |
+|---|---|
+| `client_goals` | Short sentences on what the client wants, if said |
+| `scope_items` | Every line of work: `{"id": "S1", "trade", "area", "work" (verb first), "quantity": {"value", "unit" (sf, lf, ea, sq, hr, ls), "src"} or null, "sub" (the sub Jason addressed, or null), "licensed_trade" (electrical, plumbing, HVAC, gas, structural), "photos": ["P4"], "notes": ["N3"], "detail"}` |
+| `photos` | One per photo read: `{"ref": "P1", "id": "<CompanyCam photo id>", "area", "wall" (number or null), "description"}` - the photo descriptions phase 5 writes back to CompanyCam (appended, never overwriting) |
+| `conflicts` | `{"what", "source_a", "source_b", "action"}` - the scope Page's measurement conflicts table |
+
+`P1`, `N1`, `V1` are the photo, note and video labels the quick pass used (photos and notes in time order); they're only meaningful inside one run's file.
 
 ## Room
 | Field | Required | Notes |

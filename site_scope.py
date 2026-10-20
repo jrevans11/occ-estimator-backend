@@ -193,7 +193,7 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
             "captured_at": _fmt_local(ts),
             "thumbnail": cc.photo_uri(p, "thumbnail"),
             "web": cc.photo_uri(p, "web"),
-            "description": p.get("description") or "",
+            "description": _photo_description(p),
         })
     photo_items.sort(key=lambda x: x["captured_at"] or "")  # capture order, like the visit
     batch_warning = _batch_upload_warning(visit_photos)
@@ -262,6 +262,14 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
     }
     result["summary"] = summarize(result)
     return result
+
+
+def _photo_description(photo):
+    """The Public API sends description as {plain_text_content, html_content, id}."""
+    d = photo.get("description")
+    if isinstance(d, dict):
+        return (d.get("plain_text_content") or "").strip()
+    return str(d or "").strip()
 
 
 def _batch_upload_warning(photos):

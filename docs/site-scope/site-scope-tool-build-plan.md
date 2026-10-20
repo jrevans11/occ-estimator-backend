@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **phases 1-3 of 8 built and verified live (Oct 19-20); phase 4 (quick pass + questions) is next - see Build phases.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phases 1-3 of 8 built and verified live (Oct 19-20); phase 4 (quick pass + questions) built Oct 20, waiting on Jason's phone test - see Build phases and Phase 4 notes.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -49,7 +49,7 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
   - Before starting, the page shows what it found: notes, CompanyCam photo count, any videos and whether their transcripts are ready. Then Start.
   - Vercel only forwards the request; the long-running work runs on Render in a background thread (Vercel functions time out).
 - **Questions:** the page stays live and shows the questions when ready (~1 minute). If Jason has left, a **web push notification** ("Questions ready - <address>") opens the page. iPhone push requires the Home Screen app and notifications allowed once. Fallback: text message with the link (RingCentral SMS API - not yet checked whether OCC's number can send).
-- Run state (notes, questions, answers, status) stored in a small database (e.g. Upstash Redis / Vercel KV free tier) so questions wait if the page is closed. **Not needed until phase 4 (decided Oct 20):** in phase 3 the audio lives in Vercel Blob and the text on the CompanyCam Page.
+- Run state (status, questions, answers, room file) stored in **Upstash Redis (free tier, decided Oct 20 for phase 4)** so questions wait if the page is closed or the server restarts. Render writes and reads it; Vercel doesn't need it. In phase 3 the audio lives in Vercel Blob and the text on the CompanyCam Page.
 - **CompanyCam tag trigger: deferred.** It would fire before uploads finish, has nowhere to show status or answer questions, and the "Project Labeled" webhook is unverified. Can be added later against the same backend endpoint.
 
 ## Flow (questions first)
@@ -74,7 +74,7 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 - Sonnet 5.5: $2 / $10 per million tokens (input/output). Opus 5.5: $4 / $20. Cache hits on both are 0.05x input price.
 - Photos: Opus 5.5 is on the high-resolution image tier - a full-size phone photo is downscaled to ~1932 px square, ~4,800 input tokens (~$0.02 each on Opus). Resizing to ~1,100 px cuts that to ~1,500 tokens at some cost to small details.
 - Two calls per visit (quick pass + build). Test (1) (9 photos + short transcript): ~$0.55-0.70 on Opus, ~$0.30-0.35 on Sonnet. A 20-photo visit ~$1.00-1.20 on Opus. Per month at 13-22 visits: ~$8-25 Opus, ~$4-12 Sonnet.
-- Model choice not confirmed by Jason yet (stronger model throughout suggested, ~$10/month difference).
+- **Model: Opus 5.5 (decided Oct 20, Jason)** - reading photos + talk into exact wall lengths and opening positions is the hardest step, and mistakes carry into drawings and budget. Effort `high` (Opus 5.5's default is medium). Render env `SCOPE_MODEL` / `SCOPE_EFFORT` switch it without a code change (e.g. `claude-sonnet-5-5`).
 - Speech-to-text: ~$0.50-1.50/month, covered by free credits.
 - Log token count and cost per run so real numbers replace estimates.
 
@@ -111,7 +111,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | 1 | **"What did we find" check** - JobTread job -> CompanyCam project via `companycamId`; lists the visit's photos, videos (transcript ready or not), whether a Site Visit Notes Page exists, and duplicate projects at the same address. Read-only. `GET /scope/preview`. **Built Oct 19** (`site_scope.py`, `companycam_api.py`). | Render | Open a link in a browser with a job number | 1, 6 |
 | 2 | **Drawings** - `scope_drawings.py` draws floor plan + elevations from a structured room file with Pillow; a test endpoint draws the Oct 19 office data and uploads it to CompanyCam "Test (1)". `GET /scope/drawings-test`. **Built Oct 19, verified on Render Oct 20** (`scope_drawings.py`, `scope_uploads.py`, `room-file-format.md`). | Render | Drawings appear on the Test (1) project | 2, 5 |
 | 3 | **Scope page v1** - `/intake/scope` with job picker, Record/Stop notes, server transcription with OCC trade-word hints, notes appended to the "Site Visit Notes" Page, phase 1 check shown before Start. **Built and verified on Jason's iPhone Oct 19-20** (backend PR #8; sales-lead-tool PRs #2, #3). | sales-lead-tool + Render | Record two notes on the phone; read them in CompanyCam | 3 |
-| 4 | **Quick pass + questions** - Start runs in a Render background thread; Claude reads notes + photos into the structured file and writes 3-6 questions with suggested answers; run state saved so questions wait; tokens and cost logged per run | both | Tap Start on Test (1); answer the questions | - |
+| 4 | **Quick pass + questions** - Start runs in a Render background thread; Claude reads notes + photos into the structured file and writes 3-6 questions with suggested answers; run state saved so questions wait; tokens and cost logged per run. **Built Oct 20** (`scope_runs.py`, `scope_quickpass.py`, `scope_store.py`; page in sales-lead-tool). | both | Tap Start on test job 00489; answer the questions | - |
 | 5 | **Full build, CompanyCam side** - photo descriptions (appended, never overwrite), drawings uploaded, scope Page with sharing off | Render | Check Test (1) for descriptions, drawings, scope Page | 2 |
 | 6 | **Full build, JobTread side** - budget from the structured file; code does quantities, markups, rate anchors, `$0 (PRICING TBD)` for licensed trades, internal NOTES items | Render | Budget lands on test job 00035 | - |
 | 7 | **Push notification** "Questions ready - <address>" from the Home Screen app; SMS fallback only if push fails | sales-lead-tool | Start a run, close the page, get the alert | 4 |
@@ -124,13 +124,14 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | `SCOPE_API_KEY` | Render and Vercel (same value) | Phase 1 (Render), phase 3 (Vercel) | A long random password Jason makes up (password manager). Locks the scope endpoints, which return client addresses and photo links. With it unset the endpoints stay off |
 | `COMPANYCAM_CREATOR_EMAIL` (optional) | Render | Phase 2 | Which CompanyCam user shows as creator on drawings/Pages; already used the same way in Vercel |
 | `DEEPGRAM_API_KEY` | Render | Phase 3 | Deepgram console -> API Keys -> new key, expiration Never. Transcription runs on Render (decided Oct 20) |
-| Upstash Redis (free tier, add from Vercel's Storage tab) | Vercel (automatic); Render too if the backend writes run state | Phase 4 | Holds questions, answers, run status. Not needed in phase 3 (decided Oct 20) |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Render | Phase 4 | console.upstash.com -> Create Database (free) -> REST API section, .env tab. Holds runs (status, questions, answers, room file) for 30 days. Without them runs live in memory and a restart forgets them (the status reply says `store: memory`) |
+| `SCOPE_MODEL`, `SCOPE_EFFORT` (optional) | Render | Phase 4 | Default `claude-opus-5-5` / `high` |
 | `SCOPE_BACKEND_URL` | Vercel | Phase 3 | `https://occ-estimator.onrender.com` |
 | Web push keys (VAPID) | Vercel | Phase 7 | Generated, no account. iPhone: Home Screen app + allow notifications once |
 | RingCentral SMS | - | Only if push fails | Not checked yet whether OCC's number can send |
 | `ANTHROPIC_API_KEY`, `JOBTREAD_API_KEY`, `JOBTREAD_ORG_ID` | Render | - | Already set |
 
-Decision still open before phase 4: Opus 5.5 throughout (~$8-25/month) or Sonnet 5.5 (~$4-12/month).
+Decided Oct 20: Opus 5.5 throughout (~$8-25/month), not Sonnet 5.5.
 
 ## Phase 1 notes (Oct 19)
 - `GET /scope/preview?job=<job number or JobTread job ID>&key=<SCOPE_API_KEY>`; optional `&date=YYYY-MM-DD` or `&date=all`. The key can also go in an `X-Scope-Key` header (the scope page will use the header).
@@ -193,3 +194,19 @@ Decision still open before phase 4: Opus 5.5 throughout (~$8-25/month) or Sonnet
   - **Decision for now: keep Deepgram.** Revisit only if a real noisy jobsite note does badly on numbers.
 - **Not tested live this round:** switching apps mid-note, Airplane Mode while recording, the too-short tap, and Save fix (no fix was saved; the Page text is as transcribed).
 - **Known UI issue (sales-lead-tool-wide, not scope-specific):** in the Home Screen app, the page's top bar (Back + title) sits under the iPhone status bar. No page in the app pads for the status bar (`env(safe-area-inset-top)`).
+
+## Phase 4 notes (Oct 20)
+- **Decisions (Jason, Oct 20):** Opus 5.5 (effort high) for the quick pass; Upstash Redis for run state, on Render only.
+- **Endpoints** - all `POST` with JSON and `X-Scope-Key`, through the same `/scope/*` POST route as the notes, so **app.py did not change** (`scope_notes.handle_post` hands `/scope/runs*` to `scope_runs.py`):
+  - `/scope/runs` `{job, date?, restart?}` - starts a run (202) on a background thread. If one is already reading, or questions are waiting, it returns that run instead (200); `restart: true` starts over when questions are waiting. At most 2 runs at once on the server.
+  - `/scope/runs/status` `{run_id}` or `{job}` (newest run on that job; `{status: "none"}` if there isn't one). `include_file: true` adds the whole room file.
+  - `/scope/runs/answers` `{run_id, answers: {Q1: "..."}}` - a blank answer means the suggested one. Status becomes `answered`; phases 5-6 build from there.
+- **Run states:** `reading` -> `questions` -> `answered`, or `failed` with an `error` sentence. A `reading` run that isn't running on this server 90 s after its last change was cut off by a restart; it is marked failed ("tap Start to run it again") rather than waiting forever.
+- **What the quick pass reads** (`scope_quickpass.py`): the notes on the "Site Visit Notes" Page (heading + "Recorded X to Y" / "Typed note, saved X" lines give each note's time; a "(corrected)" note sits by the one it corrects), the visit's photos, and transcripts of videos 5 s or longer that are already ready. **Visit day** = the day of the newest note, photo or video (the page can send `date`). The tool's own drawings (description contains "Site Scope Tool") are skipped, so phase 5 drawings must keep that phrase. Up to 40 photos, 10 videos.
+- **Photos go to Claude as CompanyCam links**, resized by CompanyCam with `?d=2000x2000` (checked Oct 20: CompanyCam's `static.companycam.com` links take any `d=WxH` and only shrink). Render never downloads them. If Claude's side can't fetch the links (a 400 about the image), Render downloads them at 1600 px and sends them inline (24 MB cap).
+- **Everything goes to Claude in time order** (photos P1.., notes N1.., videos V1..), with the rules docs (`room-file-format.md`, `floor-plan-drawing-rules.md`) cached in the system prompt (~6k tokens). Claude returns `{room_file, questions}`; the room file adds `client_goals`, `scope_items`, `photos` (descriptions for phase 5) and `conflicts` (see `room-file-format.md`). No prices in this pass.
+- **Code checks:** every room goes through `scope_drawings.parse_room`; an unusable answer (bad JSON, a room the drawings can't read, cut off) is sent back once with the problem, then the run fails. Closure and wall checks are added to the room's flags, and walls that don't close get a code-written question if there are fewer than 6. More than 6 questions are trimmed to 6. Zero questions goes straight to `answered`.
+- **Claude call:** streamed over plain `urllib` like the estimator (no SDK added to Render), `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`) so a rare safety decline re-runs on Anthropic's fallback model; if the API ever rejects that option it is dropped and the call repeated. Busy/5xx answers retried up to 4 times.
+- **Cost log:** each call logs model, stop reason, usage and dollars; the run keeps `usage` (tokens in/out, cache, `cost_usd`, seconds, calls) and the page shows the cost. Prices in `scope_quickpass.PRICES` (Opus 5.5 $4/$20, cache read $0.20, cache write 1.25x).
+- **CompanyCam Public API:** photo `description` is an object (`{plain_text_content, html_content, id}`), not a string - the phase 1 preview was returning the object; fixed.
+- Tests: `tests/test_scope_runs.py` (fake CompanyCam with job 00489's real notes Page, Claude faked at the stream level, Upstash faked at the command level, and a round trip through the real app.py handler).
