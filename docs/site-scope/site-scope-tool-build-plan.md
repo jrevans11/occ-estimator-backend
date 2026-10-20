@@ -100,7 +100,8 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 
 ## Constraints
 - Render stays on the current plan (512 MB / 0.5 CPU) - no upgrade.
-- Work on a branch, test before opening a pull request, and Jason merges in GitHub. Always start from the current main - never from an old copy of a file.
+- Work on a branch and test before opening a pull request. Always start from the current main - never from an old copy of a file.
+- Who merges (Oct 20): Claude merges PRs that change only Site Scope files once the full test suite passes; Jason merges anything touching `app.py`, the estimator, follow-ups or other shared code. Details in CLAUDE.md ("Who merges").
 
 ## Build phases (proposed Oct 19)
 Each phase is one pull request Jason can test on its own before the next starts. Backend pieces first, then the page.
