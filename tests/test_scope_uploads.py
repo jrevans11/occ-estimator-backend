@@ -40,7 +40,8 @@ def drawing(name="office-floor-plan.png", title="Office - Floor Plan"):
 
 
 class FakeCompanyCamWrites:
-    """Stands in for companycam_api._request.
+    """Stands in for companycam_api._request, answering in the Public API's
+    {data, errors, meta} envelope.
 
     POST /projects/<id>/photos records the photo; optionally downloads its
     uri like CompanyCam does. GET /photos/<id> reports processing_status,
@@ -66,13 +67,13 @@ class FakeCompanyCamWrites:
             if self.download:
                 with urllib.request.urlopen(photo["uri"], timeout=10) as r:
                     self.downloaded[pid] = (r.headers.get("Content-Type"), r.read())
-            return {"id": pid, "processing_status": "pending", "uris": []}
+            return {"data": {"id": pid, "processing_status": "pending", "uris": []}, "errors": [], "meta": {}}
         if method == "GET" and path.startswith("/photos/"):
             pid = path.rsplit("/", 1)[1]
             n = self.checks[pid] = self.checks.get(pid, 0) + 1
             status = "pending" if n <= self.pending_checks else self.final
             uris = [{"type": "web", "uri": f"https://img.companycam.com/{pid}-web.png"}] if status == "processed" else []
-            return {"id": pid, "processing_status": status, "uris": uris}
+            return {"data": {"id": pid, "processing_status": status, "uris": uris}, "errors": [], "meta": {}}
         raise cc.CompanyCamError(f"unexpected {method} {path}", 404)
 
 
@@ -98,14 +99,24 @@ class Base(unittest.TestCase):
 
 
 class CompanyCamPhotoCallTests(Base):
-    def test_create_project_photo_body_matches_sales_lead_tool(self):
+    def test_create_project_photo_body_matches_public_api(self):
         seen = []
-        with mock.patch.object(cc, "_request", lambda *a, **k: seen.append((a, k)) or {"id": "1"}):
-            cc.create_project_photo("117058039", "https://x/y.png", captured_at=1760900000, description="Plan")
+        reply = {"data": {"id": "1", "processing_status": "pending"}, "errors": [], "meta": {}}
+        with mock.patch.object(cc, "_request", lambda *a, **k: seen.append((a, k)) or reply):
+            photo = cc.create_project_photo("117058039", "https://x/y.png", captured_at=1760900000,
+                                            description="Plan")
         (method, path), kwargs = seen[0]
         self.assertEqual((method, path), ("POST", "/projects/117058039/photos"))
-        self.assertEqual(kwargs["body"], {"photo": {"uri": "https://x/y.png", "captured_at": 1760900000,
+        # The Public API takes captured_at as an ISO 8601 string, not Unix seconds.
+        self.assertEqual(kwargs["body"], {"photo": {"uri": "https://x/y.png",
+                                                    "captured_at": "2025-10-19T18:53:20Z",
                                                     "description": "Plan"}})
+        self.assertEqual(photo["id"], "1")
+
+    def test_get_photo_unwraps_envelope(self):
+        reply = {"data": {"id": "7", "processing_status": "processed"}, "errors": [], "meta": {}}
+        with mock.patch.object(cc, "_request", lambda *a, **k: reply):
+            self.assertEqual(cc.get_photo("7"), {"id": "7", "processing_status": "processed"})
 
     def test_request_sends_json_and_auth(self):
         captured = {}

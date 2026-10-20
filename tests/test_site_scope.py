@@ -3,10 +3,12 @@
 Run from the repo root:  python3 -m unittest discover tests
 
 CompanyCam and JobTread are faked with responses shaped like the real ones
-(pulled from project 112543911 / job 00768 on Oct 19, 2026), so no keys or
+(CompanyCam's Public API v1 envelope, as returned for project 112543911 /
+job 00768 on Oct 19, 2026), so no keys or
 network are needed.
 """
 
+import io
 import json
 import os
 import sys
@@ -29,6 +31,12 @@ ORG = "22P9ppHePJKP"
 
 def ts(iso):
     return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
+
+
+def env(data, next_cursor=None):
+    """The new API's {data, errors, meta} envelope."""
+    return {"data": data, "errors": [],
+            "meta": {"next_cursor": next_cursor, "prev_cursor": None, "has_next": bool(next_cursor)}}
 
 
 def photo(pid, captured_at, description=None):
@@ -57,16 +65,16 @@ PROJECT = {
 
 # Oct 19 visit (EDT, UTC-4) plus one older photo from Oct 10.
 PHOTOS = [
-    photo("p4", ts("2026-10-19T16:25:00Z"), "Wall 3"),
-    photo("p3", "2026-10-19T16:21:30Z"),            # ISO string form is accepted too
-    photo("p2", ts("2026-10-19T16:20:00Z")),
-    photo("p1", ts("2026-10-10T14:00:00Z")),
+    photo("p4", "2026-10-19T16:25:00Z", "Wall 3"),
+    photo("p3", "2026-10-19T16:21:30Z"),
+    photo("p2", "2026-10-19T16:20:00Z"),
+    photo("p1", "2026-10-10T14:00:00Z"),
 ]
 
 VIDEOS = [
-    {"id": "v2", "captured_at": ts("2026-10-19T16:29:00Z"), "duration": 3},
-    {"id": "v1", "captured_at": ts("2026-10-19T16:21:00Z"), "duration": 120},
-    {"id": "v0", "captured_at": ts("2026-10-10T14:05:00Z"), "duration": 60},
+    {"id": "v2", "captured_at": "2026-10-19T16:29:00Z", "duration": 3},
+    {"id": "v1", "captured_at": "2026-10-19T16:21:00Z", "duration": 120},
+    {"id": "v0", "captured_at": "2026-10-10T14:05:00Z", "duration": 60},
 ]
 
 PAGES = [
@@ -97,28 +105,34 @@ class FakeCompanyCam:
     def __init__(self, videos_status=None, pages=PAGES, transcripts=None):
         self.calls = []
         self.videos_status = videos_status
+        self.pages_status = None
+        self.transcript_field_missing = False
         self.pages = pages
         self.transcripts = transcripts if transcripts is not None else {"v1": "Wall 1 is twelve feet."}
 
     def __call__(self, path, params=None):
         self.calls.append((path, params))
         if path == "/projects/117058039":
-            return PROJECT
+            return env(PROJECT)
         if path == "/projects/117058039/photos":
-            page = (params or {}).get("page", 1)
-            return PHOTOS if page == 1 else []
+            return env(PHOTOS)
         if path == "/projects/117058039/videos":
             if self.videos_status:
                 raise cc.CompanyCamError(f"HTTP {self.videos_status}", self.videos_status)
-            return VIDEOS
+            return env(VIDEOS)
         if path.startswith("/videos/"):
             vid = path.rsplit("/", 1)[1]
+            if self.transcript_field_missing:
+                return env({"id": vid})
             text = self.transcripts.get(vid)
-            return {"id": vid, "transcript": {"text": text} if text else None}
+            transcript = {"text": text, "source": "mux_generated", "last_edited_at": None} if text else None
+            return env({"id": vid, "transcript": transcript})
         if path == "/projects/117058039/pages":
-            return self.pages
-        if path == "/projects":
-            return SEARCH
+            if self.pages_status:
+                raise cc.CompanyCamError(f"HTTP {self.pages_status}", self.pages_status)
+            return env(self.pages)
+        if path == "/projects/search":
+            return env(SEARCH)
         raise cc.CompanyCamError(f"unexpected path {path}", 404)
 
 
@@ -261,6 +275,26 @@ class PreviewTests(BaseCase):
         self.assertTrue(any("videos" in w for w in r["warnings"]))
         self.assertEqual(r["photos"]["count"], 3)
 
+    def test_transcript_field_missing_is_unknown_not_not_ready(self):
+        self.cc.transcript_field_missing = True
+        vids = {v["id"]: v for v in self.preview()["videos"]["items"]}
+        self.assertEqual(vids["v1"]["transcript"], "unknown (CompanyCam did not say)")
+
+    def test_pages_error_is_a_warning(self):
+        self.cc.pages_status = 403
+        r = self.preview()
+        self.assertEqual(r["site_visit_notes_page"], {"exists": None})
+        self.assertTrue(any("Pages" in w for w in r["warnings"]))
+
+    def test_batch_uploaded_photos_warning(self):
+        same_minute = [photo(f"b{i}", f"2026-08-18T18:25:{i:02d}Z") for i in range(15)]
+        with mock.patch.object(sys.modules[__name__], "PHOTOS", same_minute):
+            r = self.preview(date="2026-08-18")
+        self.assertEqual(r["photos"]["count"], 15)
+        self.assertTrue(any("15 of 15 photos" in w and "uploaded in a batch" in w for w in r["warnings"]))
+        # A normal visit (photos minutes apart) gets no such warning.
+        self.assertFalse(any("batch" in w for w in self.preview()["warnings"]))
+
     def test_notes_page_found_or_missing(self):
         self.assertEqual(self.preview()["site_visit_notes_page"], {"exists": True, "id": "pg1", "title": "Site Visit Notes"})
         self.cc.pages = PAGES[:1]
@@ -286,22 +320,92 @@ class PreviewTests(BaseCase):
         paths = {c[0] for c in self.cc.calls}
         self.assertTrue(paths <= {"/projects/117058039", "/projects/117058039/photos",
                                   "/projects/117058039/videos", "/videos/v1",
-                                  "/projects/117058039/pages", "/projects"})
+                                  "/projects/117058039/pages", "/projects/search"})
 
 
 class PhotoPagingTests(BaseCase):
-    def test_pages_until_short_page(self):
-        full = [photo(f"x{i}", ts("2026-10-19T16:00:00Z")) for i in range(cc.PER_PAGE)]
-        pages = {1: full, 2: full[:5]}
+    def test_follows_cursor_until_no_next(self):
+        full = [photo(f"x{i}", "2026-10-19T16:00:00Z") for i in range(cc.PAGE_LIMIT)]
+        pages = {None: env(full, "c2"), "c2": env(full[:5])}
         calls = []
 
         def fake(path, params=None):
-            calls.append(params["page"])
-            return pages.get(params["page"], [])
+            calls.append(dict(params))
+            return pages[params.get("after")]
 
         with mock.patch.object(cc, "_get", fake):
-            self.assertEqual(len(cc.list_project_photos("1")), cc.PER_PAGE + 5)
-        self.assertEqual(calls, [1, 2])
+            self.assertEqual(len(cc.list_project_photos("1")), cc.PAGE_LIMIT + 5)
+        self.assertEqual([c.get("after") for c in calls], [None, "c2"])
+        self.assertTrue(all(c["limit"] == 100 for c in calls))
+
+    def test_stops_paging_once_older_than_cutoff(self):
+        old = [photo(f"o{i}", "2026-01-01T12:00:00Z") for i in range(cc.PAGE_LIMIT)]
+        calls = []
+
+        def fake(path, params=None):
+            calls.append(params.get("after"))
+            return env(old, "more")
+
+        with mock.patch.object(cc, "_get", fake):
+            cc.list_project_photos("1", stop_before_ts=ts("2026-10-01T00:00:00Z"))
+        self.assertEqual(calls, [None])
+
+    def test_real_00768_photo_shape(self):
+        """A photo exactly as the new API returned it for job 00768 on Oct 19."""
+        real = {
+            "id": "3481825879", "project_id": "112543911", "status": "active", "origin": "external",
+            "captured_at": "2026-08-18T18:25:47Z", "processing_status": "processed", "description": None,
+            "uris": [{"type": "original", "uri": "https://static.companycam.com/a.jpeg?d=4032x4032",
+                      "url": "https://static.companycam.com/a.jpeg?d=4032x4032"},
+                     {"type": "thumbnail", "uri": "https://static.companycam.com/a.jpeg?d=250x250",
+                      "url": "https://static.companycam.com/a.jpeg?d=250x250"}],
+        }
+        self.assertEqual(site_scope._fmt_local(cc.parse_timestamp(real["captured_at"])), "2026-08-18 02:25 PM")
+        self.assertTrue(cc.photo_uri(real, "thumbnail").endswith("d=250x250"))
+
+
+class ClientErrorTests(unittest.TestCase):
+    """The real _request: envelope errors and 401 wording."""
+
+    def call_with_http_error(self, code, body):
+        err = urllib.error.HTTPError("https://x", code, "err", {}, io.BytesIO(body.encode()))
+        with mock.patch.dict(os.environ, {"COMPANYCAM_API_KEY": "k"}), \
+                mock.patch.object(cc.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(cc.CompanyCamError) as e:
+                cc.get_project("1")
+        return e.exception
+
+    def test_401_explains_the_token(self):
+        e = self.call_with_http_error(401, json.dumps(
+            {"data": {}, "errors": [{"code": "invalid_token", "message": "The access token is invalid"}], "meta": {}}))
+        self.assertEqual(e.status, 401)
+        self.assertIn("invalid_token: The access token is invalid", str(e))
+        self.assertIn("Personal Access Token", str(e))
+
+    def test_403_scope_message_passes_through(self):
+        e = self.call_with_http_error(403, json.dumps(
+            {"errors": [{"code": "insufficient_scope", "message": "missing pages:read"}]}))
+        self.assertIn("insufficient_scope: missing pages:read", str(e))
+
+    def test_calls_new_api_with_bearer_token(self):
+        seen = {}
+
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout):
+            seen["url"], seen["auth"] = req.full_url, req.headers.get("Authorization")
+            return Resp(json.dumps(env(PROJECT)).encode())
+
+        with mock.patch.dict(os.environ, {"COMPANYCAM_API_KEY": "tok"}), \
+                mock.patch.object(cc.urllib.request, "urlopen", fake_urlopen):
+            self.assertEqual(cc.get_project("117058039")["name"], "Test (1)")
+        self.assertEqual(seen["url"], "https://app.companycam.com/public_api/v1/projects/117058039")
+        self.assertEqual(seen["auth"], "Bearer tok")
 
 
 class HttpEndpointTests(BaseCase):
