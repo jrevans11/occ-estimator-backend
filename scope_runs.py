@@ -91,8 +91,9 @@ def public(run, include_file=False):
               "warnings", "created_at", "updated_at", "answered_at"):
         out[k] = run.get(k)
     usage = run.get("usage") or {}
-    out["usage"] = {k: usage.get(k) for k in ("model", "input_tokens", "output_tokens",
-                                              "cache_read_input_tokens", "cost_usd", "seconds", "calls")}
+    out["usage"] = {k: usage.get(k) for k in ("model", "effort", "input_tokens", "output_tokens",
+                                              "cache_read_input_tokens", "cache_creation_input_tokens",
+                                              "cost_usd", "seconds", "calls")}
     rf = run.get("room_file") or {}
     out["summary"] = {
         "rooms": [r.get("name") for r in rf.get("rooms") or []],

@@ -34,7 +34,7 @@ import companycam_api as cc
 import site_scope
 
 DEFAULT_MODEL = "claude-opus-5-5"     # Jason's call, Oct 20, 2026 (Render env SCOPE_MODEL overrides)
-DEFAULT_EFFORT = "high"               # Opus 5.5 defaults to medium; this step needs the care
+DEFAULT_EFFORT = "medium"             # trial Oct 20, 2026 (Jason): "high" took ~4 min / $0.63 on a 4-photo visit
 MAX_TOKENS = 64000
 API_URL = "https://api.anthropic.com/v1/messages"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"

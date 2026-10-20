@@ -74,7 +74,7 @@ Finish info-taking on site, trigger the analysis right there, get follow-up ques
 - Sonnet 5.5: $2 / $10 per million tokens (input/output). Opus 5.5: $4 / $20. Cache hits on both are 0.05x input price.
 - Photos: Opus 5.5 is on the high-resolution image tier - a full-size phone photo is downscaled to ~1932 px square, ~4,800 input tokens (~$0.02 each on Opus). Resizing to ~1,100 px cuts that to ~1,500 tokens at some cost to small details.
 - Two calls per visit (quick pass + build). Test (1) (9 photos + short transcript): ~$0.55-0.70 on Opus, ~$0.30-0.35 on Sonnet. A 20-photo visit ~$1.00-1.20 on Opus. Per month at 13-22 visits: ~$8-25 Opus, ~$4-12 Sonnet.
-- **Model: Opus 5.5 (decided Oct 20, Jason)** - reading photos + talk into exact wall lengths and opening positions is the hardest step, and mistakes carry into drawings and budget. Effort `high` (Opus 5.5's default is medium). Render env `SCOPE_MODEL` / `SCOPE_EFFORT` switch it without a code change (e.g. `claude-sonnet-5-5`).
+- **Model: Opus 5.5 (decided Oct 20, Jason)** - reading photos + talk into exact wall lengths and opening positions is the hardest step, and mistakes carry into drawings and budget. Effort `high` at first; **trying `medium` from Oct 20** (see Phase 4 live test). Render env `SCOPE_MODEL` / `SCOPE_EFFORT` switch it without a code change (e.g. `claude-sonnet-5-5`).
 - Speech-to-text: ~$0.50-1.50/month, covered by free credits.
 - Log token count and cost per run so real numbers replace estimates.
 
@@ -125,7 +125,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | `COMPANYCAM_CREATOR_EMAIL` (optional) | Render | Phase 2 | Which CompanyCam user shows as creator on drawings/Pages; already used the same way in Vercel |
 | `DEEPGRAM_API_KEY` | Render | Phase 3 | Deepgram console -> API Keys -> new key, expiration Never. Transcription runs on Render (decided Oct 20) |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Render | Phase 4 | console.upstash.com -> Create Database (free) -> REST API section, .env tab. Holds runs (status, questions, answers, room file) for 30 days. Without them runs live in memory and a restart forgets them (the status reply says `store: memory`) |
-| `SCOPE_MODEL`, `SCOPE_EFFORT` (optional) | Render | Phase 4 | Default `claude-opus-5-5` / `high` |
+| `SCOPE_MODEL`, `SCOPE_EFFORT` (optional) | Render | Phase 4 | Default `claude-opus-5-5` / `medium` (trial from Oct 20; was `high`). If `SCOPE_EFFORT` is set in Render it wins over the default |
 | `SCOPE_BACKEND_URL` | Vercel | Phase 3 | `https://occ-estimator.onrender.com` |
 | Web push keys (VAPID) | Vercel | Phase 7 | Generated, no account. iPhone: Home Screen app + allow notifications once |
 | RingCentral SMS | - | Only if push fails | Not checked yet whether OCC's number can send |
@@ -228,3 +228,8 @@ Jason wants to be able to upload photos from an earlier site visit and record no
 - **"Which visit?" picker** before Start, listing the days that have photos or notes ("Oct 19 - 9 photos, 3 notes", "Today - 1 note"); newest day picked by default. The backend already takes `date` on `/scope/runs`; only the page needs it.
 - **Notes tagged to a visit:** a note recorded today about Oct 19 photos can be filed under Oct 19, so the quick pass reads them together. Needs a visit date on the note (Page heading or the italic line) that `parse_notes_page` reads in place of the recording time.
 - **Skip a note** in the "What we found" list so a stray or test note stays out of a run without deleting it from CompanyCam.
+
+### Effort trial (Jason, Oct 20)
+- Worked out from the code and inputs (Render's logs weren't reachable from the session): of the $0.63, roughly $0.09 was reading (instructions ~6k tokens, 4 photos + note ~15k) and ~$0.55 was output, most of it the model thinking at effort `high` (~20k+ of ~25k output tokens; output is billed at 5x input). The same ~25k output tokens explain the 250 s. Smaller photos would save little.
+- Trial: default effort `medium` (still Opus 5.5). The questions card now also shows model, effort and tokens in/out, so each run reports its real numbers.
+- Test: "Read the visit again" on the Oct 20 00489 visit and compare the questions with the `high` run (window wall / block, 6'-0" vs 6'-8" openings, keep doors, engineer and steel lintels, framed vs block, interior vs outside wall). Keep `medium` if they're as good; otherwise set it back to `high` or try Sonnet 5.5.
