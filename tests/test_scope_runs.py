@@ -341,7 +341,7 @@ class ClaudeCallTests(Base):
         self.assertEqual(usage["cache_creation_input_tokens"], 9000)
         body, headers = fake.bodies[0], fake.headers[0]
         self.assertEqual(body["model"], "claude-opus-5-5")
-        self.assertEqual(body["output_config"], {"effort": "high"})
+        self.assertEqual(body["output_config"], {"effort": "medium"})
         self.assertEqual(body["fallbacks"], "default")
         self.assertTrue(body["stream"])
         self.assertNotIn("thinking", body)          # Opus 5.5: always adaptive; disabled is a 400
@@ -350,10 +350,10 @@ class ClaudeCallTests(Base):
 
     def test_model_and_effort_from_env(self):
         fake = self.claude(sse("{}"))
-        with mock.patch.dict(os.environ, {"SCOPE_MODEL": "claude-sonnet-5-5", "SCOPE_EFFORT": "medium"}):
+        with mock.patch.dict(os.environ, {"SCOPE_MODEL": "claude-sonnet-5-5", "SCOPE_EFFORT": "high"}):
             qp.call_claude([], [])
         self.assertEqual(fake.bodies[0]["model"], "claude-sonnet-5-5")
-        self.assertEqual(fake.bodies[0]["output_config"], {"effort": "medium"})
+        self.assertEqual(fake.bodies[0]["output_config"], {"effort": "high"})
 
     def test_cost(self):
         # 30k fresh x $4 + 9k cache write x $5 + 6k out x $20 = 0.12 + 0.045 + 0.12
