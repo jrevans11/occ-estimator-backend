@@ -24,6 +24,8 @@ SITE_VISIT_NOTES_TITLE = "Site Visit Notes"
 MIN_VIDEO_SECONDS = 5
 # Transcript lookups are one call each; a visit has a handful of videos.
 MAX_TRANSCRIPT_CHECKS = 10
+# This many photos sharing one capture minute = a camera-roll batch upload.
+BATCH_UPLOAD_MIN_PHOTOS = 5
 
 
 class PreviewError(Exception):
@@ -194,6 +196,9 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
             "description": p.get("description") or "",
         })
     photo_items.sort(key=lambda x: x["captured_at"] or "")  # capture order, like the visit
+    batch_warning = _batch_upload_warning(visit_photos)
+    if batch_warning:
+        warnings.append(batch_warning)
 
     video_items = []
     transcript_checks = 0
@@ -215,7 +220,11 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
         elif transcript_checks < MAX_TRANSCRIPT_CHECKS:
             transcript_checks += 1
             try:
-                item["transcript"] = "ready" if cc.get_video_transcript(v.get("id")) else "not ready"
+                text = cc.get_video_transcript(v.get("id"))
+                if text is cc.TRANSCRIPT_MISSING:
+                    item["transcript"] = "unknown (CompanyCam did not say)"
+                else:
+                    item["transcript"] = "ready" if text else "not ready"
             except cc.CompanyCamError as e:
                 warnings.append(f"Could not check the transcript for video {item['id']} ({e}).")
         video_items.append(item)
@@ -253,6 +262,28 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
     }
     result["summary"] = summarize(result)
     return result
+
+
+def _batch_upload_warning(photos):
+    """Photos added from the camera roll get the upload time as captured_at,
+    so a whole visit shows the same minute (job 00768: 15 photos at 2:25 PM,
+    videos at 10:10-10:17 AM). Notes can't be matched to those by time."""
+    if len(photos) < BATCH_UPLOAD_MIN_PHOTOS:
+        return None
+    minutes = {}
+    for p in photos:
+        ts = cc.parse_timestamp(p.get("captured_at"))
+        if ts is not None:
+            key = ts // 60
+            minutes[key] = minutes.get(key, 0) + 1
+    if not minutes:
+        return None
+    biggest = max(minutes.values())
+    if biggest >= BATCH_UPLOAD_MIN_PHOTOS and biggest >= len(photos) * 0.8:
+        return (f"{biggest} of {len(photos)} photos have the same capture minute, so they look like they were "
+                "uploaded in a batch after the visit. Their times are upload times, so notes can't be matched "
+                "to them by time. Take site photos with the CompanyCam camera to keep real capture times.")
+    return None
 
 
 def _other_projects_at_address(project, warnings):
