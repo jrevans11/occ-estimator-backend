@@ -596,12 +596,17 @@ def finish_room_file(obj, job, project_id, visit):
 
 # ── The whole pass ───────────────────────────────────────────────────────────
 
-def ask_for_json(system, content, parse, label, log, refused, retry_hint):
+def _room_check(obj):
+    return room_problems(obj["room_file"])
+
+
+def ask_for_json(system, content, parse, label, log, refused, retry_hint, check=_room_check):
     """Call Claude and parse its JSON answer; an unusable answer (bad JSON, a
     room the drawings can't read, cut off) is sent back once with the problem.
-    parse(text) returns the answer object or raises ValueError. Returns
-    (answer, usage) - usage sums every call. Raises QuickPassError / ClaudeError.
-    Also used by the build step (scope_build)."""
+    parse(text) returns the answer object or raises ValueError; check(obj)
+    returns a list of problems (default: the room file's), None to skip.
+    Returns (answer, usage) - usage sums every call. Raises QuickPassError /
+    ClaudeError. Also used by the build (scope_build) and budget (scope_budget)."""
     calls, total_cost, usage_sum, served = 0, 0.0, {}, None
     obj, last_problem = None, None
     for attempt in (1, 2):
@@ -619,7 +624,7 @@ def ask_for_json(system, content, parse, label, log, refused, retry_hint):
         else:
             try:
                 obj = parse(text)
-                problems = room_problems(obj["room_file"])
+                problems = check(obj) if check else []
                 if not problems:
                     break
                 last_problem = "; ".join(problems)
