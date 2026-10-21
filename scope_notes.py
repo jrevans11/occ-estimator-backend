@@ -18,15 +18,8 @@ earlier visit and dictates about them later): the italic line then says
 "Filed under the Oct 19, 2026 visit." and the quick pass reads it with that
 visit instead of the day it was recorded.
 
-A walkthrough (scope_walkthrough.py) is one long Voice Memo recorded while
-Jason took the visit's CompanyCam photos. It comes in on the same route with
-kind "walkthrough" and lands as one note with a marker where each photo was
-taken.
-
 Endpoints (registered in app.py; all need X-Scope-Key):
     POST /scope/notes          {note_id, job, audio_url | text, started_at, saved_at, visit_date?}
-                               walkthrough: {kind: "walkthrough", note_id, job, audio_url, tapped_at?,
-                                             file_modified_at?, visit_date?}
     GET  /scope/notes/status?id=<note_id>
     POST /scope/notes/fix      {job, heading, old_text, new_text}
     POST /scope/notes/visit    {job, heading, text, visit_date}   file a saved note under another visit
@@ -50,7 +43,6 @@ import companycam_api as cc
 import scope_quickpass
 import scope_runs
 import scope_transcribe
-import scope_walkthrough
 import site_scope
 
 NOTES_TITLE = site_scope.SITE_VISIT_NOTES_TITLE
@@ -178,29 +170,19 @@ def _write(project_id, add_nodes):
 
 
 def append_note(project_id, heading, text, started_ts, saved_ts, duration=None, audio_url=None,
-                visit_date=None, walkthrough=None):
+                visit_date=None):
     """Add one note to the project's Site Visit Notes Page. If CompanyCam
-    refuses the audio link, the link goes in as plain text instead.
-    walkthrough: {"laid_out", "photo_count", "start_source"} for a
-    walkthrough recording - its body has photo markers in it."""
-    def nodes(link_audio):
-        out = note_nodes(heading, "" if walkthrough else text, started_ts, saved_ts, duration, audio_url,
-                         link_audio=link_audio, visit_date=visit_date)
-        if walkthrough:
-            meta = out[1]["content"][0]
-            sentence = scope_walkthrough.meta_sentence(walkthrough["photo_count"], walkthrough["start_source"])
-            meta["text"] = meta["text"].replace(". ", f". {sentence} ", 1)
-            out += scope_walkthrough.body_nodes(walkthrough["laid_out"])
-        return out
-
+    refuses the audio link, the link goes in as plain text instead."""
     with _project_lock(project_id):
         try:
-            return _write(project_id, nodes(True))
+            return _write(project_id, note_nodes(heading, text, started_ts, saved_ts, duration, audio_url,
+                                                 visit_date=visit_date))
         except cc.CompanyCamError as e:
             if not audio_url or e.status not in (400, 422):
                 raise
             print(f"Site Visit Notes: CompanyCam refused the audio link ({e}); saving it as plain text")
-            return _write(project_id, nodes(False))
+            return _write(project_id, note_nodes(heading, text, started_ts, saved_ts, duration, audio_url,
+                                                 link_audio=False, visit_date=visit_date))
 
 
 def _notes_under(content, heading):
@@ -323,7 +305,7 @@ def _forget_old(now):
 def _public(record):
     return {"ok": True, **{k: record.get(k) for k in (
         "note_id", "status", "text", "heading", "error", "job_number", "project_id", "page_id",
-        "duration_seconds", "page_result", "visit_date", "kind", "photo_count", "start_source")}}
+        "duration_seconds", "page_result", "visit_date")}}
 
 
 def _update(note_id, **fields):
@@ -338,39 +320,11 @@ def note_status(note_id):
         return _public(record) if record else None
 
 
-def _process_walkthrough(note_id, r):
-    """Background, for a walkthrough: transcribe with sentence times, work out
-    when it started, mark the photos taken during it, write it to the Page."""
-    paragraphs, duration = scope_transcribe.transcribe_url_timed(r["audio_url"])
-    if not paragraphs:
-        _update(note_id, status="failed", text="", duration_seconds=duration,
-                error="No speech was heard in the recording. Check it's the right Voice Memo.")
-        print(f"Site Visit Notes {note_id}: no speech in walkthrough {r['audio_url']}")
-        return
-    start_ts, source = scope_walkthrough.choose_start(r["tapped_ts"], r["file_ts"], duration, r["saved_ts"])
-    end_ts = int(round(start_ts + (duration or 0)))
-    photos = scope_walkthrough.photos_during(
-        cc.list_project_photos(r["project_id"], stop_before_ts=start_ts - 120), start_ts, duration)
-    laid_out = scope_walkthrough.layout(paragraphs, photos, start_ts)
-    text = scope_walkthrough.plain_text(laid_out)
-    heading = note_heading(start_ts)
-    _update(note_id, status="saving", text=text, duration_seconds=duration, heading=heading,
-            photo_count=len(photos), start_source=source)
-    page_id = append_note(r["project_id"], heading, text, start_ts, end_ts, duration, r["audio_url"],
-                          r["filed_under"], walkthrough={"laid_out": laid_out, "photo_count": len(photos),
-                                                         "start_source": source})
-    _update(note_id, status="saved", page_id=page_id)
-    print(f"Site Visit Notes {note_id}: walkthrough saved to page {page_id} on project {r['project_id']} "
-          f"(job {r['job_number']}, {int(duration or 0)} s, {len(photos)} photos, start from {source})")
-
-
 def _process(note_id):
     """Background: transcribe, then write to the Page. Never raises."""
     with _notes_lock:
         r = dict(_notes[note_id])
     try:
-        if r.get("kind") == "walkthrough":
-            return _process_walkthrough(note_id, r)
         text, duration = r["text"], None
         if r["audio_url"]:
             text, duration = scope_transcribe.transcribe_url(r["audio_url"])
@@ -418,11 +372,8 @@ def submit_note(payload, jobtread_query, org_id, start_thread=None, now=None):
     if existing:
         return 200, existing
 
-    kind = "walkthrough" if payload.get("kind") == "walkthrough" else "note"
     audio_url = str(payload.get("audio_url") or "").strip()
     text = str(payload.get("text") or "").strip()
-    if kind == "walkthrough" and not audio_url:
-        raise NoteError("Send the walkthrough's audio_url.")
     if audio_url:
         u = urlparse(audio_url)
         if u.scheme != "https" or not (u.hostname or "").endswith(AUDIO_HOST_SUFFIX):
@@ -438,27 +389,16 @@ def submit_note(payload, jobtread_query, org_id, start_thread=None, now=None):
         raise NoteError("COMPANYCAM_API_KEY is not set on this server.", 503)
 
     job, project_id = _project_for_job(payload.get("job"), jobtread_query, org_id)
-    tapped_ts = file_ts = None
-    if kind == "walkthrough":
-        # The start isn't known until Deepgram gives the length; the day comes
-        # from the Start tap or the file's time (both close enough for that).
-        tapped_ts = cc.parse_timestamp(payload.get("tapped_at"))
-        file_ts = cc.parse_timestamp(payload.get("file_modified_at"))
-        saved_ts = int(now)
-        started_ts = tapped_ts or file_ts or saved_ts
-    else:
-        saved_ts = _timestamp(payload.get("saved_at"), int(now))
-        started_ts = _timestamp(payload.get("started_at"), saved_ts)
+    saved_ts = _timestamp(payload.get("saved_at"), int(now))
+    started_ts = _timestamp(payload.get("started_at"), saved_ts)
     recorded = site_scope.to_local(started_ts).strftime("%Y-%m-%d")
     filed_under = _check_visit_date(str(payload.get("visit_date") or "").strip(), recorded)
     record = {
         "note_id": note_id, "created": now, "status": "transcribing" if audio_url else "saving",
         "audio_url": audio_url, "text": text, "error": None,
         "job_number": job.get("number"), "project_id": project_id, "page_id": None,
-        "started_ts": started_ts, "saved_ts": saved_ts,
-        "heading": None if kind == "walkthrough" else note_heading(started_ts),
+        "started_ts": started_ts, "saved_ts": saved_ts, "heading": note_heading(started_ts),
         "duration_seconds": None, "filed_under": filed_under, "visit_date": filed_under or recorded,
-        "kind": kind, "tapped_ts": tapped_ts, "file_ts": file_ts, "photo_count": None, "start_source": None,
     }
     with _notes_lock:
         if note_id in _notes:     # a retry raced this one
