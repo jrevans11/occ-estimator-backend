@@ -326,10 +326,7 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
             "name": project.get("name"),
             "url": project.get("project_url") or f"https://app.companycam.com/projects/{project_id}",
             # Opens the CompanyCam camera on this project (the scope page's Start walkthrough).
-            # CompanyCam's documented form (docs.companycam.com/docs/mobile-deep-links). The API's
-            # capture_photo_deeplink adds a /<base64 name> segment, and on Jason's iPhone (Oct 20)
-            # that opened the app's home screen instead of the camera.
-            "camera_url": f"ccam://camera/{project.get('id') or project_id}",
+            "camera_url": project.get("capture_photo_deeplink") or "",
             "photo_count_on_project": len(photos),
         },
         "today": today,

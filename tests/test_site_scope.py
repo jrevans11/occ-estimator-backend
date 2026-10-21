@@ -277,7 +277,7 @@ class PreviewTests(BaseCase):
         self.assertTrue(r["photos"]["items"][0]["thumbnail"].endswith("?d=250x250"))
         self.assertEqual(r["photos"]["items"][2]["description"], "Wall 3")
         self.assertEqual(r["companycam_project"]["photo_count_on_project"], 4)
-        self.assertEqual(r["companycam_project"]["camera_url"], "ccam://camera/117058039")
+        self.assertEqual(r["companycam_project"]["camera_url"], "ccam://camera/117058039/VGVzdCAoMSk%3D")
 
     def test_date_all_and_specific_date(self):
         self.assertEqual(self.preview(date="all")["photos"]["count"], 4)
