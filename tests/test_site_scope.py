@@ -59,7 +59,6 @@ PROJECT = {
     "name": "Test (1)",
     "archived": False,
     "project_url": "https://app.companycam.com/projects/117058039",
-    "capture_photo_deeplink": "ccam://camera/117058039/VGVzdCAoMSk%3D",
     "address": {"street_address_1": "3140 Wade Hampton Blvd", "city": "Taylors", "state": "SC"},
     "photo_count": 4,
 }
@@ -277,7 +276,6 @@ class PreviewTests(BaseCase):
         self.assertTrue(r["photos"]["items"][0]["thumbnail"].endswith("?d=250x250"))
         self.assertEqual(r["photos"]["items"][2]["description"], "Wall 3")
         self.assertEqual(r["companycam_project"]["photo_count_on_project"], 4)
-        self.assertEqual(r["companycam_project"]["camera_url"], "ccam://camera/117058039")
 
     def test_date_all_and_specific_date(self):
         self.assertEqual(self.preview(date="all")["photos"]["count"], 4)
