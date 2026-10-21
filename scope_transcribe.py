@@ -25,6 +25,9 @@ import urllib.request
 API_URL = "https://api.deepgram.com/v1/listen"
 MODEL = "nova-3"
 TIMEOUT_SECONDS = 120
+# A walkthrough can run an hour; Deepgram takes well under a minute for that,
+# but leave room.
+LONG_TIMEOUT_SECONDS = 600
 
 # OCC trade words Deepgram should listen for. Deepgram caps the whole list at
 # 500 tokens and suggests the 20-50 that matter most, so keep it focused on
@@ -78,9 +81,32 @@ def parse_response(body):
     return text, (float(duration) if isinstance(duration, (int, float)) else None)
 
 
-def transcribe_url(audio_url):
-    """Transcribe audio Deepgram can download. Returns (text, duration_seconds);
-    text is "" if nobody spoke."""
+def parse_timed_response(body):
+    """(paragraphs, duration_seconds) from a Deepgram response, keeping when
+    each sentence was said: paragraphs is [[{"text", "start", "end"}, ...], ...]
+    with start/end in seconds from the start of the recording. Falls back to
+    one sentence per paragraph of the plain transcript (start 0) when
+    Deepgram sent no sentence times."""
+    text, duration = parse_response(body)
+    alt = body["results"]["channels"][0]["alternatives"][0]
+    paragraphs = []
+    for p in (alt.get("paragraphs") or {}).get("paragraphs") or []:
+        sentences = []
+        for s in p.get("sentences") or []:
+            t = " ".join(str(s.get("text") or "").split())
+            if t and isinstance(s.get("start"), (int, float)):
+                end = s.get("end")
+                sentences.append({"text": t, "start": float(s["start"]),
+                                  "end": float(end) if isinstance(end, (int, float)) else float(s["start"])})
+        if sentences:
+            paragraphs.append(sentences)
+    if not paragraphs and text:
+        paragraphs = [[{"text": " ".join(b.split()), "start": 0.0, "end": 0.0}]
+                      for b in text.split("\n\n") if b.strip()]
+    return paragraphs, duration
+
+
+def _call(audio_url, timeout):
     if not is_configured():
         raise TranscribeError("DEEPGRAM_API_KEY is not set on this server.")
     req = urllib.request.Request(
@@ -91,8 +117,8 @@ def transcribe_url(audio_url):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as r:
-            return parse_response(json.loads(r.read().decode("utf-8")))
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]
         if e.code == 401:
@@ -102,3 +128,16 @@ def transcribe_url(audio_url):
         raise TranscribeError(f"Could not reach Deepgram: {e.reason}")
     except (ValueError, TimeoutError) as e:
         raise TranscribeError(f"Deepgram call failed: {e}")
+
+
+def transcribe_url(audio_url):
+    """Transcribe audio Deepgram can download. Returns (text, duration_seconds);
+    text is "" if nobody spoke."""
+    return parse_response(_call(audio_url, TIMEOUT_SECONDS))
+
+
+def transcribe_url_timed(audio_url):
+    """Like transcribe_url, for a long walkthrough recording: returns
+    (paragraphs, duration_seconds) with each sentence's time (see
+    parse_timed_response). paragraphs is [] if nobody spoke."""
+    return parse_timed_response(_call(audio_url, LONG_TIMEOUT_SECONDS))
