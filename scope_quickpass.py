@@ -312,6 +312,7 @@ WHAT YOU GET
 - Everything from the visit in the order it happened, Greenville local time. Photos are labeled P1, P2...; dictated notes N1, N2...; video transcripts V1, V2...; CompanyCam AI walkthrough summaries C1, C2....
 - A CompanyCam AI walkthrough summary is CompanyCam's own machine summary of a walkthrough Jason recorded. Treat its scope like a note: work it lists belongs in scope_items even if nothing else mentions it. Its numbers are weaker than Jason's - where it disagrees with his notes, videos or answers, theirs win; add a conflict.
 - Jason's habit: photograph a room or area, then dictate it. Photos taken just before (or during) a note usually show what that note describes. Use the times to tie photos to notes and to walls.
+- A walkthrough note is one long recording Jason made while he took the visit's photos. Markers like "[Photo 3, 2:16:40 PM]" show where in his talk each photo was taken; the numbers count photos within that recording, so match a marker to a P label by its time. What he says right around a marker usually describes that photo.
 - Notes are speech-to-text. Trade words are sometimes misheard ("Wayne's coat" is wainscot, "jam" is jamb, "p trap" is P-trap, "joist" may be plural). Read those as the trade word. NUMBERS ARE DIFFERENT: never silently change a dictated number. If a number looks misheard or impossible next to the photos (a 20 ft soffit run dictated as 12, a vanity wider than its wall), keep the dictated number, add a flag, and ask about it.
 
 HOW TO READ IT

@@ -325,6 +325,8 @@ def build_visit_preview(job_ref, jobtread_query, org_id, date_param=""):
             "id": str(project.get("id") or project_id),
             "name": project.get("name"),
             "url": project.get("project_url") or f"https://app.companycam.com/projects/{project_id}",
+            # Opens the CompanyCam camera on this project (the scope page's Start walkthrough).
+            "camera_url": project.get("capture_photo_deeplink") or "",
             "photo_count_on_project": len(photos),
         },
         "today": today,
