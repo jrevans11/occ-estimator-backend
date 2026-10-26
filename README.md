@@ -93,8 +93,12 @@ webhooks, and the daily `/send-followups` scheduler.
   `redland_electric_invoice_history.csv`, `crawlspace_medic_invoice_history.csv`,
   `tile_with_style_invoice_history.csv`, `greer_flooring_invoice_history.csv`,
   `jordan_lumber_invoice_history.csv`.
+- `feedback_loop.py`: after every AI estimate is written (both
+  `estimate_closing_job` and `estimate_general_job`), saves the untouched
+  original as an `[AI-FEEDBACK-BASELINE-V1]` Daily Log on the job so it can
+  later be compared with what was actually sent. The automated sweep and
+  Google Sheet in the same file are still not wired in; it is the only user
+  of `gspread`/`google-auth` in `requirements.txt`.
 - Not used by the server: `repair_analyzer.py`, `repair_analyzer_retry.py` and
-  `cluster_repair_items.py` (one-off local analysis scripts), and
-  `feedback_loop.py` (an unfinished estimate-corrections sweep, not wired in;
-  it is the only user of `gspread`/`google-auth` in `requirements.txt`).
+  `cluster_repair_items.py` (one-off local analysis scripts).
 - `CLAUDE.md`: project history, pricing rules, and the reasoning behind them.

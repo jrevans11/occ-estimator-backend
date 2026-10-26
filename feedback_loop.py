@@ -41,17 +41,15 @@ this whole module.
 WHAT'S PROVEN VS. UNVERIFIED (be honest about this — same practice as every
 other new JobTread mechanism in this project):
   - PROVEN: createDailyLog (jobId/date/notes/notify) — live-tested already.
-  - PROVEN: job.costGroups.descendentCostItems shape (id/name/quantity/
-    unitCost/unitPrice/costType.name) — proven at the `document` root in
-    jobtread_explore.py; used here at the `job` root instead, since
-    createCostGroup already writes cost groups scoped by jobId directly.
-    Very likely to work the same way, but not independently confirmed.
-  - UNVERIFIED: reading job.dailyLogs back via a query (only ever written
-    to, never read, before this module). If this field name is wrong, the
-    sweep endpoint's logs will show a clear JobTread API error on first
-    real run — same "fix from the first real error" pattern used
-    successfully for sourceCostItemId, createFile's targetType enum, etc.
-    earlier in this project.
+  - PROVEN (Oct 26 2026): reading job.dailyLogs back. 15 baselines written
+    between Jul 29 and Aug 19 2026 (jobs 00705-00767) were read back and
+    parsed successfully during the first manual feedback review.
+  - PROVEN (Oct 26 2026): job.costItems with where [["document","id"], null]
+    returns ONLY budget lines. Plain job.costItems / job.costGroups also
+    return a frozen copy of every line for each estimate document on the
+    job, so anything that compares "current budget" must use that filter.
+    Every cost item keeps its original createdAt, which is how the baseline
+    capture below tells the AI's lines apart from anything added later.
   - UNVERIFIED: organization.jobs supports the pagination/customFieldValues
     shape used in find_candidate_jobs() — modeled directly on the already-
     proven pattern in send_followup_email_from_todo()/create_job_record(),
@@ -60,10 +58,23 @@ other new JobTread mechanism in this project):
   - NOT YET CONFIGURED: Google Sheets write access (needs a one-time Jason
     setup — see CLAUDE.md "FEEDBACK LOOP SETUP" for the exact steps) and
     the fixed internal "admin" job the monthly to-do reminder attaches to.
+
+HISTORY — baseline capture went dark Aug 19 2026 and was restored Oct 26 2026:
+The original capture (BaselineCollector + callbacks inside add_cost_groups_v2)
+lived in the app.py lineage that was replaced on Aug 19 2026, so no baseline
+was written for any estimate after job 00767. The restored capture,
+capture_baseline_from_job(), does NOT hook into add_cost_groups_v2. It runs
+right after an estimate is written, reads back every budget line created
+since the run started, and writes the same [AI-FEEDBACK-BASELINE-V1] record.
+That makes it independent of the writer's internals, so a future rewrite of
+add_cost_groups_v2 / add_cost_groups can't silently switch it off again.
+It is called from both estimate paths in app.py: estimate_closing_job()
+(v2, closing repairs) and estimate_general_job() (flat-price Home Repair,
+GVL, Remodel, Pre-listing and the general sales-tool endpoint).
 """
 import json
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 BASELINE_MARKER = "[AI-FEEDBACK-BASELINE-V1]"
 SWEPT_MARKER = "[AI-FEEDBACK-SWEPT-V1]"
@@ -92,11 +103,9 @@ class BaselineCollector:
     the baseline from real IDs (not names) means a later diff survives
     Jason renaming an item — matching by ID, not fuzzy text.
 
-    Usage (see app.py's _run_v2_estimate_and_write()):
-        collector = BaselineCollector(job_id)
-        v2.add_cost_groups_v2(..., on_group_created=collector.on_group_created,
-                               on_item_created=collector.on_item_created)
-        write_baseline(jobtread_query, job_id, collector.to_record())
+    NOT USED since Oct 26 2026 — the current add_cost_groups_v2 has no
+    callback hooks. capture_baseline_from_job() replaced it (see the module
+    docstring). Kept only because it documents the record format.
     """
 
     def __init__(self, job_id):
@@ -141,20 +150,151 @@ def write_baseline(jobtread_query_fn, job_id, baseline_record, log_date=None):
     estimate itself.
     """
     log_date = log_date or date.today().isoformat()
-    notes = f"{BASELINE_MARKER}{json.dumps(baseline_record, separators=(',', ':'))}"
-    try:
+    n_groups = len(baseline_record.get("groups", []))
+
+    def _write(record):
+        notes = f"{BASELINE_MARKER}{json.dumps(record, separators=(',', ':'))}"
         jobtread_query_fn({
             "createDailyLog": {
                 "$": {"jobId": job_id, "date": log_date, "notes": notes, "notify": False},
                 "createdDailyLog": {"id": {}}
             }
         })
-        n_groups = len(baseline_record.get("groups", []))
-        print(f"  Feedback-loop baseline saved for job {job_id} ({n_groups} group(s))")
+        return len(notes)
+
+    try:
+        size = _write(baseline_record)
+        print(f"  Feedback-loop baseline saved for job {job_id} ({n_groups} group(s), {size} chars)")
+        return True
+    except Exception as e:
+        print(f"  Feedback-loop baseline save failed for job {job_id}: {e} — retrying without item names")
+
+    # Fallback for an unusually large estimate: drop item names (the diff
+    # matches by item ID, so quantities and prices are what matter) and
+    # shorten group titles. Still parseable by parse_baseline_and_swept().
+    try:
+        slim = json.loads(json.dumps(baseline_record))
+        slim["slim"] = True
+        for g in slim.get("groups", []):
+            g["title"] = (g.get("title") or "")[:60]
+            for item in (g.get("items") or {}).values():
+                item.pop("name", None)
+        size = _write(slim)
+        print(f"  Feedback-loop baseline saved for job {job_id} without item names ({size} chars)")
         return True
     except Exception as e:
         print(f"  Feedback-loop baseline save failed for job {job_id} (non-fatal): {e}")
         return False
+
+
+def _utc_iso(dt_value):
+    return dt_value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def run_started_marker(skew_seconds=60):
+    """Timestamp to take just BEFORE an estimate's cost groups are written.
+    Pass it to capture_baseline_from_job() afterwards. Backed off a minute
+    so a small clock difference between Render and JobTread can't drop the
+    first lines the estimator writes."""
+    return _utc_iso(datetime.now(timezone.utc) - timedelta(seconds=skew_seconds))
+
+
+def _fetch_budget_items(jobtread_query_fn, job_id, created_since=None, page_size=100):
+    """Every BUDGET cost item on a job (estimate-document copies excluded),
+    optionally only those created at or after `created_since` (ISO UTC).
+    Paginates, so large estimates are never truncated. Raises on API error.
+    """
+    conditions = [[["document", "id"], None]]
+    if created_since:
+        conditions.append(["createdAt", ">=", created_since])
+    where = {"and": conditions} if len(conditions) > 1 else conditions[0]
+
+    nodes, page = [], None
+    for _ in range(20):  # 20 pages x 100 lines is far beyond any real estimate
+        args = {"where": where, "size": page_size,
+                "sortBy": [{"field": "createdAt", "order": "asc"}]}
+        if page:
+            args["page"] = page
+        resp = jobtread_query_fn({
+            "job": {
+                "$": {"id": job_id},
+                "costItems": {
+                    "$": args,
+                    "nodes": {
+                        "id": {}, "name": {}, "quantity": {}, "unitCost": {},
+                        "unitPrice": {}, "createdAt": {},
+                        "costType": {"id": {}, "name": {}},
+                        "costCode": {"name": {}},
+                        "costGroup": {"id": {}, "name": {}},
+                    },
+                    "nextPage": {},
+                }
+            }
+        })
+        conn = ((resp or {}).get("job") or {}).get("costItems") or {}
+        nodes.extend(conn.get("nodes") or [])
+        page = conn.get("nextPage")
+        if not page:
+            break
+    return nodes
+
+
+def capture_baseline_from_job(jobtread_query_fn, job_id, run_started_iso):
+    """Save the AI's untouched estimate as the feedback-loop baseline.
+
+    Call right after an estimate's cost groups are written, passing the
+    run_started_marker() taken just before the write began. Reads back the
+    budget lines created since then and writes them as one
+    [AI-FEEDBACK-BASELINE-V1] Daily Log — the same record format the July
+    2026 baselines used, so diff_baseline_vs_current() reads both.
+
+    The $0 "NOTES (internal ...)" lines are skipped: they carry text, not
+    pricing, and Jason edits them by design.
+
+    Never raises. A failed capture only means this one job can't be
+    compared later; it must never affect the estimate itself.
+    """
+    try:
+        items = _fetch_budget_items(jobtread_query_fn, job_id, created_since=run_started_iso)
+    except Exception as e:
+        print(f"  Feedback-loop baseline: could not read back job {job_id} (non-fatal): {e}")
+        return False
+
+    groups = {}
+    for it in items:
+        name = it.get("name") or ""
+        if name.startswith("NOTES ("):
+            continue
+        group = it.get("costGroup") or {}
+        gid = group.get("id")
+        item_id = it.get("id")
+        if not gid or not item_id:
+            continue
+        g = groups.setdefault(gid, {
+            "group_id": gid,
+            "title": group.get("name") or "",
+            "cost_code": (it.get("costCode") or {}).get("name") or "",
+            "items": {},
+        })
+        g["items"][item_id] = {
+            "name": name,
+            "cost_type_id": (it.get("costType") or {}).get("id"),
+            "qty": it.get("quantity"),
+            "unit_cost": it.get("unitCost"),
+            "unit_price": it.get("unitPrice"),
+        }
+
+    if not groups:
+        print(f"  Feedback-loop baseline: no new budget lines found on job {job_id} — nothing saved")
+        return False
+
+    record = {
+        "job_id": job_id,
+        "created_at": _utc_iso(datetime.now(timezone.utc)),
+        "source": "readback-v2",
+        "groups": list(groups.values()),
+    }
+    return write_baseline(jobtread_query_fn, job_id, record)
 
 
 def fetch_daily_logs(jobtread_query_fn, job_id, size=50):
@@ -300,58 +440,38 @@ def find_candidate_jobs(jobtread_query_fn, org_id, min_age_days=MIN_SWEEP_AGE_DA
     return candidates
 
 
-def fetch_current_cost_items(jobtread_query_fn, job_id, group_size=30, item_size=20):
-    """Pull a job's CURRENT real cost groups/items, keyed by real item ID.
+def fetch_current_cost_items(jobtread_query_fn, job_id):
+    """Pull a job's CURRENT budget lines, keyed by real item ID.
 
-    Mirrors the proven document.costGroups.descendentCostItems shape from
-    jobtread_explore.py (id/name/quantity/unitCost/unitPrice/costType.name)
-    but rooted at `job` instead of `document`, since add_cost_groups_v2()
-    already writes cost groups scoped by jobId directly — the read side
-    should mirror the write side. If this hits the same query-complexity
-    413 the document-rooted version once did, shrink group_size/item_size
-    the same way jobtread_explore.py's probe loop does (not implemented
-    here yet — add if the first real sweep run shows a 413).
+    Fixed Oct 26 2026: the earlier version read job.costGroups, which also
+    returns every estimate document's frozen copy of the budget (each with
+    new item IDs, so every one would have shown up as an "added" line), and
+    it capped each group at 20 lines. This reads job.costItems filtered to
+    budget lines only, paginated. NOTES lines are skipped to match the
+    baseline.
     """
     try:
-        resp = jobtread_query_fn({
-            "job": {
-                "$": {"id": job_id},
-                "costGroups": {
-                    "$": {"size": group_size},
-                    "nodes": {
-                        "id": {}, "name": {},
-                        "descendentCostItems": {
-                            "$": {"size": item_size},
-                            "nodes": {
-                                "id": {}, "name": {}, "quantity": {},
-                                "unitCost": {}, "unitPrice": {},
-                                "costType": {"name": {}}
-                            }
-                        }
-                    }
-                }
-            }
-        })
+        nodes = _fetch_budget_items(jobtread_query_fn, job_id)
     except Exception as e:
         print(f"  fetch_current_cost_items failed for job {job_id}: {e}")
         return {}
 
-    groups = (resp.get("job") or {}).get("costGroups", {}).get("nodes", []) or []
     items = {}
-    for g in groups:
-        for it in (g.get("descendentCostItems") or {}).get("nodes", []) or []:
-            item_id = it.get("id")
-            if not item_id:
-                continue
-            items[item_id] = {
-                "group_id": g.get("id"),
-                "group_name": g.get("name"),
-                "name": it.get("name"),
-                "qty": it.get("quantity"),
-                "unit_cost": it.get("unitCost"),
-                "unit_price": it.get("unitPrice"),
-                "cost_type": (it.get("costType") or {}).get("name"),
-            }
+    for it in nodes:
+        item_id = it.get("id")
+        name = it.get("name") or ""
+        if not item_id or name.startswith("NOTES ("):
+            continue
+        group = it.get("costGroup") or {}
+        items[item_id] = {
+            "group_id": group.get("id"),
+            "group_name": group.get("name"),
+            "name": name,
+            "qty": it.get("quantity"),
+            "unit_cost": it.get("unitCost"),
+            "unit_price": it.get("unitPrice"),
+            "cost_type": (it.get("costType") or {}).get("name"),
+        }
     return items
 
 
