@@ -25,6 +25,11 @@ import estimate_v2_draft as v2
 import site_scope
 import scope_uploads
 import scope_notes
+# Feedback loop: saves each AI estimate's untouched original as a Daily Log
+# so it can later be compared with what was actually sent. Called from
+# estimate_closing_job() and estimate_general_job() (restored Oct 26 2026 —
+# it had been dark since the Aug 19 2026 app.py rebuild).
+import feedback_loop
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -3068,11 +3073,15 @@ def estimate_closing_job(job_id, addendum_pdf_bytes, inspection_pdf_bytes,
     # them here for whoever reviews the estimate before it goes out.
     v2.log_internal_review_notes(estimate)
 
+    run_started = feedback_loop.run_started_marker()
     added = v2.add_cost_groups_v2(job_id, estimate, jobtread_query)
     print(f"  {log_prefix}{added} cost groups added to job {job_id}")
 
     # Generation Spec §5 — trailing exclusions group, always last.
     v2.add_not_included_group(job_id, estimate, jobtread_query)
+
+    # Save the untouched estimate for the feedback loop. Never raises.
+    feedback_loop.capture_baseline_from_job(jobtread_query, job_id, run_started)
     return added, total
 
 
@@ -3812,8 +3821,11 @@ def estimate_general_job(job_id, job_type, form_label, client_name, client_phone
         if stated_budget:
             projected = _coerce_budget_number(stated_budget)
         if estimate:
+            run_started = feedback_loop.run_started_marker()
             added = add_cost_groups(job_id, estimate)
             print(f"  {added} cost groups added to job {job_id}")
+            # Save the untouched estimate for the feedback loop. Never raises.
+            feedback_loop.capture_baseline_from_job(jobtread_query, job_id, run_started)
         else:
             print(f"  Needs consult — no cost groups generated for job {job_id}")
         if gated_notes != notes:
