@@ -26,21 +26,46 @@ important and needs to be finalized"):
   a human (Jason, or a future Claude session working from his notes) has
   actually looked at them. No code in this module writes to the prompt.
 
-DESIGN NOTE — why the baseline lives in a Daily Log, not the CSV file:
-JobTread's API has a proven way to UPLOAD a file (createUploadRequest +
-files-on-createCostGroup, see estimate_v2_draft.py/app.py), but no proven
-way to DOWNLOAD one back later — so the CSV snapshot is great for a human
-to open, but not a reliable machine-readable baseline for this sweep to
-re-fetch. Daily Logs, by contrast, are a normal text field already proven
-both to write (create_job_daily_log() in app.py, live-tested) and are
-presumed queryable back the same way every other JobTread object in this
-codebase is (job.costGroups, job.customFieldValues, etc.) — see
-fetch_daily_logs()'s docstring for the one real unverified assumption in
-this whole module.
+WHERE THE BASELINE LIVES (changed Oct 27 2026):
+The baseline is saved as a JSON FILE attached to the ORGANIZATION (not the
+job), in the org-level folder "AI Estimate Baselines", named
+"<job number> - AI estimate baseline (<job id>).json". Org-level files never
+show on the job dashboard, in the job's Files tab, or to customers.
+
+Why it moved: until Oct 27 2026 the baseline was written as a Daily Log on
+the job. That worked, but the Daily Log is one huge line of JSON sitting on
+the job dashboard, which Jason did not want to look at. The original reason
+for using a Daily Log ("no proven way to download a JobTread file back") no
+longer holds — rerun_closing_estimate() in app.py downloads job files from
+their cdn.jobtread.com `url` on every re-run.
+
+Upload path: createUploadRequest {organizationId, type, size} -> PUT the
+bytes to the returned signed storage.googleapis.com URL with the returned
+headers -> createFile {targetType: "organization", targetId, folder, ...}.
+The PUT is blocked from Claude's cloud workspace but not from Render.
+
+Fallback: if any step of the file upload fails, the baseline is written as
+a Daily Log exactly the old way, so the data is never lost. Reading back
+checks the org-level file first, then falls back to Daily Logs, so the 15
+July-August baselines and anything written by the fallback still work.
+
+Swept state: for file baselines the "already compared" flag is the file's
+`description` (updateFile), not a second Daily Log on the job.
 
 WHAT'S PROVEN VS. UNVERIFIED (be honest about this — same practice as every
 other new JobTread mechanism in this project):
   - PROVEN: createDailyLog (jobId/date/notes/notify) — live-tested already.
+  - PROVEN (Oct 27 2026): createUploadRequest {organizationId, type, size}
+    returns {id, url, method: "PUT", headers: {content-type,
+    x-goog-content-length-range}} — headers come back as a plain dict.
+    organization.files accepts where [["folder", ...], ["name", "like", ...]]
+    with sortBy createdAt. Org-level files (no job, no location) already
+    exist in OCC's account, so targetType "organization" is a real target.
+  - UNVERIFIED (Oct 27 2026): the PUT to storage.googleapis.com from Render,
+    and createFile with targetType "organization". The PUT could not be run
+    from Claude's cloud workspace (Google Storage is blocked there). If
+    either fails, write_baseline() logs why and falls back to a Daily Log,
+    so the first live estimate shows which path was taken.
   - PROVEN (Oct 26 2026): reading job.dailyLogs back. 15 baselines written
     between Jul 29 and Aug 19 2026 (jobs 00705-00767) were read back and
     parsed successfully during the first manual feedback review.
@@ -73,11 +98,20 @@ It is called from both estimate paths in app.py: estimate_closing_job()
 GVL, Remodel, Pre-listing and the general sales-tool endpoint).
 """
 import json
+import os
 import time
+import urllib.request
 from datetime import datetime, date, timedelta, timezone
 
 BASELINE_MARKER = "[AI-FEEDBACK-BASELINE-V1]"
 SWEPT_MARKER = "[AI-FEEDBACK-SWEPT-V1]"
+
+# Org-level JobTread Files folder that holds one baseline file per estimate.
+BASELINE_FOLDER = "AI Estimate Baselines"
+
+# Same env var app.py reads. Kept here so app.py's calls into this module do
+# not need an extra argument.
+ORG_ID = os.environ.get("JOBTREAD_ORG_ID", "22P9ppHePJKP")
 
 # Job types on the v2 pipeline (Jul 2026 migration) — these are the only
 # ones that ever get a feedback-loop baseline written, so these are the
@@ -140,15 +174,74 @@ class BaselineCollector:
         }
 
 
-def write_baseline(jobtread_query_fn, job_id, baseline_record, log_date=None):
-    """Write the baseline as one internal Daily Log entry via the
-    already-proven createDailyLog mutation (see create_job_daily_log() in
-    app.py — same shape, reused directly here). Marked with BASELINE_MARKER
-    so a later sweep can find it. Never raises — non-fatal, same fail-open
-    convention as everything else in the v2 pipeline; a failed baseline
-    write just means this one job never gets swept, it never blocks the
-    estimate itself.
-    """
+def _job_number(jobtread_query_fn, job_id):
+    """The job's number ("00893") for the file name. Blank if the lookup
+    fails — the file name still carries the job ID, which is what the read
+    side matches on."""
+    try:
+        resp = jobtread_query_fn({"job": {"$": {"id": job_id}, "number": {}}})
+        return ((resp or {}).get("job") or {}).get("number") or ""
+    except Exception:
+        return ""
+
+
+def _baseline_file_name(job_number, job_id):
+    prefix = f"{job_number} - " if job_number else ""
+    return f"{prefix}AI estimate baseline ({job_id}).json"
+
+
+def write_baseline_file(jobtread_query_fn, job_id, baseline_record, org_id=None):
+    """Save the baseline as an org-level JSON file. Returns the new file's
+    name on success. Raises on any failure so write_baseline() can fall back
+    to a Daily Log."""
+    org_id = org_id or ORG_ID
+    body = json.dumps(baseline_record, indent=2).encode("utf-8")
+
+    resp = jobtread_query_fn({
+        "createUploadRequest": {
+            "$": {"organizationId": org_id, "type": "application/json", "size": len(body)},
+            "createdUploadRequest": {"id": {}, "url": {}, "method": {}, "headers": {}}
+        }
+    })
+    upload = ((resp or {}).get("createUploadRequest") or {}).get("createdUploadRequest") or {}
+    if not upload.get("id") or not upload.get("url"):
+        raise RuntimeError(f"createUploadRequest returned no upload URL: {resp}")
+
+    # JobTread returns the headers the signed URL was built with (content-type
+    # and an exact content-length range). They must be sent as-is or Google
+    # Storage rejects the PUT.
+    headers = upload.get("headers") or {}
+    if isinstance(headers, list):  # defensive: [{name, value}] shape
+        headers = {h.get("name"): h.get("value") for h in headers if h.get("name")}
+    req = urllib.request.Request(
+        upload["url"], data=body, method=upload.get("method") or "PUT",
+        headers={str(k): str(v) for k, v in headers.items()},
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        if r.status not in (200, 201, 204):
+            raise RuntimeError(f"storage upload returned HTTP {r.status}")
+
+    name = _baseline_file_name(_job_number(jobtread_query_fn, job_id), job_id)
+    jobtread_query_fn({
+        "createFile": {
+            "$": {
+                "name": name,
+                "targetType": "organization",
+                "targetId": org_id,
+                "uploadRequestId": upload["id"],
+                "folder": BASELINE_FOLDER,
+                "description": BASELINE_MARKER,
+            },
+            "createdFile": {"id": {}}
+        }
+    })
+    return name
+
+
+def _write_baseline_daily_log(jobtread_query_fn, job_id, baseline_record, log_date=None):
+    """The pre-Oct 27 2026 storage: one [AI-FEEDBACK-BASELINE-V1] Daily Log on
+    the job. Now only used when the file upload fails, so a baseline is never
+    lost."""
     log_date = log_date or date.today().isoformat()
     n_groups = len(baseline_record.get("groups", []))
 
@@ -164,10 +257,11 @@ def write_baseline(jobtread_query_fn, job_id, baseline_record, log_date=None):
 
     try:
         size = _write(baseline_record)
-        print(f"  Feedback-loop baseline saved for job {job_id} ({n_groups} group(s), {size} chars)")
+        print(f"  Feedback-loop baseline saved to a Daily Log on job {job_id} "
+              f"({n_groups} group(s), {size} chars)")
         return True
     except Exception as e:
-        print(f"  Feedback-loop baseline save failed for job {job_id}: {e} — retrying without item names")
+        print(f"  Feedback-loop baseline Daily Log failed for job {job_id}: {e} — retrying without item names")
 
     # Fallback for an unusually large estimate: drop item names (the diff
     # matches by item ID, so quantities and prices are what matter) and
@@ -180,11 +274,27 @@ def write_baseline(jobtread_query_fn, job_id, baseline_record, log_date=None):
             for item in (g.get("items") or {}).values():
                 item.pop("name", None)
         size = _write(slim)
-        print(f"  Feedback-loop baseline saved for job {job_id} without item names ({size} chars)")
+        print(f"  Feedback-loop baseline saved to a Daily Log on job {job_id} without item names ({size} chars)")
         return True
     except Exception as e:
         print(f"  Feedback-loop baseline save failed for job {job_id} (non-fatal): {e}")
         return False
+
+
+def write_baseline(jobtread_query_fn, job_id, baseline_record, log_date=None):
+    """Save the baseline: org-level JSON file first, Daily Log on the job only
+    if the upload fails. Never raises — a failed baseline only means this one
+    job can't be compared later; it must never block the estimate."""
+    n_groups = len(baseline_record.get("groups", []))
+    try:
+        name = write_baseline_file(jobtread_query_fn, job_id, baseline_record)
+        print(f"  Feedback-loop baseline saved for job {job_id} as org file "
+              f"'{BASELINE_FOLDER}/{name}' ({n_groups} group(s))")
+        return True
+    except Exception as e:
+        print(f"  Feedback-loop baseline file upload failed for job {job_id}: {e} "
+              f"— falling back to a Daily Log")
+    return _write_baseline_daily_log(jobtread_query_fn, job_id, baseline_record, log_date)
 
 
 def _utc_iso(dt_value):
@@ -245,8 +355,9 @@ def capture_baseline_from_job(jobtread_query_fn, job_id, run_started_iso):
     Call right after an estimate's cost groups are written, passing the
     run_started_marker() taken just before the write began. Reads back the
     budget lines created since then and writes them as one
-    [AI-FEEDBACK-BASELINE-V1] Daily Log — the same record format the July
-    2026 baselines used, so diff_baseline_vs_current() reads both.
+    org-level baseline file (see write_baseline) — the same record format
+    the July 2026 Daily Log baselines used, so diff_baseline_vs_current()
+    reads both.
 
     The $0 "NOTES (internal ...)" lines are skipped: they carry text, not
     pricing, and Jason edits them by design.
@@ -297,6 +408,66 @@ def capture_baseline_from_job(jobtread_query_fn, job_id, run_started_iso):
     return write_baseline(jobtread_query_fn, job_id, record)
 
 
+def find_baseline_file(jobtread_query_fn, job_id, org_id=None):
+    """The newest org-level baseline file for a job, or None. Matched on the
+    job ID in the file name, so a renumbered or renamed job still matches.
+    A [RERUN FORCE] that writes a second estimate also writes a second file;
+    the newest one wins."""
+    org_id = org_id or ORG_ID
+    try:
+        resp = jobtread_query_fn({
+            "organization": {
+                "$": {"id": org_id},
+                "files": {
+                    "$": {
+                        "where": {"and": [
+                            ["folder", BASELINE_FOLDER],
+                            ["name", "like", f"%({job_id})%"],
+                        ]},
+                        "sortBy": [{"field": "createdAt", "order": "desc"}],
+                        "size": 1,
+                    },
+                    "nodes": {"id": {}, "name": {}, "url": {}, "description": {}}
+                }
+            }
+        })
+    except Exception as e:
+        print(f"  Could not look up baseline file for job {job_id}: {e}")
+        return None
+    nodes = (((resp or {}).get("organization") or {}).get("files") or {}).get("nodes") or []
+    return nodes[0] if nodes else None
+
+
+def _download_json(url):
+    """Fetch a JobTread file by its signed cdn URL (no auth needed — the same
+    way app.py's re-run downloads job attachments)."""
+    req = urllib.request.Request(url, headers={"User-Agent": "occ-estimator"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def load_baseline(jobtread_query_fn, job_id, org_id=None):
+    """Find a job's baseline wherever it lives.
+
+    Returns (baseline_dict_or_None, already_swept_bool, file_id_or_None).
+    file_id is set when the baseline came from an org-level file, None when
+    it came from a Daily Log — mark_swept() uses it to know where to record
+    the swept flag.
+    """
+    f = find_baseline_file(jobtread_query_fn, job_id, org_id)
+    if f and f.get("url"):
+        try:
+            baseline = _download_json(f["url"])
+            swept = SWEPT_MARKER in (f.get("description") or "")
+            return baseline, swept, f.get("id")
+        except Exception as e:
+            print(f"  Could not read baseline file '{f.get('name')}' for job {job_id}: {e} "
+                  f"— checking Daily Logs instead")
+
+    baseline, swept = parse_baseline_and_swept(fetch_daily_logs(jobtread_query_fn, job_id))
+    return baseline, swept, None
+
+
 def fetch_daily_logs(jobtread_query_fn, job_id, size=50):
     """Pull a job's Daily Logs (id/date/notes).
 
@@ -344,12 +515,27 @@ def parse_baseline_and_swept(daily_logs):
     return baseline, swept
 
 
-def mark_swept(jobtread_query_fn, job_id, log_date=None):
-    """Mark a job as already swept so it's never re-diffed. Non-fatal —
-    if this write fails, the worst case is the job gets diffed again next
-    run (duplicate rows in the sheet), not a crash.
+def mark_swept(jobtread_query_fn, job_id, log_date=None, file_id=None):
+    """Mark a job as already swept so it's never re-diffed. File baselines
+    record it in the file's description; old Daily Log baselines get a short
+    swept Daily Log as before. Non-fatal — if this write fails, the worst
+    case is the job gets diffed again next run (duplicate rows in the
+    sheet), not a crash.
     """
     log_date = log_date or date.today().isoformat()
+    if file_id:
+        try:
+            jobtread_query_fn({
+                "updateFile": {
+                    "$": {"id": file_id,
+                          "description": f"{BASELINE_MARKER} {SWEPT_MARKER} swept {log_date}"}
+                }
+            })
+            return True
+        except Exception as e:
+            print(f"  Could not mark baseline file for job {job_id} as swept (non-fatal): {e}")
+            return False
+
     notes = f"{SWEPT_MARKER}Swept on {log_date}."
     try:
         jobtread_query_fn({
@@ -598,14 +784,13 @@ def run_feedback_sweep(jobtread_query_fn, org_id, sheet_id=None, service_account
         job_id = cand["job_id"]
         job_label_lookup[job_id] = cand.get("name") or job_id
         try:
-            logs = fetch_daily_logs(jobtread_query_fn, job_id)
-            baseline, already_swept = parse_baseline_and_swept(logs)
+            baseline, already_swept, file_id = load_baseline(jobtread_query_fn, job_id, org_id)
             if already_swept or not baseline:
                 continue
             current_items = fetch_current_cost_items(jobtread_query_fn, job_id)
             rows = diff_baseline_vs_current(baseline, current_items)
             all_rows.extend(rows)
-            mark_swept(jobtread_query_fn, job_id)
+            mark_swept(jobtread_query_fn, job_id, file_id=file_id)
             summary["jobs_diffed"] += 1
         except Exception as e:
             summary["errors"].append(f"{job_id}: {e}")
