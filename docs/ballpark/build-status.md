@@ -77,6 +77,30 @@ Still under Malm in the filled run, all from the rules rather than the read: fra
 at $300/day, CM at $900/wk vs Malm's $1,100, selection 20 hrs vs 80, gutters $2,500 vs $8,400.
 Electrical (per-room device rule) and cabinetry run over.
 
+## Waiting on Tyler: framing and demo labor (Oct 28, 2026)
+
+Jason's read: framing is $300/day **per guy**, crews of 3-5 on large projects. The tool currently
+prices Claude's day estimate as one guy (Malm: 25 days x $300 = $7,500). Per guy, Malm's filled-form
+run would land -3.9% (3 guys) to -2.0% (5 guys); at $450/guy, -2.5% to +0.5%. No code change until
+Tyler confirms.
+
+From ~45 past Renovation/Addition budgets (JobTread, Oct 28):
+- Framing Labor is almost always **$450/day** (Subcontractor), not the template's $300, x 6-90 days.
+  Quantities that large (Frandsen 90, Panning 80, Rush 60) read as man-days, not crew-days.
+- Demolition is $300/day x up to 80 (Frandsen), 40 (Rush, Parker, McNelly): also reads as per guy.
+- Framing Materials is a separate line at $20/SF on almost every job, and its SF is the framed area
+  (200-1,200 SF; Malm 2,200), **not** the whole renovated floor plan. The tool currently uses floor
+  plan SF (Malm: 3,200 SF = $64,000 vs Malm's $44,000).
+- Exceptions: Frandsen (00749) put materials inside its $40,500 labor line (materials line $20).
+  Rama Addition (00518) has a $118,400 framing sub quote that includes materials, trusses, crane and
+  steel, **and** a separate $52,000 Framing Materials line - looks double-counted.
+
+Questions for Tyler:
+1. Is $300 (template) or $450 (past budgets) the per-guy framing day rate?
+2. Is demo $300 per guy per day too? Typical crew size for demo?
+3. Should framing materials SF be the framed / added area rather than the whole renovated floor plan?
+4. Is Malm's $62,000 framing labor only (materials in the separate $44,000 line)?
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
