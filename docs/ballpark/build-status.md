@@ -134,6 +134,33 @@ blank-form run on any past job will under-read the same way Malm did, so past jo
   most video of the past jobs. Run each twice once the tier fix is merged: job tier only, then filled.
 - The real test of the read: the next site visit where Tyler records a scope summary video.
 
+## McNelly and Taggart dry runs (Oct 28, 2026, after the tier/foundation fix)
+
+| Job | Real cost | Job tier only | Form filled | Filled, framed areas* |
+|---|---:|---:|---:|---:|
+| McNelly (00845), Premium | $343,745 | $272,257 (-21%) | $436,824 (+27%) | ~$360,600 (+4.9%) |
+| Taggart (00835), Quality | $312,968 | $296,819 (-5%) | $356,245 (+14%) | ~$307,500 (-1.7%) |
+
+\* Recomputed with framing materials, insulation and interior trim materials on the SF Tyler actually
+budgeted (McNelly 200 / 400 / 800, Taggart 400 / 250 / 400) instead of the whole floor plan SF.
+
+What this shows:
+- **Floor plan SF is the biggest error source.** Framing materials ($20), insulation ($4.50) and interior
+  trim materials ($3.25) all multiply the whole renovated floor plan: $27.75/SF. On McNelly that's $74,850
+  too much; on Taggart $47,850. With the areas Tyler used, both filled runs pass. Question 3/13 for Tyler
+  is now the top question: these three lines need the framed / opened-up area, not the floor plan.
+- **Electrical with a rewire double-counts** (question 5): McNelly got $27,000 rewire plus 124
+  receptacles and 54 GFCIs from the per-room rule; Tyler's budget had the rewire and lights only.
+- **Dumpsters and dust control:** Tyler's McNelly and Taggart budgets have 1 dumpster and 1 week of dust
+  control; the spec rule gives 16-17 dumpsters and 32.5 weeks of dust control on Taggart (+$11,250).
+  Malm used 20 and 14. New question for Tyler: is the per-2-weeks / per-week rule right?
+- **Duration ranges are coarse:** Taggart's 26 weeks falls in "25-40", whose midpoint is 32.5 weeks
+  (+$5,850 CM). A number field, or narrower ranges, would track Tyler's real durations better.
+- **Tier-only Taggart passing (-5%) is luck:** it missed the siding and exterior paint (-$30,000) and
+  over-counted framing materials (+$29,800) by about the same amount.
+- **Blank-ish forms still under-read:** McNelly tier-only found almost no windows/doors (-$19,500) and
+  no rewire. These jobs predate scope summary videos (~3 minutes of video each).
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
