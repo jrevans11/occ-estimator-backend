@@ -553,6 +553,7 @@ def price_scope(scope, template, tier_prices=None):
     """Price a scope dict against the template. Returns the full result:
     lines, notes per phase, review items, totals, markup and range."""
     tier_prices = tier_prices if tier_prices is not None else load_tier_prices()
+    scope = _with_job_tier(scope)
     b = _Budget(template)
     weeks = duration_weeks(scope)
     rooms = scope.get("rooms") or []
@@ -565,6 +566,9 @@ def price_scope(scope, template, tier_prices=None):
     floor_sf = _num(scope.get("floor_plan_sf"))
     addition_sf = _num(scope.get("addition_sf"))
     top_tier = highest_tier(scope)
+    if not scope.get("tier") and not any(r.get("tier") for r in rooms):
+        b.review.append("No tier was given for the job or any space, so everything is priced at Quality "
+                        "(the lowest tier). Set the job tier and run again if that's wrong.")
 
     # 1000 / 1300 Preparation and management
     b.add("cm", weeks, CM_PER_WEEK, note=f"{weeks:g} weeks x ${CM_PER_WEEK}/wk")
@@ -582,9 +586,16 @@ def price_scope(scope, template, tier_prices=None):
         if service.get(key):
             b.add(key, 1, None, note=f"new service called for: {service.get(key) if isinstance(service.get(key), str) else 'yes'}")
 
-    # 2001 / 3100 Structure and foundation
-    if addition_sf > 0:
-        b.add("footing", addition_sf, None, note=f"{addition_sf:g} addition SF")
+    # 2001 / 3100 Structure and foundation. Footings go under new ground-floor
+    # footprint only: a second-story addition sits on the existing house.
+    if scope.get("foundation_sf") is not None:
+        foundation_sf, why = _num(scope["foundation_sf"]), "new foundation SF"
+    else:
+        foundation_sf, why = addition_sf, "addition SF (no separate foundation SF given)"
+    if foundation_sf > 0:
+        b.add("footing", foundation_sf, None, note=f"{foundation_sf:g} {why}")
+    elif addition_sf > 0:
+        b.note("2001", f"No footing priced: the {addition_sf:g} SF addition has no new foundation (second story).")
     if _num(scope.get("slab_sf")) > 0:
         b.add("slab", _num(scope["slab_sf"]), None, note=f"{_num(scope['slab_sf']):g} slab SF")
     if _num(scope.get("waterproofing_lf")) > 0:
@@ -874,6 +885,20 @@ def price_scope(scope, template, tier_prices=None):
     # and warranty are a share of everything before them.
     pct_keys = ("storage", "permits", "warranty")
     return _finish(b, scope, pct_keys)
+
+
+def _with_job_tier(scope):
+    """A copy of scope where rooms, tile areas, countertops and fixtures with
+    no tier of their own take the job tier (scope["tier"]), not Quality."""
+    job_tier = scope.get("tier")
+    if not job_tier:
+        return scope
+    scope = json.loads(json.dumps(scope))
+    for key in ("rooms", "tile_areas", "countertops", "fixtures"):
+        for x in scope.get(key) or []:
+            if isinstance(x, dict) and not x.get("tier"):
+                x["tier"] = job_tier
+    return scope
 
 
 def drywall_area(scope):

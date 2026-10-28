@@ -28,7 +28,7 @@ SCOPE_SCHEMA = """{
     "whole_home": true,                      // whole-home renovation or addition
     "punch_list_days": 5,
     "floor_plan_sf": 2200,                   // renovated area
-    "addition_sf": 0, "slab_sf": 0, "deck_sf": 0, "heated_sf": 2800, "waterproofing_lf": 0,
+    "addition_sf": 0, "foundation_sf": 0, "slab_sf": 0, "deck_sf": 0, "heated_sf": 2800, "waterproofing_lf": 0,
     "wall_ceiling_sf": null,                 // only from Rendr; otherwise leave null
     "rooms": [                               // every renovated room (paint, devices, drywall)
       {"name": "Kitchen", "type": "kitchen|primary_bath|hall_bath|powder|other",
@@ -99,6 +99,9 @@ as rooms when they are renovated). Kitchens, primary baths, hall baths and powde
 everything else is "other". Give each room's tier: use Tyler's tier for kitchens and baths, and the \
 job's general tier for other rooms. A partial room still counts as a room. tall_ceiling is for 18 ft+ \
 rooms such as a two-story foyer. Give sf when you can estimate it; perimeter_lf only from Rendr.
+- addition_sf is all new heated SF. foundation_sf is only the new ground-floor footprint that needs \
+footings: 0 for a second-story addition built on the existing house; for a two-story addition, its \
+footprint, not both floors.
 - A typical bathroom has 4 plumbing fixtures (toilet, sink, shower, tub or second sink). Classify each \
 fixture's plumbing work: swap_same (same location), new_in_footprint (moved within the existing house), \
 tub_in_footprint, new_outside_footprint / tub_outside_footprint (in an addition; also count \
@@ -321,10 +324,17 @@ def merge_form(scope, form):
         if sp.get("tall_ceiling") is not None:
             rooms[match]["tall_ceiling"] = bool(sp["tall_ceiling"])
 
-    job_tier = bp.highest_tier({"rooms": [{"tier": s.get("tier")} for s in spaces if s.get("tier")]}) \
-        if spaces else None
-    for r in rooms:
-        if not r.get("tier") and job_tier:
+    # The job tier (required on the page) covers every room without its own
+    # space tier; with only space tiers, the highest one does.
+    job_tier = form.get("tier") or (bp.highest_tier({"rooms": [{"tier": s.get("tier")} for s in spaces
+                                                                if s.get("tier")]}) if spaces else None)
+    if job_tier:
+        scope["tier"] = job_tier
+    for i, r in enumerate(rooms):
+        if i in used:
+            continue
+        # Tyler's job tier beats Claude's guess; otherwise only fill blanks.
+        if form.get("tier") or (job_tier and not r.get("tier")):
             r["tier"] = job_tier
 
     n = bp._count(room_count)
