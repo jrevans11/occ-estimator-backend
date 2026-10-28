@@ -228,6 +228,35 @@ class Fixtures(unittest.TestCase):
         self.assertTrue(any("steam generator" in x for x in r["review"]))
 
 
+class FoundationAndTier(unittest.TestCase):
+    def test_second_story_addition_gets_no_footing(self):
+        r = run({"duration_weeks": 15, "addition_sf": 1000, "foundation_sf": 0})
+        self.assertEqual(lines(r, "footing"), [])
+        self.assertTrue(any("second story" in n for p in r["phases"] for n in p["notes"]))
+
+    def test_footing_on_new_foundation_only(self):
+        r = run({"duration_weeks": 15, "addition_sf": 1000, "foundation_sf": 500})
+        self.assertEqual(one(r, "footing")["cost"], 500 * 42)
+
+    def test_footing_falls_back_to_addition_sf(self):
+        r = run({"duration_weeks": 15, "addition_sf": 300})
+        self.assertEqual(one(r, "footing")["cost"], 300 * 42)
+
+    def test_no_tier_is_flagged(self):
+        r = run({"duration_weeks": 15, "rooms": [{"type": "other"}]})
+        self.assertTrue(any("No tier" in x for x in r["review"]))
+        r = run({"duration_weeks": 15, "tier": "Premium", "rooms": [{"type": "other"}]})
+        self.assertFalse(any("No tier" in x for x in r["review"]))
+        self.assertEqual(r["highest_tier"], "Premium")
+
+    def test_untiered_items_take_the_job_tier(self):
+        r = run({"duration_weeks": 15, "tier": "Luxury",
+                 "tile_areas": [{"kind": "small", "material_sf": 10}],
+                 "fixtures": [{"category": "plumbing", "item": "toilet"}]})
+        self.assertEqual(one(r, "tile_materials")["cost"], 10 * 50)
+        self.assertEqual(one(r, "plumbing_fixtures", "Luxury")["cost"], 2000)
+
+
 class CostCodesAndPlaceholders(unittest.TestCase):
     def test_every_line_gets_its_phase_code(self):
         r = run({"duration_weeks": 15, "exterior": {"gutters": True, "windows": 2}, "rooms": [{"type": "other"}]})

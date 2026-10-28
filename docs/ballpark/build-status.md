@@ -55,10 +55,32 @@ not the Claude read of the visit; that needs a dry run on Render. Gaps worth Tyl
 | 5400 Cabinetry | $115,860 | $100,400 | LF guessed from Malm's lumps |
 | 6100 Gutters | $2,500 | $8,400 | $2,500 placeholder per spec |
 
+## First live dry runs on Malm (Oct 27-28, 2026)
+
+| Run | Cost | vs $779,525 | Range |
+|---|---:|---:|---|
+| Blank form | $341,512 | -56% | $425K - $475K |
+| Form filled the way Tyler would have | $727,459 | **-6.7% (pass)** | $875K - $975K |
+
+The blank-form run was low because Malm's visit record is nearly empty: 3 CompanyCam videos of 53, 6
+and 30 seconds (none of them a scope summary), no Pages, no photo descriptions, and one 4-line job
+comment. The tool priced only what it could find and said so (confidence low, 17 open questions).
+**The tool can only be as complete as the scope summary video or the form.**
+
+Fixed after the blank-form run:
+- No tier entered meant everything priced at Quality. The page now requires a **job tier**; rooms,
+  tile, countertops and fixtures without their own tier take it, and a run with no tier is flagged.
+- A second-story addition was charged a $42,000 footing. Footings now go on `foundation_sf` (new
+  ground-floor footprint, 0 for a second story), falling back to `addition_sf` only when not given.
+
+Still under Malm in the filled run, all from the rules rather than the read: framing labor and demo
+at $300/day, CM at $900/wk vs Malm's $1,100, selection 20 hrs vs 80, gutters $2,500 vs $8,400.
+Electrical (per-room device rule) and cabinetry run over.
+
 ## Not done / open
 
-- **Not run live yet.** No end-to-end run against the real Claude API, CompanyCam or JobTread. Next step
-  after deploy: a dry run on Malm from the page, then a live run on test job 00886.
+- **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
+  test job 00886.
 - **Tier price table is a draft.** Several Luxury and Premium items have no published price (Waterworks,
   California Faucets, THG Paris, Visual Comfort Signature, Urban Electric, Apparatus, toilets). Tyler to review.
 - Spec section 11 items still open: #51 template price check, the days/hours rules, countertop installed vs.

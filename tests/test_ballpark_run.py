@@ -208,6 +208,14 @@ class MergeForm(unittest.TestCase):
         self.assertEqual(next(r for r in out["rooms"] if r["type"] == "kitchen")["tier"], "Luxury")
         self.assertTrue(all(r.get("tier") for r in out["rooms"]))
 
+    def test_job_tier_beats_claudes_guess(self):
+        scope = {"rooms": [{"name": "Kitchen", "type": "kitchen", "tier": "Quality"},
+                           {"name": "Den", "type": "other", "tier": "Quality"}]}
+        out = ballpark_scope.merge_form(scope, {"tier": "Premium",
+                                                "spaces": [{"type": "kitchen", "tier": "Luxury"}]})
+        self.assertEqual([r["tier"] for r in out["rooms"]], ["Luxury", "Premium"])
+        self.assertEqual(out["tier"], "Premium")
+
     def test_parse_reply(self):
         reply = ballpark_scope.parse_reply('Here you go:\n{"scope": {"rooms": []}, "summary": {}}')
         self.assertEqual(reply["scope"], {"rooms": []})
