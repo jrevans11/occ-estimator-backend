@@ -101,6 +101,39 @@ Questions for Tyler:
 3. Should framing materials SF be the framed / added area rather than the whole renovated floor plan?
 4. Is Malm's $62,000 framing labor only (materials in the separate $44,000 line)?
 
+More from the filled-form Malm run, biggest dollar effect first:
+5. **Electrical with a full rewire** (tool +$17,850): Malm priced $9/SF General Electrical and left
+   receptacles, switches, GFCI and dimmers at 0 - only lights were counted. Is the per-room device
+   count supposed to be skipped when a full rewire is selected?
+6. **Optional items** ($28,200 on Malm): Malm's total includes "(NOT INCLUDED)" options at full cost
+   (crawlspace, chimney, firebox, fireplace surround). Should the tool add optional items, and should
+   they count in the price range?
+7. **Tile** (tool -$10,000): Malm used 16 x $1,200 "Ceramic Tile Installation" plus 5 x $2,200 "Other
+   Bath Tile" and no tile material line. What were those units, and is tile material normally inside
+   the labor numbers rather than a separate allowance?
+8. **Construction management** (-$8,000): $900/wk (spec) vs $1,100/wk on Malm.
+9. **Selection coordination** (-$7,500): 12/20/28 hrs by tier vs 80 hrs on Malm. Should a whole-home
+   job get more hours?
+10. **Interior paint** (-$7,100): $900/room incl. materials vs Malm's $1,100/room + $2,700 materials.
+11. **Windows** (+$7,500): Premium $1,100 + $400 install vs Malm's $900 + $300.
+12. **Gutters** (-$5,900): $2,500 placeholder vs Malm's 7 x $1,200. What is the unit (per run/side)?
+13. **Insulation and interior trim materials** use the whole floor plan SF (3,200), like framing
+    materials; Malm used 2,200. Same framed-area question as #3?
+14. **Scope summary video:** on Malm the tool guessed the last video was the summary and got a basement
+    walkthrough. Can Tyler say "scope summary" at the start of that video (or title it) so the tool
+    finds it reliably?
+
+## Next dry runs
+
+Every past job's CompanyCam record is thin (Tyler's scope-summary videos started in Oct 2026): Senn,
+McCarter and Strawderman have no videos; McNelly ~3.5 min, Taggart ~3 min, Greenway ~2.5 min. A
+blank-form run on any past job will under-read the same way Malm did, so past jobs test the pricing
+(with the form filled from the ballpark), not the read.
+
+- McNelly (00845, $343,745 cost) and Taggart (00835, $312,968): smaller jobs in the 28% bracket, the
+  most video of the past jobs. Run each twice once the tier fix is merged: job tier only, then filled.
+- The real test of the read: the next site visit where Tyler records a scope summary video.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
