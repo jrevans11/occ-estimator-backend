@@ -25,6 +25,7 @@ import estimate_v2_draft as v2
 import site_scope
 import scope_uploads
 import scope_notes
+import ballpark
 # Feedback loop: saves each AI estimate's untouched original as a Daily Log
 # so it can later be compared with what was actually sent. Called from
 # estimate_closing_job() and estimate_general_job() (restored Oct 26 2026 —
@@ -4355,6 +4356,11 @@ class Handler(BaseHTTPRequestHandler):
         # Site Scope Tool notes answer with a real JSON status (see scope_notes.py).
         if path.startswith("/scope/"):
             self._send_scope_json(*scope_notes.handle_post(path, body, self.headers, jobtread_query, JOBTREAD_ORG))
+            return
+
+        # Preliminary Ballpark Tool (see ballpark.py): answers 202 and runs in the background itself.
+        if path.startswith("/ballpark"):
+            self._send_scope_json(*ballpark.handle_post(path, body, self.headers, jobtread_query, JOBTREAD_ORG))
             return
 
         # Respond to Wufoo immediately — it has a short timeout

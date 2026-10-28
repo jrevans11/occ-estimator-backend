@@ -294,6 +294,10 @@ Verification for both: files compile, mock end-to-end write confirms two notes i
 
 ---
 
+## Active Project: Preliminary Ballpark Tool (started Oct 27, 2026) — READ THE DOCS FIRST
+
+Tyler runs it after a site visit on a Renovation or Addition job: `/intake/ballpark` (sales-lead-tool, PM menu) → `POST /ballpark` here → budget from the Master Design Build Template, a `[BALLPARK]` summary Daily Log, and a review to-do for Tyler. Read `docs/ballpark/BALLPARK_TOOL_BUILD_SPEC.md` (decisions) and `docs/ballpark/build-status.md` (what's built, Jason's Oct 27 answers, the Malm check, what's open) before working on it. Code: `ballpark*.py`, `ballpark_tier_prices.json`. Same working rules as the Site Scope Tool below (new files, one anchored `app.py` branch, 512 MB, background thread, branch + PR).
+
 ## Active Project: Site Scope Tool (started Oct 19, 2026) — READ THE DOCS FIRST
 
 A second tool being built in this repo: Jason records notes and takes photos on a site visit, taps Start on a new sales-lead-tool page (`/intake/scope`), gets 3-6 follow-up questions on his phone, then this backend writes a Site Visit Notes Page, photo descriptions, floor plan + elevation drawings and a scope Page into CompanyCam, and a budget into JobTread.
