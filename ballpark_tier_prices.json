@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "status": "DRAFT for Tyler's review (Oct 27, 2026). Each price is a rough average normal retail price of that tier's brands (spec section 6j). Edit any number here; the next ballpark run uses it.",
+    "tiers": {
+      "plumbing": "Quality: Delta, Moen, Kohler | Premium: Brizo, California Faucets, Hansgrohe | Luxury: Waterworks, Newport Brass, Kallista, THG Paris",
+      "appliance": "Quality: Bosch, GE Profile, KitchenAid | Premium: Cafe, JennAir, Thermador | Luxury: Sub-Zero, Wolf, Miele, Gaggenau",
+      "lighting": "Quality: Kichler, Hinkley, Progress Lighting | Premium: Visual Comfort Studio, Hudson Valley Lighting, Hubbardton Forge | Luxury: Visual Comfort Signature, Urban Electric Co., Apparatus"
+    },
+    "sources": [
+      "subzero-wolf.com: 36 in. designer column refrigerator $10,820; 36 in. over-and-under $11,695",
+      "remodelista.com: KitchenAid Architect 36 in. built-in bottom-freezer $5,449",
+      "universal-akb.com / pcrichard.com: 36 in. gas ranges list - KitchenAid $5,699-6,999, Bosch 800 $6,049, JennAir $6,999, Thermador Pro Grand $9,599",
+      "toptenreviews.com / pcrichard.com: dishwashers - Bosch 800 $1,099-1,499, Benchmark $1,799-2,299, Miele from $1,299",
+      "showroom.alliedkitchenandbath.com: Kallista One kitchen faucet $1,170, bridge faucet $2,535; firstsupply.com / resale: Newport Brass kitchen faucets $690-1,350; Brizo Litze $750; Hansgrohe Talis N $580-600",
+      "delmarfans.com: Kichler pendants $178-610; Hudson Valley pendants $276-1,700",
+      "Where no source price was found (Waterworks, California Faucets, THG Paris, Visual Comfort Signature, Urban Electric, Apparatus, most Luxury lighting and toilets), the number is an estimate - check these first."
+    ]
+  },
+  "appliance": {
+    "refrigerator":       {"prices": {"Quality": 3500, "Premium": 9000,  "Luxury": 12000}, "source": "36 in. built-in / counter-depth; Sub-Zero list, KitchenAid Architect list"},
+    "range":              {"prices": {"Quality": 5000, "Premium": 7500,  "Luxury": 10500}, "source": "36 in. gas/dual fuel; retailer list prices"},
+    "cooktop":            {"prices": {"Quality": 2000, "Premium": 3500,  "Luxury": 5500},  "source": "36 in.; estimate"},
+    "wall oven":          {"prices": {"Quality": 3000, "Premium": 5000,  "Luxury": 8000},  "source": "30 in. single; estimate"},
+    "double wall oven":   {"prices": {"Quality": 4500, "Premium": 7500,  "Luxury": 12000}, "source": "30 in.; estimate"},
+    "dishwasher":         {"prices": {"Quality": 1300, "Premium": 1800,  "Luxury": 2200},  "source": "Bosch 800 / Benchmark / Miele list ranges"},
+    "microwave":          {"prices": {"Quality": 1100, "Premium": 1600,  "Luxury": 2300},  "source": "microwave drawer; estimate"},
+    "range hood":         {"prices": {"Quality": 1200, "Premium": 2200,  "Luxury": 3500},  "source": "hood insert/liner; estimate"},
+    "beverage fridge":    {"prices": {"Quality": 1800, "Premium": 3000,  "Luxury": 4500},  "source": "24 in. undercounter; estimate"},
+    "washer":             {"prices": {"Quality": 1100, "Premium": 1500,  "Luxury": 2000},  "source": "estimate"},
+    "dryer":              {"prices": {"Quality": 1100, "Premium": 1500,  "Luxury": 1900},  "source": "estimate"}
+  },
+  "plumbing": {
+    "kitchen faucet":     {"prices": {"Quality": 450, "Premium": 750,  "Luxury": 1500}, "source": "Brizo/Hansgrohe and Kallista/Newport Brass retail"},
+    "pot filler":         {"prices": {"Quality": 400, "Premium": 900,  "Luxury": 1500}, "source": "estimate"},
+    "kitchen sink":       {"prices": {"Quality": 600, "Premium": 900,  "Luxury": 1800}, "source": "estimate"},
+    "bathroom faucet":    {"prices": {"Quality": 300, "Premium": 550,  "Luxury": 1100}, "source": "widespread lavatory faucet; estimate"},
+    "bathroom sink":      {"prices": {"Quality": 200, "Premium": 300,  "Luxury": 700},  "source": "undermount; estimate"},
+    "toilet":             {"prices": {"Quality": 450, "Premium": 900,  "Luxury": 1800}, "source": "Premium tier brands make no toilets; estimate"},
+    "shower valve and trim": {"prices": {"Quality": 450, "Premium": 1100, "Luxury": 2500}, "source": "estimate"},
+    "hand shower":        {"prices": {"Quality": 200, "Premium": 450,  "Luxury": 900},  "source": "estimate"},
+    "tub filler":         {"prices": {"Quality": 900, "Premium": 1800, "Luxury": 3500}, "source": "freestanding floor-mount; estimate"},
+    "freestanding tub":   {"prices": {"Quality": 1800, "Premium": 3000, "Luxury": 6000}, "source": "estimate"}
+  },
+  "lighting": {
+    "pendant":            {"prices": {"Quality": 300, "Premium": 700,  "Luxury": 1400}, "source": "Kichler / Hudson Valley retail; Luxury estimate"},
+    "chandelier":         {"prices": {"Quality": 700, "Premium": 1500, "Luxury": 3500}, "source": "estimate"},
+    "wall sconce":        {"prices": {"Quality": 150, "Premium": 350,  "Luxury": 700},  "source": "estimate"},
+    "vanity light":       {"prices": {"Quality": 250, "Premium": 500,  "Luxury": 1000}, "source": "estimate"},
+    "flush mount":        {"prices": {"Quality": 150, "Premium": 350,  "Luxury": 700},  "source": "estimate"},
+    "exterior light":     {"prices": {"Quality": 150, "Premium": 350,  "Luxury": 800},  "source": "estimate"},
+    "ceiling fan":        {"prices": {"Quality": 350, "Premium": 600,  "Luxury": 1000}, "source": "no tier brands for fans; estimate"}
+  }
+}
