@@ -309,6 +309,8 @@ A second tool being built in this repo: Jason records notes and takes photos on 
 - `room-file-format.md` — the structured room file (`occ-scope-rooms/1`) that `scope_drawings.py` draws and phases 4-6 produce/consume. Sample in `samples/`.
 - `prototype_drawings.py` — geometry reference from the Oct 19 test; superseded by `scope_drawings.py` (Pillow); not for deployment.
 
+**Bigger picture (Nov 5, 2026):** the Site Scope Tool's Granola phases are the first piece of the "OCC Brain" - read `docs/occ-brain/occ-brain-architecture.md` before building anything that processes Granola notes, meetings or other incoming data (links not copies, capture broadly / act narrowly, access tiers).
+
 **Working rules for this tool:**
 - New code goes in **new files** (e.g. `site_scope.py`, `scope_drawings.py`). Change `app.py` only to register the new endpoints — keep that diff small. Never rewrite `app.py` wholesale.
 - The Render service has **512 MB shared** with the closing-repair estimator and the follow-up emails. No headless browsers; render drawings with a lightweight Python library. Each scope run goes in its own background thread with all errors caught and logged, so it can never take down the estimator or follow-ups. Jason will not upgrade the Render plan.
