@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) - see "Next phases (planned Nov 5, 2026)" at the end.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) plus visit classification gates so revisits, jobs in progress and non-visit meetings never start the new-visit build - see "Next phases (planned Nov 5, 2026)" at the end. Bigger picture: `docs/occ-brain/occ-brain-architecture.md`.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -116,7 +116,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | 6 | **Full build, JobTread side** - budget from the structured file; code does quantities, markups, rate anchors, `$0 (PRICING TBD)` for licensed trades, internal NOTES items. **Built and verified live Oct 20** (`scope_budget.py`; backend PR #20). | Render (+ sales-lead-tool card) | Budget lands on test job 00489 (00035's CompanyCam project is archived) | - |
 | 7 | **Push notification** "Questions ready - <address>" from the Home Screen app; SMS fallback only if push fails. **Built and verified on Jason's iPhone Oct 20** (`scope_push.py`, backend PR #21; sales-lead-tool PR #13). SMS fallback not built. | sales-lead-tool | Start a run, close the page, get the alert | 4 |
 | 8 | **Accuracy runs** on past visits (901 McDaniel / 00768, 7 Monet Dr) and tuning | both | Compare line by line with the budgets that were sent | - |
-| 9 | **Granola capture + automatic trigger** (planned Nov 5) - Granola transcript as a source; run starts on its own when the note ends; job matcher; nightly sweep; answer cutoff. See "Next phases". | Render (+ sales-lead-tool card) | Real site visit with Granola running; no taps | - |
+| 9 | **Granola capture + automatic trigger** (planned Nov 5) - Granola transcript as a source; run starts on its own when the note ends; job matcher; visit classification gates (new / revisit / in progress / not a visit); nightly sweep; answer cutoff. See "Next phases". | Render (+ sales-lead-tool card) | Real site visit with Granola running; no taps. A team meeting and a revisit run the same day start nothing / revisit mode only | - |
 | 10 | **Trade tags** on visit photos from a fixed list (planned Nov 5) | Render | Photos tagged in CompanyCam and on the JobTread files | - |
 | 11 | **Sub bid + material request drafts** in JobTread (planned Nov 5) - never sent by the tool | Render (+ card) | Drafts on the job with the right photos and scope; Jason sends | - |
 | 12 | **Bid history -> rate anchors** + finish the draft-vs-final comparison (planned Nov 5) | Render | Returned bids show up as anchors on the next budget | - |
@@ -365,6 +365,36 @@ Example from a real visit: siding replace + paint = two bid requests (siding sub
 - Questions stay, but are optional: push as now; if unanswered by 3 hours after the run or 9 PM (whichever is first), build on the suggested answers, labeled "(assumed)" and listed in the internal NOTES.
 - Nightly sweep ~11 PM: any visit that day with photos or notes and no finished run gets run.
 - Trade tag list (below), and which supplier quotes which materials (open question).
+
+### Visit classification and safety gates (Nov 5)
+**Jason's constraint (Nov 5):** not every Granola note or CompanyCam visit is a new job. Some visits revisit a potential job, some are visits to a job in progress, and Granola will also be used for team meetings, company meetings and lots of other things. None of those may kick off the new-visit build or break anything because it doesn't fit the new site visit process. The gates below were proposed in the same chat and written in at Jason's request; the details are not confirmed yet. The bigger picture (every Granola note eventually gets classified, most feed nothing) is in `docs/occ-brain/occ-brain-architecture.md`.
+
+**Rule: opt-in, not opt-out.** Nothing runs unless the note proves it's a site visit. Anything uncertain does nothing and goes on a short "needs your call" list (proposed: one push plus an entry on the scope page).
+
+**Gate 1 - is this a site visit at all?**
+- **Runs on its own** when the Granola note is attached to a calendar event whose title or location has a street address or job number, AND the job matcher (phase 9) finds that job.
+- **Asks first** when there's no such calendar event but Jason's own CompanyCam photos land on one project during the recording window (an unscheduled visit): one push, "Was this a site visit at <address>?", before anything runs.
+- **Ignored** when neither is true. Team meetings, company meetings and calls have no address and no photos, so they never reach the build.
+- **Needs your call** when the calendar has an address that matches no job.
+- Folder or calendar-title conventions can help but are never required.
+
+**Gate 2 - what kind of visit is it?** The job's current state picks the mode:
+
+| Job state | Mode | What runs |
+|---|---|---|
+| No priced budget groups (`document: null` groups with items) and no earlier processed visit | **New visit** | Full build: quick pass, questions, photo descriptions, tags, scope Page, budget under "Site Scope Draft - <date>", bid and material request drafts |
+| Has a budget or an earlier processed visit, not sold | **Revisit** | Photo descriptions, plus a "what changed" summary against the current scope Page. Proposed budget changes go under their own new parent group, "Site Scope Revisit - <date>" - never into or over the existing groups. Bid drafts only for subs Jason names on the walk |
+| Sold (approved customer document / "Closed Won" in the job type's status field) | **Job in progress** | Photo descriptions and a dated Daily Log entry of what was found. Possible change-order items flagged in the alert. No budget or bid activity |
+| Address with no matching job | **Hold** | Nothing runs; goes on the needs-your-call list |
+
+Override: a word in the calendar title ("Revisit", "Check-in", "Progress"), or said at the start of the recording ("this is a revisit on Smith"), sets the mode.
+
+**Gate 3 - safety rails (every mode)**
+- **Drafts only** - already decided: nothing is ever sent.
+- **Never overwrites.** The build already writes under its own parent group (`scope_budget.py`, `PARENT_PREFIX`); revisits get their own parent too. Existing groups are never edited, moved or deleted.
+- **Once per note.** Each processed Granola note ID is saved on the run (`scope_store`) and noted on the job. A second webhook, the nightly sweep or a retry for the same note returns the existing run instead of starting another - same idea as the per-job in-flight lock in `rerun_closing_estimate`.
+- **Internal stays internal.** A note that isn't a site visit never writes to CompanyCam or JobTread. Client details heard in a visit go to the internal Notes field `22P9qDnqtWh6`, never the customer-facing description.
+- **The nightly sweep follows the same gates** - it can't run something the webhook would have skipped.
 
 ### Phase 9 - Granola capture + automatic trigger
 - **Getting the transcript:** Granola's Business plan (Jason is on a 30-day Business trial from Nov 5) has personal API keys and webhooks. API: `https://public-api.granola.ai/v1/notes` (list, `created_after`, cursor), `GET /v1/notes/{not_...id}?include=transcript`, `GET /v1/notes/{id}/transcript` (when Get Note returns 413 TRANSCRIPT_TOO_LARGE), `POST /v1/notes/search`. Rate limit: burst 25, 5 per second. Webhook event names and payload still to be read from Granola's webhooks guide. Granola's own notes say it is reachable through Zapier too; a direct webhook is preferred.
