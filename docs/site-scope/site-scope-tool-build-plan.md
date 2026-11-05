@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs).** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) - see "Next phases (planned Nov 5, 2026)" at the end.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -116,6 +116,12 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | 6 | **Full build, JobTread side** - budget from the structured file; code does quantities, markups, rate anchors, `$0 (PRICING TBD)` for licensed trades, internal NOTES items. **Built and verified live Oct 20** (`scope_budget.py`; backend PR #20). | Render (+ sales-lead-tool card) | Budget lands on test job 00489 (00035's CompanyCam project is archived) | - |
 | 7 | **Push notification** "Questions ready - <address>" from the Home Screen app; SMS fallback only if push fails. **Built and verified on Jason's iPhone Oct 20** (`scope_push.py`, backend PR #21; sales-lead-tool PR #13). SMS fallback not built. | sales-lead-tool | Start a run, close the page, get the alert | 4 |
 | 8 | **Accuracy runs** on past visits (901 McDaniel / 00768, 7 Monet Dr) and tuning | both | Compare line by line with the budgets that were sent | - |
+| 9 | **Granola capture + automatic trigger** (planned Nov 5) - Granola transcript as a source; run starts on its own when the note ends; job matcher; nightly sweep; answer cutoff. See "Next phases". | Render (+ sales-lead-tool card) | Real site visit with Granola running; no taps | - |
+| 10 | **Trade tags** on visit photos from a fixed list (planned Nov 5) | Render | Photos tagged in CompanyCam and on the JobTread files | - |
+| 11 | **Sub bid + material request drafts** in JobTread (planned Nov 5) - never sent by the tool | Render (+ card) | Drafts on the job with the right photos and scope; Jason sends | - |
+| 12 | **Bid history -> rate anchors** + finish the draft-vs-final comparison (planned Nov 5) | Render | Returned bids show up as anchors on the next budget | - |
+| 13 | **Calendly -> JobTread** (future, planned Nov 5) | Render | A test booking makes the job and labels the calendar event | - |
+| 14 | **OCC Budget Standards doc** shared by the backend prompts and the chat skill (planned Nov 5) | this repo | Change one rule, both paths pick it up | - |
 
 ## Accounts and keys
 | What | Set it in | Needed by | Notes |
@@ -334,3 +340,80 @@ Jason wants to be able to upload photos from an earlier site visit and record no
 - **What the phone test showed:** the start worked - Voice Memos kept recording in the background while photos were taken in CompanyCam. The camera link has to be `ccam://camera/<project id>` (CompanyCam's documented deep link); the API's `capture_photo_deeplink` (`.../<base64 name>`) opens CompanyCam's home screen instead.
 - **Why it was dropped:** getting the recording back needs manual steps. Shortcuts' Voice Memos actions (iOS 26: Find Recordings, Create/Stop/Play/Select/Delete Recording) can find the newest memo and read its title, Creation Date and Duration, but **not the audio** - Quick Look shows only the title, even with the type set to File. The audio only leaves through Voice Memos' Share sheet, so every walkthrough would need Stop + Share (or Save to Files + pick the file) by hand. **Decision (Jason, Oct 21): not worth it - keep the original flow:** photos in CompanyCam, then notes recorded on the scope page.
 - If Apple ever adds a Voice Memos action that returns the audio file, the reverted code (git history: `scope_walkthrough.py`, `components/Walkthrough.tsx`) is a starting point.
+
+## Next phases (planned Nov 5, 2026)
+Planning chat with Jason on Nov 5. Nothing below is built yet. **Finish phase 8 first** (compare the 00870 draft with Jason's corrected budget) so the base output is right before more inputs are added.
+
+### Goal (Jason, Nov 5)
+"I want to be the data gatherer and the final checker, but that's about it." The ideal visit:
+1. The JobTread job and its CompanyCam project already exist and are linked (JobTread creates the project; `job.companycamId`).
+2. Jason starts Granola on his phone, knocks, and walks the house with the client. The client explains the history, what they've noticed, and their goals. Jason takes photos in CompanyCam and talks to himself about scope as he shoots.
+3. He stops the Granola note. Everything else runs on its own: photo descriptions, tags, the scope Page, the JobTread budget by trade, and draft sub bid requests (plus a material list / supplier quote request) with the right photos attached.
+4. Back at the office he checks the drafts and sends the bid requests himself.
+Example from a real visit: siding replace + paint = two bid requests (siding sub, painter) plus a material list to get supplier pricing.
+
+### Decisions (Jason, Nov 5)
+- **No manual trigger.** The run starts by itself when the Granola note ends. The scope page stays, but only to check on a run or redo one.
+- **Drafts only.** The tool never sends a bid request, material request or client message. Jason reviews and sends.
+- **Granola is the main capture.** The page's Record/Stop dictation stays as a backup (quiet notes, days Granola isn't running).
+- **Calendar habit.** Every site visit goes on Google Calendar. Granola's iPhone app is synced to it, so tapping the visit starts a note titled with the address. Visits get on the calendar two ways: Calendly bookings and manual entries. The Calendly booking form asks for the property address (confirmed Nov 5). Manual entries: title "Site visit - <address> (<job number>)", address in the location field.
+- **Calendly -> JobTread is a future build** (nothing is triggered by a booking today).
+- Jason asked for this plan to be written here as the plan of record.
+
+### Proposed, not yet confirmed by Jason
+- Wait for uploads: start once the visit's photo count has been steady ~10 minutes after the note ends.
+- Questions stay, but are optional: push as now; if unanswered by 3 hours after the run or 9 PM (whichever is first), build on the suggested answers, labeled "(assumed)" and listed in the internal NOTES.
+- Nightly sweep ~11 PM: any visit that day with photos or notes and no finished run gets run.
+- Trade tag list (below), and which supplier quotes which materials (open question).
+
+### Phase 9 - Granola capture + automatic trigger
+- **Getting the transcript:** Granola's Business plan (Jason is on a 30-day Business trial from Nov 5) has personal API keys and webhooks. API: `https://public-api.granola.ai/v1/notes` (list, `created_after`, cursor), `GET /v1/notes/{not_...id}?include=transcript`, `GET /v1/notes/{id}/transcript` (when Get Note returns 413 TRANSCRIPT_TOO_LARGE), `POST /v1/notes/search`. Rate limit: burst 25, 5 per second. Webhook event names and payload still to be read from Granola's webhooks guide. Granola's own notes say it is reachable through Zapier too; a direct webhook is preferred.
+- **Read the transcript, not Granola's summary.** In the Nov 5 test the summary was generic and added its own interpretation ("flooring, which is ugly" became "needing replacement or improvement").
+- **No per-line timing on iPhone transcripts.** The Nov 5 test transcript came back with `timestamps_unavailable: no_timing` (MCP read). Photos can't be tied to sentences by clock time. Tie them by **order + what the photo shows**: the quick pass already handles notes recorded later by matching on content. The note's start time and last update still give the visit window.
+- **Speakers are labeled "Speaker A/B",** not names. The quick pass decides which one is Jason from content (who talks about photos, scope, subs) and treats the other as the client: client goals and history vs. Jason's scope calls.
+- **New quick-pass source:** the Granola transcript as G1 (alongside N notes, P photos, V videos, C walkthrough summaries), placed by the note's start time. Scope Jason says counts like a dictated note.
+- **Job matcher** (no job picker on site), in order:
+  1. The calendar event the Granola note is attached to: address in the title or location, a job number in the title, or (Calendly) the client's email matched to the JobTread contact Email field `22P9ppJUCA4N`.
+  2. CompanyCam photos taken **by the Granola note's owner** during the recording window. Filter by photographer: in the Nov 5 test, three other OCC users were shooting photos on other projects in the same minutes.
+  3. If neither settles it: one push, "Which job was this?", with one-tap choices.
+- **Start when uploads settle**, then run the existing quick pass -> questions -> build. A run that starts with no photos waits for the sweep.
+- **Nightly sweep** (see Proposed) also catches a missed webhook, a day without Granola, and late uploads.
+- **Answer cutoff** (see Proposed) so a run never sits waiting on Jason.
+- **Nov 5 test (Granola + CompanyCam, Jason's office, "Test Project (delete)" 117581245):** Granola note 10:23-~10:26 AM; 16 photos 10:25:01-10:25:58 AM, all by Jason, all on that one project. **Granola kept recording the whole time CompanyCam was open** (same as the Oct 21 Voice Memos test). Jason named items in the order he shot them, and all 16 photos matched what was said once the photos were looked at (one pair swapped order: he said "window, file cabinet" but shot the cabinet first). Granola fixes the problem that dropped the Voice Memos walkthrough: the transcript comes out through the API with no manual Share step.
+- **Still to check:** recording a CompanyCam *video* while Granola runs (both want the mic; Granola may pause); phone calls mid-visit; transcript quality outdoors and in crawlspaces; Granola's Apple Watch app (records on the watch, so the phone's camera and calls can't interrupt it).
+
+### Phase 10 - Trade tags
+- CompanyCam had 10 tags on Nov 5: Before and After, Brick, Electrical, Finished, New, Paint, Pre-Drywall Documentation, Punch List, Selections, Start.
+- Proposed fixed trade list matching the budget trades: Siding, Paint, Roofing, Gutters, Electrical, Plumbing, HVAC, Crawlspace, Framing, Flooring, Tile, Masonry, Windows & Doors, Decking (reuse Electrical, Paint, Brick/Masonry as they are). The tool may only use tags on this list - never invents new ones.
+- Each visit photo gets the trade(s) it shows, from the room file's scope items.
+- Why it matters beyond sorting: the CompanyCam -> JobTread integration carries photo tags over to the synced JobTread files when the same tags exist in both, which is how phase 11 picks the photos for each bid request. Create the same tags in JobTread.
+
+### Phase 11 - Sub bid + material request drafts
+- **Mechanism (checked Nov 5):** JobTread bid requests are documents (`createDocument` with `type: "bidRequest"`). Inputs include `jobId`, `accountId` (vendor), `lineItems` (existing budget cost items/groups), `description` (the "Bid Request Details", up to 32,768 chars - the sub's scope), `dueDate`/`dueDays`, `emailMessage`, `subject`, and `files` (up to 100; `copyFromFileId` copies a file already on JobTread, e.g. the location's synced CompanyCam photos). Sending is `createDocumentRecipient` + `sendDocument {documentRecipientId, emailMessage}` - **the tool never calls send.** Not yet tested live: creating a bidRequest through the API, and whether copied files show in the vendor portal.
+- **What the sub gets:** an email with a magic link to JobTread's vendor portal (no login), types a price per line and submits. JobTread's "Push Cost Item Details to Budget" mass action puts the price in the budget; the winning bid converts to a Vendor Order.
+- **One draft per trade per vendor**, from the budget's sub lines and especially every `$0 (PRICING TBD)` line. Scope written for the sub (what to do, measurements, access, what OCC handles), the trade-tagged photos attached, due date ~5 days.
+- **Material request:** the budget step already works out material quantities from the working quantities. Send that list as a bid request to a supplier vendor account (JobTread bid requests work for suppliers too; Jordan Lumber and Blue Ridge Building Products are already vendor accounts). Which supplier quotes which materials is an open question for Jason.
+- **Alert:** "Scope, budget and N bid drafts ready - <address>".
+- **Bid follow-up (same phase or next):** past-due nudges drafted for Jason; returned prices pushed into the budget; an alert when every bid on a job is back.
+- **Prerequisites (no code):** vendor records. Nov 5 counts: 203 vendor accounts but only 47 vendor contacts, 39 with an email. Duplicate accounts to merge: "Plumbers of Greenville" / "Plumbers of Greenville LLC", "Renew Painting" / "Renew Painting, LLC". Add a Trade custom field to vendor accounts so the tool knows who gets which bid.
+- **Why this matters (Nov 5 counts):** OCC has 61 bid requests in JobTread - 26 approved, 10 pending, 1 denied, **24 still drafts that were never sent**. Creating them isn't the problem; sending and following up is. Vendors already sent bid requests through JobTread (sent, approved or denied): Plumbers of Greenville, Redland Electric, Renew Painting, BSC Woodworks, Apex Gutters, Palmetto Granite & Design, Crawlspace Medic, Jordan Lumber, Greer Flooring, Vindas Masonry, Eastergard HVAC, Pine Ridge Glass, B&F Roofing, Artisan Frontier, Blue Ridge Building Products.
+
+### Phase 12 - Bid history -> rate anchors
+- Goal (Jason): fewer bid requests over time, because returned prices feed the budget.
+- When a bid comes back, save the scope + price as a rate anchor (read live from JobTread's returned bid requests and vendor bills, rather than hand-built CSVs from Gmail).
+- When a trade has enough similar history, the budget prices it directly and marks it "bid optional"; unusual scope or thin history still gets a bid.
+- Finish the draft-vs-final comparison (`feedback_loop.py` is half-built) so Jason's corrections also feed back.
+
+### Phase 13 - Calendly -> JobTread (future)
+- On a booking: find or create the customer, location and job; put the job number and address on the calendar event so the Granola note is labeled exactly; leave an intake to-do so nobody re-types what the client entered.
+
+### Phase 14 - One "OCC Budget Standards" doc
+- Budget rules live in two places today: the chat skill `jobtread-budget-builder` and the backend prompts (`estimate_v2_draft.py`, the scope budget step). Move the shared rules (grouping by trade, description format, markups, internal NOTES line, allowances, sub vs. in-house) into one doc in this repo that the backend loads and the chat skill points to, so a correction is made once.
+
+### Gaps Jason hadn't covered (raised Nov 5)
+- **Measurements:** the AI can't measure from photos. Say them out loud (or use a tool like Hover); the questions step asks for anything missing.
+- **Client follow-up:** a drafted thank-you that says when to expect pricing.
+- **Client info into JobTread:** budget range, timeline and decision makers heard in Granola go to the job's internal Notes field `22P9qDnqtWh6`, not the customer-facing description.
+- **Permit / HOA / engineering flags** in the scope Page.
+- **Photo habit:** take photos with the CompanyCam camera (camera-roll uploads carry the upload time).
+- **Recording consent:** a line to clients at the door; personal chat filtered out of what's saved.
