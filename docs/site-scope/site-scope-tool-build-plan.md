@@ -119,7 +119,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | 9 | **Granola capture + automatic trigger** (planned Nov 5) - Granola transcript as a source; run starts on its own when the note ends; job matcher; visit classification gates (new / revisit / in progress / not a visit); nightly sweep; answer cutoff. See "Next phases". | Render (+ sales-lead-tool card) | Real site visit with Granola running; no taps. A team meeting and a revisit run the same day start nothing / revisit mode only | - |
 | 10 | **Trade tags** on visit photos from a fixed list (planned Nov 5) | Render | Photos tagged in CompanyCam and on the JobTread files | - |
 | 11 | **Sub bid + material request drafts** in JobTread (planned Nov 5) - never sent by the tool | Render (+ card) | Drafts on the job with the right photos and scope; Jason sends | - |
-| 12 | **Bid history -> rate anchors** + finish the draft-vs-final comparison (planned Nov 5) | Render | Returned bids show up as anchors on the next budget | - |
+| 12 | **Bid history -> rate anchors** + finish the draft-vs-final comparison (planned Nov 5; expanded Nov 6 into the JobTread feed of the shared Pricing Knowledge Base - see `docs/occ-brain/occ-brain-architecture.md`) | Render | Returned bids show up as anchors on the next budget | - |
 | 13 | **Calendly -> JobTread** (future, planned Nov 5) | Render | A test booking makes the job and labels the calendar event | - |
 | 14 | **OCC Budget Standards doc** shared by the backend prompts and the chat skill (planned Nov 5) | this repo | Change one rule, both paths pick it up | - |
 
@@ -430,15 +430,18 @@ Override: a word in the calendar title ("Revisit", "Check-in", "Progress"), or s
 
 ### Phase 12 - Bid history -> rate anchors
 - Goal (Jason): fewer bid requests over time, because returned prices feed the budget.
-- When a bid comes back, save the scope + price as a rate anchor (read live from JobTread's returned bid requests and vendor bills, rather than hand-built CSVs from Gmail).
-- When a trade has enough similar history, the budget prices it directly and marks it "bid optional"; unusual scope or thin history still gets a bid.
-- Finish the draft-vs-final comparison (`feedback_loop.py` is half-built) so Jason's corrections also feed back.
+- **Expanded Nov 6:** this phase is now the JobTread feed of the shared **Pricing Knowledge Base** - one growing price table used by both this tool and the closing-repair estimator (not Ballpark). Full design - price table fields, which-price-wins rules, confidence on every line, pricing lessons, other feeds (Gmail, verbal, corrections), storage and rollout - is in `docs/occ-brain/occ-brain-architecture.md`, "Pricing Knowledge Base".
+- When a bid comes back, save the scope + price as a price row (read live from JobTread's returned bid requests and vendor bills, rather than hand-built CSVs from Gmail).
+- When a trade has enough similar history (high confidence), the budget prices it directly and marks it "bid optional"; unusual scope or thin history still gets a bid draft (phase 11).
+- Finish the draft-vs-final comparison (`feedback_loop.py` is half-built) so Jason's corrections also feed back - as "Jason's price" rows plus drafted pricing lessons he approves.
+- Before this phase: seed the table from the existing vendor CSVs and the calibration CSV and point this tool's budget step at it (Pricing Knowledge Base rollout step 1).
 
 ### Phase 13 - Calendly -> JobTread (future)
 - On a booking: find or create the customer, location and job; put the job number and address on the calendar event so the Granola note is labeled exactly; leave an intake to-do so nobody re-types what the client entered.
 
 ### Phase 14 - One "OCC Budget Standards" doc
 - Budget rules live in two places today: the chat skill `jobtread-budget-builder` and the backend prompts (`estimate_v2_draft.py`, the scope budget step). Move the shared rules (grouping by trade, description format, markups, internal NOTES line, allowances, sub vs. in-house) into one doc in this repo that the backend loads and the chat skill points to, so a correction is made once.
+- **Added Nov 6:** the doc also gets a **Pricing lessons** section - the plain-English pricing judgment the price table can't hold (e.g. "carry the worst case on a slab tub-drain cap"). Lessons are drafted from Jason's budget corrections and need his yes before the estimators use them. See "Pricing Knowledge Base" in `docs/occ-brain/occ-brain-architecture.md`.
 
 ### Gaps Jason hadn't covered (raised Nov 5)
 - **Measurements:** the AI can't measure from photos. Say them out loud (or use a tool like Hover); the questions step asks for anything missing.
