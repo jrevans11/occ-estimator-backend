@@ -284,6 +284,19 @@ open questions); the misses are things it left at 0 or excluded. Holes, biggest 
   unless it was explicitly excluded.
 - Holes 7-9 (big-job windows, removed spec lines, markup) still need a decision.
 
+Rerun of the four dry runs after the fix (PR #37), same form entries:
+
+| Job | Tyler's cost | Before | After | Notes |
+|---|---:|---:|---:|---|
+| Barber | $655,952 | -4.0% | **-0.1%** ($655,187) | Exterior paint still excluded (Tyler $34K), offset by built-ins read from Rendr at 83 LF (~$92K vs Tyler's $47.5K). Demo 40. |
+| Greenway | $298,728 | -21.0% | **+9.9%** ($328,362) | Garage, breezeway, driveway now in; demo 14 (Tyler 14); paint 8 units (Tyler 13); built-ins still 0 (Tyler $28K); framing 40 days. |
+| McNelly | $343,745 | -10.2% | **+13.6%** ($390,597) | Demo 40 (Tyler 40). Partly my form entry: 3 hall baths entered, so it kept a third full bath and added the powder room. Carried a full rewire. |
+| Taggart | $312,968 | -33.7% | **+12.3%** ($351,579) | LVP 2,850 SF, Hardie siding + full repaint, 12 LF built-ins, 10 windows now in. Demo 28 man-days (Tyler entered 1 x $300). |
+
+The tool now leans high rather than low (average +8.9% vs -17.2% before, absolute error 9.0% vs 17.2%).
+Remaining patterns: exterior paint is still skipped on jobs where it wasn't discussed outright (Barber),
+built-in LF swings both ways, and room counts above what the visit shows are kept as entered.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
