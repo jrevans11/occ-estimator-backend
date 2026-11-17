@@ -161,6 +161,56 @@ What this shows:
 - **Blank-ish forms still under-read:** McNelly tier-only found almost no windows/doors (-$19,500) and
   no rewire. These jobs predate scope summary videos (~3 minutes of video each).
 
+## Case study: 20 real ballparks (Nov 17, 2026)
+
+`case-studies/pricing-patterns.md` compares every priced line on the 20 most recent Preliminary
+Ballparks (data in `case-studies/ballpark_line_items.csv`) with the tool's rules. About 20 rules differ
+from Tyler's consistent practice: framing $450/day, footings on perimeter LF not SF, $9/SF General
+Electrical on almost every job, $1,200 per plumbing fixture, $1,100/room paint + $450 materials, tile
+$5,700 / $2,200 / $1,800 + ~5 ceramic units per primary bath, window install $300, gutters $1,200/unit.
+Markup was 28% on 14 of 20 regardless of size.
+
+## Tyler's practice adopted as the rules (Nov 17, 2026)
+
+Jason: "use what Tyler does, then tweak it if needed." `ballpark_pricing.py` now follows the patterns
+in `case-studies/pricing-patterns.md`:
+
+- Rates: framing $450/day, window install $300, windows $600 / $900 / $1,800 by tier, hardwood
+  finishing $3.75/SF, paint $1,100/room + one $450 Paint Materials per job (1 per 6 rooms on 20+ room
+  jobs), tile $5,700 primary / $2,200 hall / $1,800 backsplash, countertops $105 / $125 / $237.50.
+- Quantities: footing $42 x LF of new perimeter (estimated as 3 x sqrt(footprint) when not given);
+  framing materials and insulation on the framed/opened area (`framed_sf`, else the addition SF, else
+  25% of the renovated area with a review flag); General Electrical $9/SF of renovated area on every
+  job; devices at Tyler's token counts; recessed 1.5 per room; General Plumbing $1,200 per fixture
+  (count given, else by room: primary bath 4, hall bath 3, powder 2, kitchen 2) and finish plumbing
+  3 hrs per fixture; finish electrical 1.5 hrs per room (min 4); trim 1 day and 50 SF of materials per
+  room; drywall 300 SF per room with materials 1.35 x hang; Ceramic Tile Installation units (5 per
+  primary bath, 3 per hall bath, 1 per small area) and no tile material line; gutters $1,200 per unit
+  (count given, else 6 whole house / 2 partial); bathroom hardware one line, $950 + $650 per extra bath;
+  cabinet hardware $450 without a kitchen, $2,500 / $3,000 / $3,750 with one; no Cabinet Installation
+  or Cabinet Painting lines (Tyler's $625/LF includes them).
+- Sized by job cost: dumpsters 1 per 2.5 weeks, dust 60% of the weeks, permits $800 x 1-9, selection
+  hours (tier under $160K, then 32 / 40 / 60, Luxury 80 over $550K), storage none under $160K, punch
+  days 1 / 2 / 3 / 5 when not entered, cleaning x2 over $390,625. Warranty unchanged.
+- Scope prompt asks Claude for `framed_sf`, `foundation_perimeter_lf`, a gutter count and
+  `plumbing.fixture_count`; trim days and finish hours are no longer Claude estimates.
+- **Not changed: the markup bracket.** Tyler used 28% on 14 of 20 jobs at every size (Barber, $656K
+  cost, on Nov 16). Whether the 28 / 25 / 23% bracket stays is Jason's call.
+
+Checked by rebuilding each job's scope from Tyler's own budget quantities (demo and framing days taken
+from his budget, since those are still Claude estimates) and pricing it with the old and new rules:
+
+| Job | Real cost | Old rules | New rules |
+|---|---|---|---|
+| McNelly (00845) | $343,745 | +12.9% | **+1.4%** |
+| Taggart (00835) | $312,968 | +13.5% | **+3.3%** |
+| Malm (00844) | $751,325 (without $28,200 of NOT INCLUDED options) | - | **-3.3%** |
+
+Biggest remaining gaps: dumpster and dust on McNelly/Taggart (Tyler entered 1 each; the rule gives
+~$5,000 and ~$1,500), Taggart's General Electrical (Tyler priced 600 SF; the rule uses the 2,100 SF
+renovated area), and Malm's CM at $1,100/wk vs the $900 rule. This tests the pricing, not Claude's
+read of a visit; a live dry run is still the real check.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
