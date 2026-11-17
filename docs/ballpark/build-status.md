@@ -305,6 +305,10 @@ built-in LF swings both ways, and room counts above what the visit shows are kep
   there's an addition, foundation, slab, deck, porch or driveway; interior-only jobs get none.
   Engineering $1,850 (letter, beam or load-bearing wall) or $2,800 (full, addition or major
   structural). Preconstruction and Lot Survey go in as flagged $0 lines for Tyler to price.
+  Greenway dry run after the change (PR #38): $326,090 (+9.2% vs Tyler's $298,728, before Tyler prices
+  the $0 Preconstruction and Survey lines). The read set site work and grading from the sloped lot,
+  full engineering for the addition and garage, preconstruction (client sketch only, plans needed) and
+  survey (10 ft setback, fence on the lot line).
 - **Markup bracket kept** for now.
 - **Windows (and doors) need levels, not one price per tier.** Jason: "there's levels of windows and
   doors... part of the reason the window pricing is so varied." Tyler's ballparks: $500-$600 most jobs,
