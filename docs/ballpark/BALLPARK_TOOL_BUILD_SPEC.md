@@ -139,8 +139,8 @@ All dollar amounts are **cost**. Markup is applied afterward (section 7). Where 
 | Project Selection Coordination | $1,500 base + $1,000 per tier up: Quality $1,500 · Premium $2,500 · Luxury $3,500. Template line is $125/hr, so 12 / 20 / 28 hrs. **Open:** with tiers per space, use the job's highest tier (default). |
 | Permits and Fees | 0.8% of job cost ($800 per $100K, smooth, not stepped), on cost before permits and warranty |
 | Interior Design | **Remove** |
-| Preconstruction costs | **Remove** |
-| Site Work, Grading | **Remove** (priced per job, outside the tool) |
+| Preconstruction costs | **Remove** (Nov 17, 2026: back as a flagged $0 line when plans/drawings are needed; Tyler prices it) |
+| Site Work, Grading | ~~Remove~~ Nov 17, 2026: $800 / $600 a unit when there's new structure or flatwork on the lot (see build-status.md). Engineering ($1,850 letter / $2,800 full) and Lot Survey ($0 flag) added too |
 | Temporary Power Pole | $1,800, only when **full electrical rewire** is selected |
 | Demolition | $300/day × days. **Open:** no days rule given; the tool estimates days from scope and shows its reasoning |
 | New Water Tap and Meter, Tap fee (ReWa), Sewer Line Tap | Template prices, only when the transcripts or notes call for new service (typically additions) |

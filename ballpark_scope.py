@@ -55,6 +55,8 @@ SCOPE_SCHEMA = """{
     "plumbing": {"fixture_count": 0, "swap_same": 0, "new_in_footprint": 0, "tub_in_footprint": 0, "new_outside_footprint": 0,
                  "tub_outside_footprint": 0, "water_sewer_10lf": 0, "cut_and_cap": 0, "vent_thru_roof": 0},
     "new_service": {"water_tap": false, "rewa_fee": false, "sewer_tap": false},
+    "site": {"site_work_units": null, "grading_units": null, "engineering": "none|letter|full",
+             "preconstruction": false, "survey": false},
     "fixtures": [ {"category": "appliance|plumbing|lighting", "item": "refrigerator", "tier": "Premium",
                    "quantity": 1, "brand": null, "unit_price": null, "price_source": null, "room": "Kitchen"} ],
     "estimates": {
@@ -123,6 +125,15 @@ site is in scope unless it was explicitly excluded.
 (bookcases, mudroom lockers, window seats, bar or pantry cabinetry, entertainment walls, laundry \
 cabinets). Estimate the LF whenever any are mentioned (a mudroom bench and lockers about 6-8 LF, a pair \
 of bookcases flanking a fireplace about 8-12 LF, a pantry or bar wall about 10-15 LF).
+- site: work on the lot itself. site_work_units ($800 each: clearing, access, tree removal, utility \
+trenching) and grading_units ($600 each) for any new structure or flatwork (addition, porch, deck, \
+slab, garage, driveway): Tyler's run 1 site + 1 grading for a porch or deck, about 2 + 2-6 for an \
+addition, up to 5-6 + 8 for a big addition on a sloped lot. Leave them null to let the engine use 1 \
+each when there's ground work; 0 when there is truly none. engineering: "letter" when a load-bearing \
+wall or beam is changed, "full" for an addition or major structural change, else "none". \
+preconstruction: true when the job needs plans or drawings before construction (additions, porches, \
+new structures, major layout changes). survey: true when property lines, setbacks or an easement \
+came up. Tyler prices preconstruction and the survey himself.
 - gutters: number of gutter units (about 1-2 for a porch or addition, 5-7 for a whole house), 0 if \
 no gutter work.
 - plumbing.fixture_count: every plumbing fixture being installed (toilets, sinks, showers, tubs, \
