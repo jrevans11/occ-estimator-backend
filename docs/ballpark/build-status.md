@@ -211,6 +211,27 @@ Biggest remaining gaps: dumpster and dust on McNelly/Taggart (Tyler entered 1 ea
 renovated area), and Malm's CM at $1,100/wk vs the $900 rule. This tests the pricing, not Claude's
 read of a visit; a live dry run is still the real check.
 
+## Gentles (00895) live dry run on the new rules (Nov 17, 2026)
+
+First live dry run after PR #36, through the intake page's dry-run checkbox (nothing written). Form
+filled only with what Tyler knows on site: Premium, not whole-home, 15-20 wks, a primary bath, room
+count 3, deck 300 SF. The tool read 4 CompanyCam transcripts, 4 photo descriptions and 1 comment
+(confidence medium).
+
+| | Cost |
+|---|---|
+| Tyler's real ballpark | $131,139 |
+| Tool | $118,563 (**-9.6%**, pass) |
+| Tyler's, less lines the tool never adds ($11,825: lot survey, preconstruction, site work, grading, under-deck waterproofing) | $119,314 (tool -0.6%) |
+
+Price $151,762 at 28%, range $150K - $170K (Tyler's ~$168K sits at the top). The read got the scope
+right (spare bedroom to primary bath + closet; deck rebuilt as a covered carport with a concrete pad),
+estimated framing at 12 days (Tyler: 12) and raised the right open questions (sewer easement / survey,
+deck material, under-deck drainage, drain route). Biggest miss: demo 4 days vs Tyler's 16 (~$3,600);
+demo days are still a Claude estimate. Recurring gap: survey, preconstruction, site work and
+waterproofing lines the spec removed - worth asking Tyler whether the tool should add them when the
+scope calls for them (pricing-patterns.md question 4).
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
