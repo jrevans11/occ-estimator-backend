@@ -271,6 +271,19 @@ open questions); the misses are things it left at 0 or excluded. Holes, biggest 
 9. **Markup:** Barber priced at 23% (bracket) vs Tyler's 28% - $774K vs ~$840K price. Bracket kept
    for now per Jason.
 
+### Holes 1-6 fixed (Nov 17, 2026)
+
+- Scope prompt: Tyler's entered values are final, but a blank field means "work it out", and spaces
+  the visit clearly shows (powder room, detached garage, breezeway, driveway, porch) are added and
+  noted in conflicts. In-scope work with no stated quantity is estimated and flagged, never left at 0.
+  Demo days are man-days with Tyler's ranges (3-5 small, 8-16 kitchen/bath/small addition, ~40
+  whole home, 80 largest). duration_range is labelled weeks, in the prompt and in the form text
+  Claude sees. Built-ins: estimate `cabinetry.builtins_lf` whenever any are mentioned.
+- Pricing: new `exterior.paint_units` for partial exterior paint at $1,200 a unit (full repaint on
+  heated SF still wins when both are set). Exterior paint discussed on site counts as in scope
+  unless it was explicitly excluded.
+- Holes 7-9 (big-job windows, removed spec lines, markup) still need a decision.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on

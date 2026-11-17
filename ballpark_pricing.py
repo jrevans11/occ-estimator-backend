@@ -231,6 +231,7 @@ WINDOW_INSTALL = 300
 GARAGE_DOOR_SINGLE = 3500
 GARAGE_DOOR_DOUBLE = 7200
 EXT_PAINT_PER_HEATED_SF = 8
+EXT_PAINT_UNIT = 1200             # Tyler's partial-paint unit (1-20 units on 9 of 20 ballparks)
 PORCH_SCREENING_PER_LF = 140
 GUTTER_UNIT = 1200
 GUTTER_UNITS_DEFAULT = {"whole_home": 6, "partial": 2}
@@ -823,6 +824,10 @@ def price_scope(scope, template, tier_prices=None):
                   note=f"{heated:g} heated SF x ${EXT_PAINT_PER_HEATED_SF}")
         else:
             b.add("ext_paint", 1, placeholder="full exterior repaint selected but no heated SF entered")
+    elif _num(ext.get("paint_units")) > 0:
+        units = _num(ext["paint_units"])
+        b.add("ext_paint", units, EXT_PAINT_UNIT, unit="Each",
+              note=f"{units:g} units x ${EXT_PAINT_UNIT:,} (partial exterior paint)")
     if _num(ext.get("porch_screening_lf")) > 0:
         b.add("porch_screening", _num(ext["porch_screening_lf"]), PORCH_SCREENING_PER_LF, unit="Linear Feet")
     gutters = ext.get("gutters")
@@ -913,7 +918,7 @@ def price_scope(scope, template, tier_prices=None):
     if vanities:
         b.add("vanities", vanities, CABINET_PER_LF)
     if builtins:
-        b.add("builtins", builtins, BUILTINS_PER_LF, name="Custom Built Ins and Mudroom Lockers")
+        b.add("builtins", builtins, BUILTINS_PER_LF, note=f"{builtins:g} LF x ${BUILTINS_PER_LF:,}")
     cab_lf = lowers_uppers + full_height + vanities + builtins
     if cab_lf:
         # No Cabinet Installation / Cabinet Painting lines: Tyler used them on

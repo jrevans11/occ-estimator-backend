@@ -39,6 +39,7 @@ SCOPE_SCHEMA = """{
                  "foundation_brick_lf": 0, "windows": 0, "window_tier": null, "exterior_doors": 0,
                  "front_door": false, "gutters": 0, "driveway_sf": 0, "garage_doors_single": 0,
                  "garage_doors_double": 0, "porch_screening_lf": 0, "full_exterior_repaint": false,
+                 "paint_units": 0,
                  "brick_chimney": false, "landscaping": false, "metal_roof_accents": false},
     "flooring": {"tile_sf": 0, "hardwood_new_sf": 0, "hardwood_refinish_sf": 0, "lvp_sf": 0, "carpet_sf": 0},
     "tile_areas": [ {"name": "Primary bath", "kind": "primary_bath|hall_bath_tub|backsplash|small",
@@ -81,7 +82,11 @@ Preliminary Ballpark budget. You do NOT price anything except brand-named fixtur
 engine applies OCC's unit rates.
 
 WHAT YOU READ (most trusted first):
-1. Tyler's tool-page entries. These are final. Copy them exactly into the scope.
+1. Tyler's tool-page entries. Every value he entered is final: copy it exactly into the scope. A field \
+he left blank is NOT "none": work it out from the other material below. His spaces list and room count \
+are what he entered quickly on site, not a complete list: if the visit material clearly shows another \
+space or area of work (a powder room, a detached garage, a breezeway, a driveway, a porch), include it \
+in the scope and say so in conflicts. duration_range is in WEEKS (e.g. "20-25" = 20 to 25 weeks).
 2. Tyler's scope summary video (recorded at the end of each site visit; marked likely_scope_summary). \
 When anything conflicts, the scope summary and meeting notes win over earlier walkthrough material.
 3. Job comments, Daily Logs and CompanyCam Pages (intake and meeting notes).
@@ -90,8 +95,14 @@ When anything conflicts, the scope summary and meeting notes win over earlier wa
 Transcripts are machine-generated; read through mis-hearings.
 
 RULES FOR THE SCOPE:
-- Only include work that was actually discussed as in scope. Never invent scope to fill fields; use 0, \
-false or empty lists. Things discussed as optional or excluded go in summary.exclusions, not the scope.
+- Only include work that was actually discussed as in scope. Never invent scope to fill fields. Things \
+discussed as optional or excluded go in summary.exclusions, not the scope.
+- When work IS in scope but nobody gave a quantity, ESTIMATE the quantity; never leave it at 0. Use room \
+sizes, the home's heated SF, photos and typical sizes, write "estimated from ..." in sources, and add the \
+assumption to open_questions so Tyler can check it. Examples: new flooring in renovated rooms (sum the \
+rooms' SF), window replacement (count from photos or about 1 per 100 heated SF), new siding (exterior \
+trim LF too), built-ins mentioned (estimate their LF). Use 0, false or empty lists only for work that is \
+not in scope.
 - rooms: every room being renovated (bedrooms, closets used as rooms, hallways and living spaces count \
 as rooms when they are renovated). Kitchens, primary baths, hall baths and powder rooms use their type; \
 everything else is "other". Give each room's tier: use Tyler's tier for kitchens and baths, and the \
@@ -103,6 +114,15 @@ footprint, not both floors. foundation_perimeter_lf: the LF of new footing (usua
 addition; the 4th is the existing house) when you can estimate it. framed_sf: SF of walls being \
 framed or opened up (new walls, the addition, opened walls), NOT the whole renovated area; framing \
 materials and insulation are priced on it.
+- Exterior paint: full_exterior_repaint = true when the whole house is being painted (new siding \
+usually means a full repaint). Otherwise, when only part of the exterior is painted (an addition, a \
+porch, new trim, touch-up to match), set exterior.paint_units: Tyler's $1,200 units, about 1-3 for a \
+porch or small area, 3-8 for an addition, 10-20 for most of the house. Exterior paint discussed on \
+site is in scope unless it was explicitly excluded.
+- cabinetry.builtins_lf: LF of custom built-ins and other cabinetry outside the kitchen and vanities \
+(bookcases, mudroom lockers, window seats, bar or pantry cabinetry, entertainment walls, laundry \
+cabinets). Estimate the LF whenever any are mentioned (a mudroom bench and lockers about 6-8 LF, a pair \
+of bookcases flanking a fireplace about 8-12 LF, a pantry or bar wall about 10-15 LF).
 - gutters: number of gutter units (about 1-2 for a porch or addition, 5-7 for a whole house), 0 if \
 no gutter work.
 - plumbing.fixture_count: every plumbing fixture being installed (toilets, sinks, showers, tubs, \
@@ -124,7 +144,10 @@ normal retail price (not sale, not pro pricing) and set unit_price and price_sou
 the brand is one of the tier's own brands, leave unit_price null; the tier table covers it. Use web \
 search for nothing else.
 - estimates: OCC has no fixed rule yet for these, so estimate them from the scope and explain the \
-math in one sentence each: demo_days (demolition crew days at $300/day), framing_days (framing crew \
+math in one sentence each: demo_days (MAN-days, one worker for one day at $300; a crew of 3-4 \
+for a week is 15-20 man-days. Tyler's ballparks run 3-5 for a porch or a single small room, 8-16 for a \
+kitchen, a bath conversion or a small addition, about 14-16 for an addition with interior work, about \
+40 for a whole-home renovation and 80 for the largest), framing_days (framing crew \
 days at $450/day; Tyler's ballparks run 5-12 days small, 16-30 medium, 36-40 for additions), \
 appliance_install_hours ($75/hr, about 16 hrs per kitchen). Trim days and finish plumbing/electrical \
 hours come from the engine's per-room rules. Omit an estimate whose work isn't in scope.
@@ -222,7 +245,11 @@ def build_user_content(context, form, tier_prices):
     parts = []
     job = context.get("job") or {}
     parts.append(f"JOB {job.get('number')} - {job.get('name')} - {job.get('address')} ({job.get('job_type')})")
-    parts.append("TOOL-PAGE ENTRIES (final; copy exactly):\n" + json.dumps(form or {}, indent=1))
+    shown = dict(form or {})
+    if shown.get("duration_range") and "week" not in str(shown["duration_range"]).lower():
+        shown["duration_range"] = f"{shown['duration_range']} weeks"
+    parts.append("TOOL-PAGE ENTRIES (copy every entered value exactly; blank fields are for you to work "
+                 "out, not 'none'):\n" + json.dumps(shown, indent=1))
     camera = context.get("companycam") or {}
     summaries = [t for t in camera.get("transcripts") or [] if t.get("likely_scope_summary")]
     others = [t for t in camera.get("transcripts") or [] if not t.get("likely_scope_summary")]

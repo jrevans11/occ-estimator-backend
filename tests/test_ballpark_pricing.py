@@ -236,6 +236,14 @@ class Exterior(unittest.TestCase):
         self.assertEqual(one(r, "windows")["cost"], 9000)
         self.assertEqual(one(r, "window_install")["cost"], 3000)
 
+    def test_partial_exterior_paint_units(self):
+        r = run({"duration_weeks": 15, "exterior": {"paint_units": 13}})
+        self.assertEqual(one(r, "ext_paint")["cost"], 13 * 1200)          # Greenway
+        full = run({"duration_weeks": 15, "heated_sf": 2500,
+                    "exterior": {"full_exterior_repaint": True, "paint_units": 4}})
+        self.assertEqual(one(full, "ext_paint")["cost"], 20000)            # full repaint wins
+        self.assertEqual(lines(run({"duration_weeks": 15}), "ext_paint"), [])
+
     def test_garage_paint_screening_gutters(self):
         r = run({"duration_weeks": 15, "heated_sf": 2500,
                  "exterior": {"garage_doors_single": 1, "garage_doors_double": 1, "full_exterior_repaint": True,
