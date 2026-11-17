@@ -297,6 +297,21 @@ The tool now leans high rather than low (average +8.9% vs -17.2% before, absolut
 Remaining patterns: exterior paint is still skipped on jobs where it wasn't discussed outright (Barber),
 built-in LF swings both ways, and room counts above what the visit shows are kept as entered.
 
+### Holes 7-9: Jason's calls (Nov 17, 2026)
+
+- **Site lines are back when the scope calls for them** (reverses spec 6a "Remove"). New `site`
+  block in the scope: Site Work $800 and Grading $600 a unit, counts from the scope read (Tyler: 1 + 1
+  for a porch or deck, ~2 + 2-6 for an addition, up to 5-6 + 8 on big sloped lots), else 1 each when
+  there's an addition, foundation, slab, deck, porch or driveway; interior-only jobs get none.
+  Engineering $1,850 (letter, beam or load-bearing wall) or $2,800 (full, addition or major
+  structural). Preconstruction and Lot Survey go in as flagged $0 lines for Tyler to price.
+- **Markup bracket kept** for now.
+- **Windows (and doors) need levels, not one price per tier.** Jason: "there's levels of windows and
+  doors... part of the reason the window pricing is so varied." Tyler's ballparks: $500-$600 most jobs,
+  $900 Malm, $1,100 Taggart, ~$1,400 Barber ($85K for 60), $1,800 McDowell and Frandsen. Not built yet;
+  needs the real product levels and prices for windows, exterior doors and front doors (likely a
+  window/door section in `ballpark_tier_prices.json` with a level picked per job, like fixtures).
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on

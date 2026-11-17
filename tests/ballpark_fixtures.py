@@ -32,6 +32,7 @@ ITEMS = {
     "dumpster": ("1300", 500, "O"), "dust": ("1300", 100, "M"), "demo": ("1300", 300, "S"),
     "temp_pole": ("1300", 0, "S"), "water_tap": ("1300", 3500, "S"), "rewa_fee": ("1300", 2750, "O"),
     "sewer_tap": ("1300", 9560, "S"),
+    "preconstruction": ("1000", 85, "L"), "site_work": ("1300", 0, "S"), "grading": ("1300", 0, "S"),
     "footing": ("2001", 42, "S"), "slab": ("2001", 19.09, "S"), "waterproofing": ("2001", 50, "S"),
     "crawlspace": ("2001", 0, "S"), "termite": ("2001", 400, "S"),
     "framing_labor": ("3100", 300, "S"), "deck_framing": ("3100", 17.25, "M"), "decking": ("3100", 23.58, "M"),

@@ -79,6 +79,7 @@ T = {
     "dumpster": "22PCTdp37bGr", "dust": "22PCTdp37bGs", "demo": "22PCTdp37bGt",
     "temp_pole": "22PCTdp37bGu", "water_tap": "22PCTdp37bGv", "rewa_fee": "22PCTdp37bGw",
     "sewer_tap": "22PCTdp37bGx",
+    "preconstruction": "22PCTdp37bGm", "site_work": "22PCTdp37bGp", "grading": "22PCTdp37bGq",
     "footing": "22PCTdp37bGz", "slab": "22PCTdp37bH2", "waterproofing": "22PCTdp37bH3",
     "crawlspace": "22PCTdp37bH4", "termite": "22PCTdp37bH5",
     "framing_labor": "22PCTdp37bH7", "deck_framing": "22PCTdp37bH8", "decking": "22PCTdp37bH9",
@@ -129,6 +130,7 @@ T_NAMES = {
     "permits": "Permits and Fees", "cm": "Construction Management And Service",
     "port_a_john": "Port a John", "selection": "Project Selection Coordination",
     "storage": "On Site Storage", "dumpster": "Dumpster Fees", "dust": "Dust Control Materials",
+    "preconstruction": "Preconstruction costs", "site_work": "Site Work", "grading": "Grading",
     "demo": "Demolition", "temp_pole": "Temporary Power Pole", "water_tap": "New Water Tap and Meter",
     "rewa_fee": "Tap fee to be paid directly to ReWa", "sewer_tap": "Sewer Line Tap",
     "footing": "Footing and Foundation", "slab": "Pre Slab and Slab",
@@ -193,6 +195,10 @@ T_NAMES = {
 EXTRA_LINES = {
     "mirrors": {"name": "Mirrors", "phase": "5400", "cost_type": COST_TYPE_MATERIALS, "unit": "Each",
                 "description": "Mirror allowance."},
+    "engineering": {"name": "Engineering", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
+                    "description": "Structural engineering for the work shown on the plans."},
+    "survey": {"name": "Lot Survey", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
+               "description": "Lot survey."},
 }
 
 # ── Rates set by Tyler and Jason (spec section 6) ───────────────────────────
@@ -211,6 +217,9 @@ SELECTION_HOURS = {"Quality": 12, "Premium": 20, "Luxury": 28}   # small jobs: $
 PERMIT_UNIT = 800
 TEMP_POLE = 1800
 DEMO_PER_DAY = 300
+SITE_WORK_UNIT = 800              # Tyler: Site Work $800 x 1-6 on 12 of 20 ballparks
+GRADING_UNIT = 600                # Tyler: Grading $600 x 1-8
+ENGINEERING = {"letter": 1850, "full": 2800}   # Frandsen engineering letter / McDowell engineering
 CRAWLSPACE_TREATMENT = 4500
 FRAMING_MATERIALS_PER_SF = 20
 FRAMING_LABOR_PER_DAY = 450
@@ -530,6 +539,43 @@ def _estimate(scope, key):
     return value, (est.get("reasoning") or "").strip()
 
 
+def has_ground_work(scope, ext=None):
+    """New structure or flatwork on the lot: an addition, foundation, slab,
+    deck, porch or driveway. Tyler adds Site Work and Grading on these."""
+    ext = ext if ext is not None else (scope.get("exterior") or {})
+    return any(_num(v) > 0 for v in (scope.get("addition_sf"), scope.get("foundation_sf"), scope.get("slab_sf"),
+                                     scope.get("deck_sf"), ext.get("driveway_sf"), ext.get("porch_screening_lf")))
+
+
+def _site_lines(b, scope, ext):
+    """Site Work, Grading, Engineering, Preconstruction and Lot Survey, only
+    when the scope calls for them (Jason, Nov 17 2026). Units come from the
+    scope read; on ground work with no count, 1 of each."""
+    site = scope.get("site") or {}
+    ground = has_ground_work(scope, ext)
+    for key, rate, field in (("site_work", SITE_WORK_UNIT, "site_work_units"),
+                             ("grading", GRADING_UNIT, "grading_units")):
+        given = site.get(field)
+        if given is not None and _num(given) > 0:
+            units, how = _num(given), "from the scope read"
+        elif given is None and ground:
+            units, how = 1, "default for new structure or flatwork on the lot"
+        else:
+            continue
+        b.add(key, units, rate, unit="Each", note=f"{units:g} x ${rate:,} ({how})")
+    eng = str(site.get("engineering") or "").lower()
+    if eng in ENGINEERING:
+        b.add("engineering", 1, ENGINEERING[eng],
+              name="Engineering letter" if eng == "letter" else "Engineering",
+              note=f"structural work calls for {'an engineering letter' if eng == 'letter' else 'engineering'}")
+    if site.get("preconstruction"):
+        b.add("preconstruction", 1, placeholder="plans or drawings needed before construction; Tyler to price "
+                                                "($1,500-$10,500 on his ballparks)")
+    if site.get("survey"):
+        b.add("survey", 1, placeholder="property lines, setbacks or an easement came up; Tyler to price "
+                                       "($1,850 on Gentles)")
+
+
 def _days_line(b, scope, key, est_key, rate, label):
     value, why = _estimate(scope, est_key)
     if value is None or value <= 0:
@@ -629,6 +675,7 @@ def price_scope(scope, template, tier_prices=None):
     for key in ("water_tap", "rewa_fee", "sewer_tap"):
         if service.get(key):
             b.add(key, 1, None, note=f"new service called for: {service.get(key) if isinstance(service.get(key), str) else 'yes'}")
+    _site_lines(b, scope, ext)
 
     # 2001 / 3100 Structure and foundation. Footings go under new ground-floor
     # footprint only: a second-story addition sits on the existing house.

@@ -230,6 +230,36 @@ class Finishes(unittest.TestCase):
         self.assertEqual(one(r, "carpet")["cost"], 212.5)
 
 
+class SiteLines(unittest.TestCase):
+    def test_default_one_each_on_ground_work(self):
+        r = run({"duration_weeks": 15, "deck_sf": 300})
+        self.assertEqual(one(r, "site_work")["cost"], 800)
+        self.assertEqual(one(r, "grading")["cost"], 600)
+
+    def test_counts_from_scope_read(self):
+        r = run({"duration_weeks": 22.5, "addition_sf": 750,
+                 "site": {"site_work_units": 2, "grading_units": 5}})      # Greenway
+        self.assertEqual(one(r, "site_work")["cost"], 1600)
+        self.assertEqual(one(r, "grading")["cost"], 3000)
+
+    def test_zero_means_none_and_interior_jobs_get_none(self):
+        r = run({"duration_weeks": 15, "deck_sf": 300, "site": {"site_work_units": 0, "grading_units": 0}})
+        self.assertEqual(lines(r, "site_work") + lines(r, "grading"), [])
+        inside = run({"duration_weeks": 15, "rooms": [{"type": "kitchen", "tier": "Quality"}]})
+        self.assertEqual(lines(inside, "site_work") + lines(inside, "grading"), [])
+
+    def test_engineering_precon_survey(self):
+        r = run({"duration_weeks": 15, "site": {"engineering": "letter", "preconstruction": True, "survey": True}})
+        self.assertEqual(one(r, "engineering")["cost"], 1850)
+        for key in ("preconstruction", "survey"):
+            line = one(r, key)
+            self.assertEqual(line["cost"], 0)
+            self.assertTrue(line["placeholder"])
+        full = run({"duration_weeks": 15, "site": {"engineering": "full"}})
+        self.assertEqual(one(full, "engineering")["cost"], 2800)
+        self.assertEqual(lines(run({"duration_weeks": 15, "site": {"engineering": "none"}}), "engineering"), [])
+
+
 class Exterior(unittest.TestCase):
     def test_window_tier_price_and_install(self):
         r = run({"duration_weeks": 15, "exterior": {"windows": 10, "window_tier": "Premium"}})
