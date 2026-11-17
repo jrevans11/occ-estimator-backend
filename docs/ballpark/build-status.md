@@ -232,6 +232,45 @@ demo days are still a Claude estimate. Recurring gap: survey, preconstruction, s
 waterproofing lines the spec removed - worth asking Tyler whether the tool should add them when the
 scope calls for them (pricing-patterns.md question 4).
 
+## Four more live dry runs (Nov 17, 2026)
+
+Same method as Gentles: intake page, dry run, form filled only with what Tyler knows on site (tier,
+whole-home, duration, spaces, room count, plus addition/slab SF on Greenway). The jobs were chosen
+because they have the most CompanyCam video.
+
+| Job | Form | Tyler's cost | Tool cost | Diff | Confidence |
+|---|---|---:|---:|---:|---|
+| Gentles (00895) | Premium, 15-20 wks, primary bath, 3 rooms, deck 300 | $131,139 | $118,563 | -9.6% | medium |
+| Barber (00892) | Premium, 40-52 wks, kitchen, primary + 4 hall baths, 22 rooms | $655,952 | $629,448 | -4.0% | medium |
+| McNelly (00845) | Premium, 20-25 wks, kitchen, primary + 3 hall baths, 15 rooms | $343,745 | $308,837 | -10.2% | low |
+| Greenway (00822) | Quality, 20-25 wks, 8 rooms, 750 SF addition/foundation/slab | $298,728 | $236,035 | -21.0% | low |
+| Taggart (00835) | Quality, 20-25 wks, kitchen, 14 rooms | $312,968 | $207,452 | -33.7% | low |
+
+Every run came in low. The read itself was good (it understood each job's scope and asked sensible
+open questions); the misses are things it left at 0 or excluded. Holes, biggest first:
+
+1. **Blank read as "none".** The prompt says the tool page is final, and Claude also treats things
+   Tyler didn't enter as not in scope. Greenway: the detached garage, breezeway and driveway in the
+   scope video were dropped because the form only listed the addition (Tyler had driveway $12.5K,
+   garage door $4.3K). McNelly: the powder room on the video was folded into a hall bath. Fix: the
+   form is final for what it says; blank fields mean "work it out", not "none".
+2. **Quantities left at 0 instead of estimated.** Taggart LVP 0 (Tyler 2,100 SF, ~$17.9K), exterior
+   trim 0; McNelly windows 0 (Tyler 10, ~$9K). When the work is clearly in scope but unmeasured,
+   Claude should estimate and flag it, not zero it.
+3. **Exterior paint.** The engine only knows a full repaint priced on heated SF. Tyler uses $1,200
+   units for partial work (Greenway 13 units, $15.6K) or a lump with new siding (Taggart $19.8K).
+   Barber's read excluded exterior paint (Tyler $34K). Needs a partial-paint input in units.
+4. **Demo days run low** (Gentles 4 vs 16, McNelly 10 vs 40, Greenway 5 vs 14). Tyler's demo days
+   read as man-days (crew of 3-4); Claude estimates crew-days. The prompt should say man-days and give
+   Tyler's ranges, as it now does for framing.
+5. **Custom built-ins / extra cabinetry** not picked up as lumps (Greenway $28K, Taggart $16.5K).
+6. **Duration units:** Claude asked twice whether "20-25" meant weeks. Label it weeks in the prompt.
+7. **Windows on big jobs:** Barber read 47 windows x $900 = $42K; Tyler carried an $85K lump.
+8. **Lines the spec removed** (preconstruction, survey, site work, grading, driveway/paths) keep
+   showing up in Tyler's budgets (Greenway $6.2K precon + $12.5K concrete, Gentles $11.8K).
+9. **Markup:** Barber priced at 23% (bracket) vs Tyler's 28% - $774K vs ~$840K price. Bracket kept
+   for now per Jason.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
