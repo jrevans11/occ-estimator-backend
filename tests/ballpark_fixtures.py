@@ -36,6 +36,7 @@ ITEMS = {
     "crawlspace": ("2001", 0, "S"), "termite": ("2001", 400, "S"),
     "framing_labor": ("3100", 300, "S"), "deck_framing": ("3100", 17.25, "M"), "decking": ("3100", 23.58, "M"),
     "framing_materials": ("3100", 20, "M"),
+    "general_plumbing": ("3600", None, "S"), "paint_materials": ("5900", 0, "L"),
     "plumb_swap": ("3600", 625, "S"), "plumb_new_in": ("3600", 1325, "S"), "plumb_tub_in": ("3600", 1525, "S"),
     "plumb_vent": ("3600", 515.06, "S"), "plumb_new_out": ("3600", 927, "S"), "plumb_tub_out": ("3600", 1275, "S"),
     "plumb_water_sewer": ("3600", 572.97, "S"), "plumb_cut_cap": ("3600", 164.30, "S"),

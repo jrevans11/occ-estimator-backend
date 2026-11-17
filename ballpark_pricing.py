@@ -18,6 +18,12 @@ Jason's Oct 27, 2026 answers to the spec's Recommended items:
   - Appliance / plumbing fixture / lighting allowances come from a cached
     tier price table (ballpark_tier_prices.json), not a live search per run.
 
+Nov 17, 2026: rates and quantity rules replaced with Tyler's observed practice
+on the 20 most recent real Preliminary Ballparks (docs/ballpark/case-studies/
+pricing-patterns.md). Jason: "use what Tyler does, then tweak it if needed."
+The markup bracket (spec section 7) was NOT changed: Tyler used 28% on most
+jobs of every size, but that is Jason's call and is flagged in the docs.
+
 Standard library only.
 """
 
@@ -77,6 +83,7 @@ T = {
     "crawlspace": "22PCTdp37bH4", "termite": "22PCTdp37bH5",
     "framing_labor": "22PCTdp37bH7", "deck_framing": "22PCTdp37bH8", "decking": "22PCTdp37bH9",
     "framing_materials": "22PCTdp37bHA",
+    "general_plumbing": "22PGSq65aGiZ", "paint_materials": "22PCTdp37yDL",
     "plumb_swap": "22PCTdp37bHE", "plumb_new_in": "22PCTdp37bHF", "plumb_tub_in": "22PCTdp37bHG",
     "plumb_vent": "22PCTdp37bHH", "plumb_new_out": "22PCTdp37bHJ", "plumb_tub_out": "22PCTdp37bHK",
     "plumb_water_sewer": "22PCTdp37bHL", "plumb_cut_cap": "22PCTdp37bHM",
@@ -129,6 +136,7 @@ T_NAMES = {
     "termite": "Termite Protection", "framing_labor": "Framing Labor",
     "deck_framing": "Deck Framing Materials", "decking": "Decking Materials (Trex Enhanced Naturals)",
     "framing_materials": "Framing Materials",
+    "general_plumbing": "General Plumbing", "paint_materials": "Paint Materials",
     "plumb_swap": "Plumbing Fixture swap out same location",
     "plumb_new_in": "New Fixture Location within same footprint",
     "plumb_tub_in": "New Fixture location in same footprint- Tub",
@@ -179,11 +187,10 @@ T_NAMES = {
 }
 
 # Lines the tool adds that the template doesn't have (Jason, Oct 27 2026).
+# The Tile Materials allowance was dropped Nov 17, 2026: none of Tyler's 20
+# real ballparks has a tile material line (Ceramic Tile Installation units
+# carry it).
 EXTRA_LINES = {
-    "tile_materials": {"name": "Tile Materials (allowance)", "phase": "5300", "cost_type": COST_TYPE_MATERIALS,
-                       "unit": "Square Feet",
-                       "description": "Tile material allowance for the tiled areas in scope. "
-                                      "Final cost depends on the client's tile selections."},
     "mirrors": {"name": "Mirrors", "phase": "5400", "cost_type": COST_TYPE_MATERIALS, "unit": "Each",
                 "description": "Mirror allowance."},
 }
@@ -193,49 +200,76 @@ EXTRA_LINES = {
 CM_PER_WEEK = 900
 PORT_A_JOHN_PER_MONTH = 110
 WEEKS_PER_MONTH = 4.33
-DUMPSTER_PER_2_WEEKS = 500
+DUMPSTER_UNIT = 500
+WEEKS_PER_DUMPSTER = 2.5          # Tyler: 1 per 2-2.5 weeks
 DUST_PER_WEEK = 100
+DUST_SHARE_OF_WEEKS = 0.6         # Tyler: dust control only while demo/rough is going on
 STORAGE_UNIT = 1650
 TWO_STORAGE_UNITS_OVER_COST = 390625
-SELECTION_HOURS = {"Quality": 12, "Premium": 20, "Luxury": 28}   # $1,500 / $2,500 / $3,500 at $125/hr
-PERMIT_RATE = 0.008
+NO_STORAGE_UNDER_COST = 160000
+SELECTION_HOURS = {"Quality": 12, "Premium": 20, "Luxury": 28}   # small jobs: $1,500 / $2,500 / $3,500 at $125/hr
+PERMIT_UNIT = 800
 TEMP_POLE = 1800
 DEMO_PER_DAY = 300
 CRAWLSPACE_TREATMENT = 4500
 FRAMING_MATERIALS_PER_SF = 20
-FRAMING_LABOR_PER_DAY = 300
-BATH_HARDWARE = {"Quality": 300, "Premium": 850, "Luxury": 2200}
+FRAMING_LABOR_PER_DAY = 450
+FOOTING_PER_LF = 42
 FINISH_HOURLY = 75
 UNDER_CABINET_PER_KITCHEN = 875
 GENERAL_ELECTRICAL_PER_SF = 9
+GENERAL_PLUMBING_PER_FIXTURE = 1200
+PLUMBING_FIXTURES_PER_ROOM = {"primary_bath": 4, "hall_bath": 3, "powder": 2, "kitchen": 2}
+FINISH_PLUMBING_HRS_PER_FIXTURE = 3
+FINISH_ELECTRICAL_HRS_PER_ROOM = 1.5
+RECESSED_PER_ROOM = 1.5
 HVAC_PER_TON = 5000
 NEW_DUCTWORK = 7500
-WINDOW_PRICE = {"Quality": 450, "Premium": 1100, "Luxury": 2100}
+WINDOW_PRICE = {"Quality": 600, "Premium": 900, "Luxury": 1800}
 WINDOW_PRODUCT = {"Quality": "vinyl", "Premium": "Andersen 100 Series", "Luxury": "Andersen 400 Series"}
-WINDOW_INSTALL = 400
+WINDOW_INSTALL = 300
 GARAGE_DOOR_SINGLE = 3500
 GARAGE_DOOR_DOUBLE = 7200
 EXT_PAINT_PER_HEATED_SF = 8
 PORCH_SCREENING_PER_LF = 140
-GUTTERS_PLACEHOLDER = 2500
+GUTTER_UNIT = 1200
+GUTTER_UNITS_DEFAULT = {"whole_home": 6, "partial": 2}
 INSULATION_PER_SF = 4.50
 INT_TRIM_MATERIALS_PER_SF = 3.25
+INT_TRIM_MATERIALS_SF_PER_ROOM = 50
 INT_TRIM_LABOR_PER_DAY = 425
-FLOORING = {"hardwood": 10.25, "hardwood_finishing": 3.25, "lvp": 6.50, "lvp_install": 2.00, "carpet": 4.25}
-INT_PAINT_ROOM = 900
+INT_TRIM_DAYS_PER_ROOM = 1
+DRYWALL_SF_PER_ROOM = 300
+DRYWALL_MATERIALS_RATIO = 1.35
+FLOORING = {"hardwood": 10.25, "hardwood_finishing": 3.75, "lvp": 6.50, "lvp_install": 2.00, "carpet": 4.25}
+INT_PAINT_ROOM = 1100
 INT_PAINT_TALL_ROOM = 2000
-TILE_LABOR = {"primary_bath": 6500, "hall_bath_tub": 3500, "backsplash": 1650, "small": 1200}
-TILE_MATERIAL_PER_SF = {"Quality": 7.50, "Premium": 17.50, "Luxury": 50.00}
+PAINT_MATERIALS_UNIT = 450
+TILE_LABOR = {"primary_bath": 5700, "hall_bath_tub": 2200, "backsplash": 1800, "small": 1200}
+CERAMIC_TILE_UNIT = 1200
+CERAMIC_UNITS = {"primary_bath": 5, "hall_bath_tub": 3, "backsplash": 0, "small": 1}
 CABINET_PER_LF = 625
 FULL_HEIGHT_PER_LF = 1250
 BUILTINS_PER_LF = 1100
-COUNTERTOP_PER_SF = {"Quality": 92.50, "Premium": 142.50, "Luxury": 237.50}
+COUNTERTOP_PER_SF = {"Quality": 105, "Premium": 125, "Luxury": 237.50}
+BATH_HARDWARE_FIRST = 950         # Tyler: $950 on a one-bath job
+BATH_HARDWARE_EACH_MORE = 650     # 2 baths = $1,600, matching his multi-bath jobs
+CABINET_HW_NO_KITCHEN = 450
+CABINET_HW_KITCHEN = {"Quality": 2500, "Premium": 3000, "Luxury": 3750}
 PRIMARY_CLOSET = 4500
 SMALL_CLOSET = 350
 MIRROR = 700
 PUNCH_PER_DAY = 1800
+CLEANING_TWO_OVER_COST = 390625
 WARRANTY_RATE = 0.01
 WARRANTY_MIN = 1200
+
+# Size-driven lines (Tyler's 20 ballparks): (job cost ceiling, value).
+PERMIT_COUNTS = [(100000, 2), (200000, 4), (400000, 5), (700000, 7), (None, 9)]
+PERMITS_SMALL_INTERIOR = (150000, 1)   # interior-only job under this cost: 1 permit
+SELECTION_BY_COST = [(160000, None), (250000, 32), (550000, 40), (None, 60)]   # None = by tier
+SELECTION_LUXURY_LARGE = 80
+PUNCH_DAYS_BY_COST = [(160000, 1), (300000, 2), (400000, 3), (None, 5)]
 
 DURATION_RANGES = {   # tool-page dropdown -> midpoint weeks
     "10-15": 12.5, "15-20": 17.5, "20-25": 22.5, "25-40": 32.5, "40-52": 46.0,
@@ -409,6 +443,14 @@ def price_range(total_price):
             "text": f"{format_money_short(low)} – {format_money_short(high)}"}
 
 
+def by_cost(table, total_cost):
+    """The value for this job size from a [(ceiling, value), ...] table."""
+    for ceiling, value in table:
+        if ceiling is None or total_cost < ceiling:
+            return value
+    return table[-1][1]
+
+
 def markup_bracket(total_cost):
     for ceiling, markup, margin in BRACKETS:
         if ceiling is None or total_cost < ceiling:
@@ -574,11 +616,12 @@ def price_scope(scope, template, tier_prices=None):
     b.add("cm", weeks, CM_PER_WEEK, note=f"{weeks:g} weeks x ${CM_PER_WEEK}/wk")
     months = math.ceil(weeks / WEEKS_PER_MONTH)
     b.add("port_a_john", months, PORT_A_JOHN_PER_MONTH, note=f"{weeks:g} wks / 4.33 = {months} months (rounded up)")
-    dumpsters = math.ceil(weeks / 2)
-    b.add("dumpster", dumpsters, DUMPSTER_PER_2_WEEKS, note=f"{weeks:g} wks / 2 = {dumpsters} (rounded up)")
-    b.add("dust", weeks, DUST_PER_WEEK, note=f"{weeks:g} weeks x ${DUST_PER_WEEK}/wk")
-    hours = SELECTION_HOURS[top_tier]
-    b.add("selection", hours, None, note=f"{top_tier} (job's highest tier) = {hours} hrs at the template rate")
+    dumpsters = math.ceil(weeks / WEEKS_PER_DUMPSTER)
+    b.add("dumpster", dumpsters, DUMPSTER_UNIT,
+          note=f"{weeks:g} wks / {WEEKS_PER_DUMPSTER:g} = {dumpsters} (rounded up)")
+    dust_weeks = math.ceil(weeks * DUST_SHARE_OF_WEEKS)
+    b.add("dust", dust_weeks, DUST_PER_WEEK,
+          note=f"{dust_weeks} weeks (60% of {weeks:g}: demo and rough phases only) x ${DUST_PER_WEEK}/wk")
     if mech.get("full_rewire"):
         b.add("temp_pole", 1, TEMP_POLE, note="full electrical rewire selected")
     _days_line(b, scope, "demo", "demo_days", DEMO_PER_DAY, "days")
@@ -588,12 +631,20 @@ def price_scope(scope, template, tier_prices=None):
 
     # 2001 / 3100 Structure and foundation. Footings go under new ground-floor
     # footprint only: a second-story addition sits on the existing house.
+    # Tyler prices footings per LF of new perimeter, not per SF of footprint.
     if scope.get("foundation_sf") is not None:
         foundation_sf, why = _num(scope["foundation_sf"]), "new foundation SF"
     else:
         foundation_sf, why = addition_sf, "addition SF (no separate foundation SF given)"
-    if foundation_sf > 0:
-        b.add("footing", foundation_sf, None, note=f"{foundation_sf:g} {why}")
+    perimeter = _num(scope.get("foundation_perimeter_lf"))
+    if perimeter > 0:
+        b.add("footing", perimeter, FOOTING_PER_LF, unit="Linear Feet",
+              note=f"{perimeter:g} LF of new footing perimeter")
+    elif foundation_sf > 0:
+        perimeter = math.ceil(3 * math.sqrt(foundation_sf))
+        b.add("footing", perimeter, FOOTING_PER_LF, unit="Linear Feet",
+              note=f"{perimeter} LF estimated from {foundation_sf:g} {why}: 3 sides of a square "
+                   f"footprint (the 4th side is the existing house)")
     elif addition_sf > 0:
         b.note("2001", f"No footing priced: the {addition_sf:g} SF addition has no new foundation (second story).")
     if _num(scope.get("slab_sf")) > 0:
@@ -604,8 +655,11 @@ def price_scope(scope, template, tier_prices=None):
         b.add("crawlspace", 1, CRAWLSPACE_TREATMENT)
     if addition_sf > 0:
         b.add("termite", 1, None, note="addition")
-    if floor_sf > 0 and scope.get("framing", True):
-        b.add("framing_materials", floor_sf, FRAMING_MATERIALS_PER_SF, note=f"{floor_sf:g} floor plan SF")
+    framed_sf, framed_how = framed_area(scope)
+    if framed_how.startswith("estimated"):
+        b.review.append(f"Framed area not given; {framed_how}. Set framed_sf if that's off.")
+    if framed_sf > 0 and scope.get("framing", True):
+        b.add("framing_materials", framed_sf, FRAMING_MATERIALS_PER_SF, note=f"{framed_sf:g} SF ({framed_how})")
         _days_line(b, scope, "framing_labor", "framing_days", FRAMING_LABOR_PER_DAY, "days")
     if _num(scope.get("deck_sf")) > 0:
         d = _num(scope["deck_sf"])
@@ -625,51 +679,55 @@ def price_scope(scope, template, tier_prices=None):
         b.add("wh_tank", 1, None)
     elif wh == "tankless":
         b.add("wh_tankless", 1, None)
+    fixtures_n, fixtures_how = plumbing_fixture_count(scope)
+    if fixtures_n:
+        b.add("general_plumbing", fixtures_n, GENERAL_PLUMBING_PER_FIXTURE, unit="Each",
+              note=f"{fixtures_n} fixtures x ${GENERAL_PLUMBING_PER_FIXTURE:,} ({fixtures_how})")
     _fixture_lines(b, scope, "plumbing", "plumbing_fixtures", tier_prices, "Plumbing Fixtures")
-    if any(f.get("category") == "plumbing" for f in scope.get("fixtures") or []):
+    if fixtures_n:
+        hrs = fixtures_n * FINISH_PLUMBING_HRS_PER_FIXTURE
+        b.add("finish_plumbing", hrs, FINISH_HOURLY,
+              note=f"{fixtures_n} fixtures x {FINISH_PLUMBING_HRS_PER_FIXTURE} hrs")
+    elif any(f.get("category") == "plumbing" for f in scope.get("fixtures") or []):
         value, why = _estimate(scope, "finish_plumbing_hours")
         if value:
             b.add("finish_plumbing", value, FINISH_HOURLY, note=f"{value:g} hrs (tool estimate: {why})")
         else:
             b.add("finish_plumbing", 1, placeholder="no finish plumbing hours estimate")
-    for room in rooms:
-        kind = room.get("type")
-        if kind in ("primary_bath", "hall_bath", "powder"):
-            tier = _tier(room.get("tier"))
-            amount = BATH_HARDWARE[tier] / (2 if kind == "powder" else 1)
-            b.add("bath_hardware", 1, amount, allowance=True,
-                  name=f"Bathroom Hardware - {room.get('name') or kind} - {tier} allowance",
-                  description="Bath accessory set: 24 in. towel bar, towel ring, toilet paper holder, 2 robe hooks.",
-                  note=f"{tier} set ${BATH_HARDWARE[tier]:,}" + (" / 2 for a powder room" if kind == "powder" else ""))
+    baths = sum(1 for r in rooms if r.get("type") in ("primary_bath", "hall_bath"))
+    powders = sum(1 for r in rooms if r.get("type") == "powder")
+    bath_units = baths + powders / 2
+    if bath_units:
+        amount = BATH_HARDWARE_FIRST + BATH_HARDWARE_EACH_MORE * max(0, bath_units - 1)
+        b.add("bath_hardware", 1, amount, allowance=True, name="Bathroom Hardware - allowance",
+              description="Bath accessory sets: towel bars, towel rings, toilet paper holders and robe hooks.",
+              note=f"${BATH_HARDWARE_FIRST} first bath + ${BATH_HARDWARE_EACH_MORE} each more "
+                   f"({baths} bath(s), {powders} powder room(s) at half)")
 
-    # 3700 / 5700 Electrical, by rule per renovated room
-    counts = {"receptacle": 0, "gfci": 0, "switch": 0, "dimmer": 0, "recessed": 0, "surface": 0}
-    kitchens = 0
-    for room in rooms:
-        kind = room.get("type") or "other"
-        lf, how = room_wall_lf(room)
-        walls = _count(room.get("walls") or 4)
-        receptacles = walls + math.ceil(lf / 6) if lf else walls
-        if kind in ("kitchen", "primary_bath", "hall_bath", "powder"):
-            counts["gfci"] += receptacles
-        else:
-            counts["receptacle"] += receptacles
-        counts["switch"] += 2
-        counts["dimmer"] += 1
-        counts["recessed"] += 8 if kind == "kitchen" else 4
-        counts["surface"] += 1
-        kitchens += kind == "kitchen"
-        b.note("3700", f"{room.get('name') or kind}: {walls} walls + {lf:g} LF / 6 = {receptacles} receptacles "
-                       f"({how})")
-    for key, n in counts.items():
-        if n:
-            b.add(key, n, None, note=f"{n} by the per-room rule")
+    # 3700 / 5700 Electrical. Tyler prices electrical as General Electrical
+    # per SF of renovated area and leaves device lines at token counts.
+    elec_sf = floor_sf or addition_sf
+    if elec_sf > 0:
+        b.add("general_electrical", elec_sf, GENERAL_ELECTRICAL_PER_SF,
+              note=f"{elec_sf:g} SF of renovated area x ${GENERAL_ELECTRICAL_PER_SF}")
+    if rooms:
+        wet = sum(1 for r in rooms if r.get("type") in ("kitchen", "primary_bath", "hall_bath", "powder"))
+        counts = {"receptacle": 1, "switch": 1, "dimmer": 1, "gfci": max(1, wet),
+                  "recessed": math.ceil(len(rooms) * RECESSED_PER_ROOM),
+                  "surface": max(1, math.ceil(len(rooms) / 4))}
+        for key, n in counts.items():
+            b.add(key, n, None)
+        b.note("3700", f"Devices at Tyler's token counts; recessed = {len(rooms)} rooms x {RECESSED_PER_ROOM} "
+                       f"(rounded up); GFCI = 1 per kitchen/bath")
+    kitchens = sum(1 for r in rooms if r.get("type") == "kitchen")
     if kitchens:
         b.add("under_cabinet", kitchens, UNDER_CABINET_PER_KITCHEN, note=f"{kitchens} kitchen(s)")
-    if mech.get("full_rewire") and floor_sf > 0:
-        b.add("general_electrical", floor_sf, GENERAL_ELECTRICAL_PER_SF, note=f"full rewire, {floor_sf:g} floor plan SF")
     _fixture_lines(b, scope, "lighting", "electrical_fixtures", tier_prices, "Electrical Fixtures")
-    if any(f.get("category") == "lighting" for f in scope.get("fixtures") or []) or rooms:
+    if rooms:
+        hrs = max(4, math.ceil(len(rooms) * FINISH_ELECTRICAL_HRS_PER_ROOM))
+        b.add("finish_electrical", hrs, FINISH_HOURLY,
+              note=f"{len(rooms)} rooms x {FINISH_ELECTRICAL_HRS_PER_ROOM} hrs (min 4)")
+    elif any(f.get("category") == "lighting" for f in scope.get("fixtures") or []):
         value, why = _estimate(scope, "finish_electrical_hours")
         if value:
             b.add("finish_electrical", value, FINISH_HOURLY, note=f"{value:g} hrs (tool estimate: {why})")
@@ -689,10 +747,14 @@ def price_scope(scope, template, tier_prices=None):
         if n:
             b.add(key, n, None)
 
-    # 3900 / 5300 Tile
-    tile_material_sf = {}
+    # 3900 / 5300 Tile. Tyler: a lump per bath/backsplash plus Ceramic Tile
+    # Installation units (~5 per primary bath, ~3 per other bath); no
+    # separate tile material line.
+    ceramic_units, ceramic_parts = 0, []
     for area in scope.get("tile_areas") or []:
         kind = area.get("kind") or "small"
+        if kind not in TILE_LABOR:
+            kind = "small"
         prep = area.get("prep")
         label = area.get("name") or kind.replace("_", " ")
         if prep == "walk_in_shower":
@@ -700,22 +762,16 @@ def price_scope(scope, template, tier_prices=None):
         elif prep == "tub_surround":
             b.add("tile_prep_surround", 1, None, note=label)
         line_key = {"primary_bath": "tile_primary", "hall_bath_tub": "tile_hall",
-                    "backsplash": "tile_backsplash"}.get(kind, "tile_ceramic")
-        b.add(line_key, 1, TILE_LABOR.get(kind, TILE_LABOR["small"]), unit="",
-              name=None if line_key != "tile_ceramic" else f"Ceramic Tile Installation - {label}",
-              note=f"{label}: {kind.replace('_', ' ')} lump ${TILE_LABOR.get(kind, TILE_LABOR['small']):,}")
-        sf = _num(area.get("material_sf"))
-        tier = _tier(area.get("tier"))
-        if sf > 0:
-            tile_material_sf[tier] = tile_material_sf.get(tier, 0) + sf
-        else:
-            b.review.append(f"Tile area '{label}' has no material SF; no tile material priced for it.")
-    for tier in TIERS:
-        sf = tile_material_sf.get(tier)
-        if sf:
-            b.add("tile_materials", sf, TILE_MATERIAL_PER_SF[tier], allowance=True,
-                  name=f"Tile Materials - {tier} allowance (${TILE_MATERIAL_PER_SF[tier]:g}/SF)",
-                  note=f"{sf:g} SF at the {tier} rate")
+                    "backsplash": "tile_backsplash"}.get(kind)
+        if line_key:
+            b.add(line_key, 1, TILE_LABOR[kind], unit="",
+                  note=f"{label}: {kind.replace('_', ' ')} lump ${TILE_LABOR[kind]:,}")
+        if CERAMIC_UNITS[kind]:
+            ceramic_units += CERAMIC_UNITS[kind]
+            ceramic_parts.append(f"{label} {CERAMIC_UNITS[kind]}")
+    if ceramic_units:
+        b.add("tile_ceramic", ceramic_units, CERAMIC_TILE_UNIT, unit="Each",
+              note=f"{ceramic_units} units ({', '.join(ceramic_parts)}) x ${CERAMIC_TILE_UNIT:,}")
 
     # 4100-4800 / 6100 Exterior
     if _num(ext.get("roof_squares")) > 0:
@@ -769,8 +825,16 @@ def price_scope(scope, template, tier_prices=None):
             b.add("ext_paint", 1, placeholder="full exterior repaint selected but no heated SF entered")
     if _num(ext.get("porch_screening_lf")) > 0:
         b.add("porch_screening", _num(ext["porch_screening_lf"]), PORCH_SCREENING_PER_LF, unit="Linear Feet")
-    if ext.get("gutters"):
-        b.add("gutters", 1, GUTTERS_PLACEHOLDER, note="$2,500 placeholder per the spec; confirm with a gutter quote")
+    gutters = ext.get("gutters")
+    if gutters:
+        if not isinstance(gutters, bool) and _num(gutters) > 0:
+            units, how = _num(gutters), "entered"
+        else:
+            shape = "whole_home" if scope.get("whole_home") else "partial"
+            units = GUTTER_UNITS_DEFAULT[shape]
+            how = "whole house" if shape == "whole_home" else "porch / addition / partial"
+        b.add("gutters", units, GUTTER_UNIT, unit="Each",
+              note=f"{units:g} units x ${GUTTER_UNIT:,} ({how})")
     if _num(ext.get("driveway_sf")) > 0:
         b.add("driveway", _num(ext["driveway_sf"]), None)
     if ext.get("landscaping"):
@@ -794,14 +858,21 @@ def price_scope(scope, template, tier_prices=None):
         b.add("fireplace_surround", _count(scope["fireplace_surrounds"]), None)
 
     # 4700 / 5000 Interior finishes
-    if floor_sf > 0:
-        b.add("insulation", floor_sf, INSULATION_PER_SF, note=f"{floor_sf:g} floor plan SF")
+    if framed_sf > 0 and scope.get("framing", True):
+        b.add("insulation", framed_sf, INSULATION_PER_SF, note=f"{framed_sf:g} SF of framed/opened area")
     drywall_sf, how = drywall_area(scope)
     if drywall_sf > 0:
         b.add("drywall", drywall_sf, None, note=how)
-        b.add("drywall_materials", drywall_sf, None)
-    if floor_sf > 0:
-        b.add("int_trim_materials", floor_sf, INT_TRIM_MATERIALS_PER_SF, note=f"{floor_sf:g} floor plan SF")
+        mat_sf = round(drywall_sf * DRYWALL_MATERIALS_RATIO)
+        b.add("drywall_materials", mat_sf, None, note=f"{drywall_sf:g} hang SF x {DRYWALL_MATERIALS_RATIO}")
+    if rooms:
+        trim_sf = len(rooms) * INT_TRIM_MATERIALS_SF_PER_ROOM
+        b.add("int_trim_materials", trim_sf, INT_TRIM_MATERIALS_PER_SF,
+              note=f"{len(rooms)} rooms x {INT_TRIM_MATERIALS_SF_PER_ROOM} SF")
+        days = len(rooms) * INT_TRIM_DAYS_PER_ROOM
+        b.add("int_trim_labor", days, INT_TRIM_LABOR_PER_DAY,
+              note=f"{len(rooms)} rooms x {INT_TRIM_DAYS_PER_ROOM} day x ${INT_TRIM_LABOR_PER_DAY}")
+    elif floor_sf > 0:
         _days_line(b, scope, "int_trim_labor", "trim_days", INT_TRIM_LABOR_PER_DAY, "days")
     hw_new = _num(floors.get("hardwood_new_sf"))
     if hw_new > 0:
@@ -820,10 +891,14 @@ def price_scope(scope, template, tier_prices=None):
     regular = sum(1 for r in rooms if not r.get("tall_ceiling"))
     tall = sum(1 for r in rooms if r.get("tall_ceiling"))
     if regular:
-        b.add("int_paint", regular, INT_PAINT_ROOM, unit="Rooms", note=f"{regular} rooms x ${INT_PAINT_ROOM} incl. materials")
+        b.add("int_paint", regular, INT_PAINT_ROOM, unit="Rooms", note=f"{regular} rooms x ${INT_PAINT_ROOM:,}")
     if tall:
         b.add("int_paint", tall, INT_PAINT_TALL_ROOM, unit="Rooms", name="Interior Paint - tall-ceiling rooms (18 ft+)",
               note=f"{tall} tall rooms x ${INT_PAINT_TALL_ROOM:,}")
+    if rooms:
+        n = 1 if len(rooms) < 20 else math.ceil(len(rooms) / 6)
+        b.add("paint_materials", n, PAINT_MATERIALS_UNIT,
+              note=f"{n} x ${PAINT_MATERIALS_UNIT} ({'1 per job' if n == 1 else '1 per 6 rooms on a 20+ room job'})")
 
     # 5400 Cabinetry and storage
     lowers_uppers = _num(cab.get("lowers_lf")) + _num(cab.get("uppers_lf"))
@@ -841,11 +916,15 @@ def price_scope(scope, template, tier_prices=None):
         b.add("builtins", builtins, BUILTINS_PER_LF, name="Custom Built Ins and Mudroom Lockers")
     cab_lf = lowers_uppers + full_height + vanities + builtins
     if cab_lf:
-        b.add("cabinet_install", cab_lf, None, note=f"{cab_lf:g} LF of custom cabinetry")
-        b.add("cabinet_paint", cab_lf, None, note=f"{cab_lf:g} LF of custom cabinetry")
-        cab_rooms = sum(1 for r in rooms if r.get("type") in ("kitchen", "primary_bath", "hall_bath", "powder"))
-        b.add("cabinet_hw", max(1, cab_rooms), None,
-              note=f"1 per kitchen/bath with cabinetry ({max(1, cab_rooms)})")
+        # No Cabinet Installation / Cabinet Painting lines: Tyler used them on
+        # 3 and 1 of ~10 cabinet jobs; his $625/LF reads as installed and finished.
+        b.note("5400", f"{cab_lf:g} LF of custom cabinetry; per-LF price includes install and finish")
+        if lowers_uppers or full_height:
+            tier = _tier(next((r.get("tier") for r in rooms if r.get("type") == "kitchen"), None), top_tier)
+            b.add("cabinet_hw", 1, CABINET_HW_KITCHEN[tier], allowance=True,
+                  note=f"kitchen cabinetry, {tier} (${CABINET_HW_KITCHEN[tier]:,})")
+        else:
+            b.add("cabinet_hw", 1, CABINET_HW_NO_KITCHEN, note="no kitchen cabinetry")
     for top in scope.get("countertops") or []:
         sf = _num(top.get("sf"))
         if sf <= 0:
@@ -873,18 +952,12 @@ def price_scope(scope, template, tier_prices=None):
         else:
             b.add("appliance_install", 1, placeholder="no appliance installation hours estimate")
 
-    # 6200 Completion
+    # 6200 Completion: punch days entered on the form go in now; the rest of
+    # the size-driven lines are set in _finish once the job's size is known.
     punch = _num(scope.get("punch_list_days"))
     if punch > 0:
-        b.add("punch", punch, PUNCH_PER_DAY)
-    else:
-        b.add("punch", 1, placeholder="no punch list days entered")
-    b.add("cleaning", 1, None)
-
-    # Percentage lines last: storage depends on the job's size, and permits
-    # and warranty are a share of everything before them.
-    pct_keys = ("storage", "permits", "warranty")
-    return _finish(b, scope, pct_keys)
+        b.add("punch", punch, PUNCH_PER_DAY, note="entered on the tool page")
+    return _finish(b, scope, top_tier, punch_entered=punch > 0)
 
 
 def _with_job_tier(scope):
@@ -902,48 +975,107 @@ def _with_job_tier(scope):
 
 
 def drywall_area(scope):
-    """Wall + ceiling SF: Rendr when imported, else per room (perimeter x
-    ceiling height + floor SF). Returns (sf, how)."""
+    """Drywall hang SF: Rendr wall + ceiling SF when imported, else Tyler's
+    ~300 SF per renovated room (not every wall of a room gets new drywall).
+    Returns (sf, how)."""
     if _num(scope.get("wall_ceiling_sf")) > 0:
         return _num(scope["wall_ceiling_sf"]), "wall + ceiling surface area from Rendr/entered"
-    total, parts = 0.0, []
-    for room in scope.get("rooms") or []:
-        sf = _num(room.get("sf"))
-        lf, _how = room_wall_lf(room)
-        if not sf or not lf:
-            continue
-        height = TALL_CEILING_FT if room.get("tall_ceiling") else _num(room.get("ceiling_ft"), DEFAULT_CEILING_FT)
-        area = lf * height + sf
-        total += area
-        parts.append(f"{room.get('name') or room.get('type')}: {lf:g} LF x {height:g} ft + {sf:g} SF")
-    if total:
-        return round(total), "estimated per room: " + "; ".join(parts)
-    floor_sf = _num(scope.get("floor_plan_sf"))
-    if floor_sf:
-        return round(floor_sf * 3.6), f"no room sizes: estimated as 3.6 x {floor_sf:g} floor plan SF"
+    n = len(scope.get("rooms") or [])
+    if n:
+        return n * DRYWALL_SF_PER_ROOM, f"{n} rooms x {DRYWALL_SF_PER_ROOM} SF"
     return 0.0, ""
 
 
-def _finish(b, scope, pct_keys):
-    base = b.cost(exclude=pct_keys)
+def framed_area(scope):
+    """SF being framed or opened up (new walls, addition, opened walls) -
+    what Tyler prices framing materials and insulation on, not the whole
+    renovated floor plan. Returns (sf, how)."""
+    if scope.get("framed_sf") is not None and _num(scope["framed_sf"]) >= 0:
+        return _num(scope["framed_sf"]), "framed/opened area"
+    addition_sf = _num(scope.get("addition_sf"))
+    if addition_sf > 0:
+        return addition_sf, "estimated as the addition SF"
+    floor_sf = _num(scope.get("floor_plan_sf"))
+    if floor_sf > 0:
+        sf = round(floor_sf * 0.25)
+        return sf, f"estimated as 25% of the {floor_sf:g} SF renovated area"
+    return 0.0, ""
 
-    def with_storage(units):
-        subtotal = base + units * STORAGE_UNIT
-        permits = round(subtotal * PERMIT_RATE, 2)
+
+def plumbing_fixture_count(scope):
+    """Plumbing fixtures for General Plumbing and finish plumbing hours: the
+    count Claude/Tyler gave, else by room (primary bath 4, hall bath 3,
+    powder 2, kitchen 2). Returns (n, how)."""
+    given = _count((scope.get("plumbing") or {}).get("fixture_count"))
+    if given:
+        return given, "fixture count given"
+    n, parts = 0, []
+    for room in scope.get("rooms") or []:
+        add = PLUMBING_FIXTURES_PER_ROOM.get(room.get("type"), 0)
+        if add:
+            n += add
+            parts.append(f"{room.get('name') or room.get('type')} {add}")
+    return n, "by room: " + ", ".join(parts) if n else ""
+
+
+def _is_interior_only(scope):
+    if _num(scope.get("addition_sf")) or _num(scope.get("foundation_sf")) or _num(scope.get("deck_sf")):
+        return False
+    return not any(v for v in (scope.get("exterior") or {}).values())
+
+
+def _sized_lines(scope, top_tier, job_cost, punch_entered):
+    """The lines Tyler sizes by the job's total cost: selection hours,
+    storage, punch days, cleaning, permits and warranty. job_cost is the
+    whole job's cost (these lines included). Returns [(key, qty, unit_cost, note)]."""
+    out = []
+    hours = by_cost(SELECTION_BY_COST, job_cost)
+    if hours is None:
+        hours, why = SELECTION_HOURS[top_tier], f"{top_tier} (job's highest tier), job under $160K"
+    elif hours == SELECTION_BY_COST[-1][1] and top_tier == "Luxury":
+        hours, why = SELECTION_LUXURY_LARGE, "Luxury job over $550K"
+    else:
+        why = f"job cost ~${job_cost / 1000:,.0f}K"
+    out.append(("selection", hours, None, f"{hours} hrs: {why}"))
+    if job_cost >= NO_STORAGE_UNDER_COST:
+        units = 2 if job_cost > TWO_STORAGE_UNITS_OVER_COST else 1
+        out.append(("storage", units, STORAGE_UNIT, f"{units} unit(s) (job cost ~${job_cost / 1000:,.0f}K)"))
+    if not punch_entered:
+        days = by_cost(PUNCH_DAYS_BY_COST, job_cost)
+        out.append(("punch", days, PUNCH_PER_DAY, f"{days} day(s) by job size (none entered)"))
+    cleanings = 2 if job_cost > CLEANING_TWO_OVER_COST else 1
+    out.append(("cleaning", cleanings, None, f"{cleanings} (2 on jobs over $390,625)"))
+    if _is_interior_only(scope) and job_cost < PERMITS_SMALL_INTERIOR[0]:
+        permits, why = PERMITS_SMALL_INTERIOR[1], "small interior-only job"
+    else:
+        permits, why = by_cost(PERMIT_COUNTS, job_cost), f"job cost ~${job_cost / 1000:,.0f}K"
+    out.append(("permits", permits, PERMIT_UNIT, f"{permits} x ${PERMIT_UNIT} ({why})"))
+    return out
+
+
+def _finish(b, scope, top_tier, punch_entered=False):
+    base = b.cost()
+    template_cost = {"selection": (b.template.item("selection") or {}).get("unit_cost") or 125,
+                     "cleaning": (b.template.item("cleaning") or {}).get("unit_cost") or 600}
+
+    def sized_total(job_cost):
+        lines = _sized_lines(scope, top_tier, job_cost, punch_entered)
+        subtotal = base + sum(q * (u if u is not None else template_cost[k]) for k, q, u, _ in lines)
         warranty = max(WARRANTY_MIN, round(subtotal * WARRANTY_RATE, 2))
-        return subtotal, permits, warranty
+        return lines, subtotal, warranty
 
-    units = 1
-    subtotal, permits, warranty = with_storage(1)
-    if subtotal + permits + warranty > TWO_STORAGE_UNITS_OVER_COST:
-        units = 2
-        subtotal, permits, warranty = with_storage(2)
-    base_with_storage = subtotal
-    b.add("storage", units, STORAGE_UNIT,
-          note=f"{units} unit{'s' if units > 1 else ''}" + (" (job cost over $390,625)" if units == 2 else ""))
-    b.add("permits", 1, permits, note=f"0.8% of ${base_with_storage:,.0f} cost before permits and warranty")
+    # The sized lines depend on the total they are part of; settle it in a
+    # few passes (it converges at once except right at a size boundary).
+    job_cost = base
+    for _ in range(5):
+        lines, subtotal, warranty = sized_total(job_cost)
+        if abs(subtotal + warranty - job_cost) < 1:
+            break
+        job_cost = subtotal + warranty
+    for key, qty, unit_cost, note in lines:
+        b.add(key, qty, unit_cost, note=note)
     b.add("warranty", 1, warranty,
-          note=f"1% of ${base_with_storage:,.0f} cost before permits and warranty, minimum ${WARRANTY_MIN:,}")
+          note=f"1% of ${subtotal:,.0f} cost before warranty, minimum ${WARRANTY_MIN:,}")
 
     total_cost = b.cost()
     markup, margin = markup_bracket(total_cost)

@@ -1,0 +1,1193 @@
+job,line,qty,unit_cost
+00892 Barber,Permits and Fees,5,800
+00892 Barber,Construction Management And Service,1,45000
+00892 Barber,Port a John,7,110
+00892 Barber,Project Selection Coordination,60,125
+00892 Barber,Off Site Storage,1,1650
+00892 Barber,Framing Labor,12,450
+00892 Barber,Framing Materials,200,20
+00892 Barber,General Plumbing,14,1200
+00892 Barber,Plumbing Fixture swap out same location,1,625
+00892 Barber,New Fixture Location within same footprint,1,1325
+00892 Barber,New Fixture location in same footprint- Tub,1,1525
+00892 Barber,New Vent thru Roof,1,515.06
+00892 Barber,Water and Sewer installation,1,572.97
+00892 Barber,Cut and Cap drain and water prior to demo (per fixture),1,164.3
+00892 Barber,General Electrical,1200,9
+00892 Barber,Recessed Lighting,34,125
+00892 Barber,Surface Mount Light,1,75
+00892 Barber,Receptacle,1,25
+00892 Barber,One Way Switches,1,25
+00892 Barber,Recessed Fan/Light Combo,1,450
+00892 Barber,GFCI Receptacle,1,75
+00892 Barber,Under Cabinet Lighting,1,875
+00892 Barber,Dimmer Switches,1,75
+00892 Barber,3 Way Switches,1,35
+00892 Barber,Pop Up Countertop Receptacle,2,275
+00892 Barber,Relocation of Supply Duct,8,475
+00892 Barber,Relocation of Return Vent,1,875
+00892 Barber,Tile Prep and Waterproofing - walk in shower,1,1600
+00892 Barber,Tile Prep and Water Proofing- tile surround (2 baths),2,900
+00892 Barber,Windows,1,85000
+00892 Barber,Window installation,60,300
+00892 Barber,Interior Doors: Pre-hung,17,275
+00892 Barber,Interior Door Hardware,17,75
+00892 Barber,Interior Door Installation,17,75
+00892 Barber,Pocket Doors,2,700
+00892 Barber,Glass Shower Door,2,2250
+00892 Barber,Insulation,200,4.5
+00892 Barber,Exterior Paint,1,34000
+00892 Barber,Drywall Hang and Finish,4000,2.78
+00892 Barber,Drywall Materials,5400,0.5
+00892 Barber,Hardwood Flooring,600,10.25
+00892 Barber,Hardwood Finishing,1800,3.75
+00892 Barber,LVP Flooring,1200,6.5
+00892 Barber,LVP Flooring Installation,1200,2
+00892 Barber,Interior Trim Materials,1200,3.25
+00892 Barber,Interior Trim Labor,18,425
+00892 Barber,Primary Bath Tile,1.75,5700
+00892 Barber,Hall Bath Tile,5,2200
+00892 Barber,Backsplash Tile,2,1800
+00892 Barber,Ceramic Tile Installation,23,1200
+00892 Barber,Custom Kitchen Cabinetry,70,625
+00892 Barber,Custom Bathroom Vanities,1,27500
+00892 Barber,Custom Built Ins and Other Cabinetry,1,47500
+00892 Barber,Countertop Materials,240,115
+00892 Barber,Cabinet Hardware,1,3400
+00892 Barber,Closet Systems,1,8450
+00892 Barber,Cabinet Installation Costs,100,65
+00892 Barber,Appliances,1,32000
+00892 Barber,5520 Appliance Installation,26,75
+00892 Barber,Plumbing Fixtures,1,28300
+00892 Barber,Bathroom Hardware,1,3800
+00892 Barber,5600 Finish Plumbing Installation,50,75
+00892 Barber,Electrical Fixtures,1,9500
+00892 Barber,5730 Electrical Finish Installation,1,75
+00892 Barber,Finish HVAC,1,450
+00892 Barber,Paint Materials,4,450
+00892 Barber,Interior Paint,22,1100
+00892 Barber,Warranty and Quality Control,7,1200
+00892 Barber,Punch list to completion,5,1800
+00892 Barber,Professional Cleaning,2,600
+00895 Gentles,Lot Survey,1,1850
+00895 Gentles,Preconstruction costs,1,2950
+00895 Gentles,Permits and Fees,5,800
+00895 Gentles,Construction Management And Service,20,900
+00895 Gentles,Port a John,4,110
+00895 Gentles,Project Selection Coordination,20,125
+00895 Gentles,Site Work,1,800
+00895 Gentles,Grading,1,600
+00895 Gentles,Dumpster Fees,1,500
+00895 Gentles,Dust Control Materials,10,100
+00895 Gentles,Demolition,16,300
+00895 Gentles,Footing and Foundation,20,42
+00895 Gentles,Framing Labor,12,450
+00895 Gentles,Framing Materials,200,20
+00895 Gentles,Deck Framing Labor,200,17.25
+00895 Gentles,Decking Materials (Trex Enhanced Naturals),300,23.58
+00895 Gentles,General Plumbing,3,1200
+00895 Gentles,New Fixture Location within same footprint,1,1325
+00895 Gentles,New Fixture location in same footprint- Tub,1,1525
+00895 Gentles,New Vent thru Roof,1,515.06
+00895 Gentles,Water and Sewer installation,1,572.97
+00895 Gentles,General Electrical,200,9
+00895 Gentles,Recessed Lighting,2,125
+00895 Gentles,Surface Mount Light,1,75
+00895 Gentles,Recessed Fan/Light Combo,1,450
+00895 Gentles,GFCI Receptacle,1,75
+00895 Gentles,Relocation of Supply Duct,1,475
+00895 Gentles,Tile Prep and Waterproofing - walk in shower,1,1600
+00895 Gentles,Windows,1,600
+00895 Gentles,Window installation,1,300
+00895 Gentles,Interior Doors: Pre-hung,3,275
+00895 Gentles,Interior Door Hardware,3,75
+00895 Gentles,Interior Door Installation,3,75
+00895 Gentles,Glass Shower Door,1,2250
+00895 Gentles,Exterior Trim Materials,1,2.25
+00895 Gentles,Exterior Trim Labor,1,18
+00895 Gentles,Exterior Paint,1,1200
+00895 Gentles,Underdeck waterproofing,375,15
+00895 Gentles,Drywall Hang and Finish,800,2.78
+00895 Gentles,Drywall Materials,800,0.5
+00895 Gentles,Interior Trim Materials,100,3.25
+00895 Gentles,Interior Trim Labor,3,425
+00895 Gentles,Primary Bath Tile,1,5700
+00895 Gentles,Ceramic Tile Installation,6,1200
+00895 Gentles,Custom Bathroom Vanities,1,4500
+00895 Gentles,Countertop Materials,1,1200
+00895 Gentles,Cabinet Hardware,1,450
+00895 Gentles,Closet Systems,1,3500
+00895 Gentles,Plumbing Fixtures,1,6200
+00895 Gentles,Bathroom Hardware,1,950
+00895 Gentles,5600 Finish Plumbing Installation,8,75
+00895 Gentles,Electrical Fixtures,1,900
+00895 Gentles,5730 Electrical Finish Installation,8,75
+00895 Gentles,Finish HVAC,1,450
+00895 Gentles,Paint Materials,1,450
+00895 Gentles,Interior Paint,2.5,1100
+00895 Gentles,Driveway and Exterior Concrete paths,450,8.95
+00895 Gentles,6125 Gutters and Downspouts,1,1200
+00895 Gentles,Warranty and Quality Control,1,1200
+00895 Gentles,Punch list to completion,1.5,1800
+00895 Gentles,Professional Cleaning,1,600
+00904 McDowell,Permits and Fees,6,800
+00904 McDowell,Construction Management And Service,26,900
+00904 McDowell,Port a John,6,110
+00904 McDowell,Off Site Storage,1,1650
+00904 McDowell,Dumpster Fees,13,500
+00904 McDowell,Dust Control Materials,14,100
+00904 McDowell,Demolition,16,300
+00904 McDowell,Engineering,1,2800
+00904 McDowell,Framing Labor,30,450
+00904 McDowell,Framing Materials,800,20
+00904 McDowell,General Plumbing,7,1200
+00904 McDowell,New Vent thru Roof,2,515.06
+00904 McDowell,Water and Sewer installation,2,572.97
+00904 McDowell,Cut and Cap drain and water prior to demo (per fixture),4,164.3
+00904 McDowell,General Electrical,850,9
+00904 McDowell,Recessed Lighting,32,125
+00904 McDowell,Surface Mount Light,1,75
+00904 McDowell,Receptacle,12,25
+00904 McDowell,One Way Switches,1,25
+00904 McDowell,Recessed Fan/Light Combo,2,450
+00904 McDowell,GFCI Receptacle,4,75
+00904 McDowell,Dimmer Switches,3,75
+00904 McDowell,3 Way Switches,3,35
+00904 McDowell,Specialty item: Elevator installation,1,3500
+00904 McDowell,New System and Duct work,1,22000
+00904 McDowell,Relocation of Supply Duct,1,475
+00904 McDowell,Relocation of Return Vent,1,875
+00904 McDowell,Tile Prep and Waterproofing - walk in shower,1,1600
+00904 McDowell,Roofing Specification (metal),30,1300
+00904 McDowell,Fireplace Surround,1,7500
+00904 McDowell,Fireplace,1,9000
+00904 McDowell,Windows,9,1800
+00904 McDowell,Window installation,9,300
+00904 McDowell,Exterior Door Hardware,1,250
+00904 McDowell,Exterior Door Installation,2,1450
+00904 McDowell,Interior Doors: Pre-hung,1,1650
+00904 McDowell,Interior Door Hardware,4,75
+00904 McDowell,Interior Door Installation,6,75
+00904 McDowell,Pocket Doors,5,700
+00904 McDowell,Glass Shower Door,1,2250
+00904 McDowell,Specialty door: Slider,1,42000
+00904 McDowell,Insulation,1800,4.5
+00904 McDowell,Drywall Hang and Finish,2400,2.78
+00904 McDowell,Drywall Materials,3200,0.5
+00904 McDowell,Hardwood Flooring,800,10.25
+00904 McDowell,Hardwood Finishing,800,3.75
+00904 McDowell,Interior Trim Materials,400,3.25
+00904 McDowell,Interior Trim Labor,14,425
+00904 McDowell,Elevator install,1,4500
+00904 McDowell,Primary Bath Tile,1,5700
+00904 McDowell,Ceramic Tile Installation,7,1200
+00904 McDowell,Custom Bathroom Vanities,1,13000
+00904 McDowell,Countertop Materials,1,3200
+00904 McDowell,Cabinet Hardware,1,450
+00904 McDowell,Closet Systems,1,6500
+00904 McDowell,Cabinet Installation Costs,16,65
+00904 McDowell,Plumbing Fixtures,1,9300
+00904 McDowell,Bathroom Hardware,1,950
+00904 McDowell,5600 Finish Plumbing Installation,16,75
+00904 McDowell,Electrical Fixtures,1,7500
+00904 McDowell,5730 Electrical Finish Installation,20,75
+00904 McDowell,Finish HVAC,1,450
+00904 McDowell,Paint Materials,1,450
+00904 McDowell,Interior Paint,13,1100
+00904 McDowell,6125 Gutters and Downspouts,7,1200
+00904 McDowell,Warranty and Quality Control,4,1200
+00904 McDowell,Punch list to completion,4,1800
+00904 McDowell,Professional Cleaning,2,600
+00882 Harteg (fixed fee),Permits and Fees,4,800
+00882 Harteg (fixed fee),Construction Management And Service,18,900
+00882 Harteg (fixed fee),Port a John,4,110
+00882 Harteg (fixed fee),Project Selection Coordination,25,125
+00882 Harteg (fixed fee),Dumpster Fees,7,500
+00882 Harteg (fixed fee),Dust Control Materials,14,100
+00882 Harteg (fixed fee),Demolition,8,300
+00882 Harteg (fixed fee),Framing Labor,8,450
+00882 Harteg (fixed fee),Framing Materials,130,20
+00882 Harteg (fixed fee),General Plumbing,1,5500
+00882 Harteg (fixed fee),New Vent thru Roof,1,515.06
+00882 Harteg (fixed fee),Water and Sewer installation,1,572.97
+00882 Harteg (fixed fee),Cut and Cap drain and water prior to demo (per fixture),4,164.3
+00882 Harteg (fixed fee),General Electrical,400,9
+00882 Harteg (fixed fee),Recessed Lighting,4,125
+00882 Harteg (fixed fee),Surface Mount Light,2,75
+00882 Harteg (fixed fee),Recessed Fan/Light Combo,1,450
+00882 Harteg (fixed fee),GFCI Receptacle,1,75
+00882 Harteg (fixed fee),Dimmer Switches,1,75
+00882 Harteg (fixed fee),Relocation of Supply Duct,4,475
+00882 Harteg (fixed fee),Tile Prep and Waterproofing - walk in shower,1,1600
+00882 Harteg (fixed fee),Tile Prep and Water Proofing- tile surround,1,900
+00882 Harteg (fixed fee),Interior Doors: Pre-hung,3,275
+00882 Harteg (fixed fee),Interior Door Hardware,3,75
+00882 Harteg (fixed fee),Interior Door Installation,3,75
+00882 Harteg (fixed fee),Glass Shower Door,1,2250
+00882 Harteg (fixed fee),Drywall Hang and Finish,1500,2.78
+00882 Harteg (fixed fee),Drywall Materials,2200,0.5
+00882 Harteg (fixed fee),Hardwood Flooring,1,1200
+00882 Harteg (fixed fee),Hardwood Finishing,300,3.75
+00882 Harteg (fixed fee),Interior Trim Materials,200,3.25
+00882 Harteg (fixed fee),Interior Trim Labor,5,425
+00882 Harteg (fixed fee),Primary Bath Tile,1,5700
+00882 Harteg (fixed fee),Hall Bath Tile (shower),1,2200
+00882 Harteg (fixed fee),Ceramic Tile Installation,7,1200
+00882 Harteg (fixed fee),Custom Bathroom Vanities,1,6500
+00882 Harteg (fixed fee),Countertop Materials,1,1400
+00882 Harteg (fixed fee),Cabinet Hardware,1,450
+00882 Harteg (fixed fee),Closet Systems,1,4800
+00882 Harteg (fixed fee),Plumbing Fixtures,1,5625
+00882 Harteg (fixed fee),Bathroom Hardware,1,950
+00882 Harteg (fixed fee),5600 Finish Plumbing Installation,16,75
+00882 Harteg (fixed fee),Electrical Fixtures,1,700
+00882 Harteg (fixed fee),5730 Electrical Finish Installation,6,75
+00882 Harteg (fixed fee),Finish HVAC,1,450
+00882 Harteg (fixed fee),Paint Materials,1,450
+00882 Harteg (fixed fee),Interior Paint,5,1100
+00882 Harteg (fixed fee),Warranty and Quality Control,1,1200
+00882 Harteg (fixed fee),Punch list to completion,1,1800
+00882 Harteg (fixed fee),Professional Cleaning,1,600
+00859 Strawderman,Permits and Fees,3,800
+00859 Strawderman,Construction Management And Service,18,900
+00859 Strawderman,Port a John,4,110
+00859 Strawderman,Project Selection Coordination,40,125
+00859 Strawderman,Dumpster Fees,1,500
+00859 Strawderman,Dust Control Materials,12,100
+00859 Strawderman,Demolition,4,300
+00859 Strawderman,Framing Labor,6,450
+00859 Strawderman,Framing Materials,100,20
+00859 Strawderman,General Plumbing,8,1200
+00859 Strawderman,New Vent thru soffit,2,515.06
+00859 Strawderman,Water and Sewer installation,3,572.97
+00859 Strawderman,General Electrical,400,9
+00859 Strawderman,Recessed Lighting,8,125
+00859 Strawderman,Surface Mount Light,3,75
+00859 Strawderman,Receptacle,4,25
+00859 Strawderman,One Way Switches,1,25
+00859 Strawderman,Recessed Fan/Light Combo,2,450
+00859 Strawderman,GFCI Receptacle,2,75
+00859 Strawderman,Under Cabinet Lighting,1,875
+00859 Strawderman,Relocation of Supply Duct,6,475
+00859 Strawderman,Relocation of Return Vent,1,875
+00859 Strawderman,Tile Prep and Waterproofing - walk in shower,1,1600
+00859 Strawderman,Brick Facade: Entire Wall,35,137
+00859 Strawderman,Windows,4,600
+00859 Strawderman,Window installation,4,300
+00859 Strawderman,Interior Doors: Pre-hung,4,275
+00859 Strawderman,Interior Door Hardware,4,75
+00859 Strawderman,Interior Door Installation,4,75
+00859 Strawderman,Glass Shower Door,1,2250
+00859 Strawderman,Insulation,300,4.5
+00859 Strawderman,Exterior Trim Materials,100,2.25
+00859 Strawderman,Exterior Trim Labor,40,18
+00859 Strawderman,Exterior Paint,1,1200
+00859 Strawderman,Drywall Hang and Finish,1900,2.78
+00859 Strawderman,Drywall Materials,2800,0.5
+00859 Strawderman,LVP Flooring,500,6.5
+00859 Strawderman,LVP Flooring Installation,500,2
+00859 Strawderman,Interior Trim Materials,300,3.25
+00859 Strawderman,Interior Trim Labor,6,425
+00859 Strawderman,Primary Bath Tile,1,3800
+00859 Strawderman,Powder room Tile,1,1200
+00859 Strawderman,Ceramic Tile Installation,6,1200
+00859 Strawderman,Semi Custom Cabinetry,1,7300
+00859 Strawderman,Countertop Materials,1,2200
+00859 Strawderman,Cabinet Hardware,1,700
+00859 Strawderman,Closet Systems,1,4500
+00859 Strawderman,Plumbing Fixtures,1,4700
+00859 Strawderman,Bathroom Hardware,1,1200
+00859 Strawderman,5600 Finish Plumbing Installation,12,75
+00859 Strawderman,Electrical Fixtures,1,1500
+00859 Strawderman,5730 Electrical Finish Installation,12,75
+00859 Strawderman,Finish HVAC,1,450
+00859 Strawderman,Paint Materials,1,450
+00859 Strawderman,Interior Paint,5.5,1100
+00859 Strawderman,Warranty and Quality Control,1,1200
+00859 Strawderman,Punch list to completion,1,1800
+00859 Strawderman,Professional Cleaning,1,600
+00837 Stephens Porch,Permits and Fees,4,800
+00837 Stephens Porch,Construction Management And Service,16,900
+00837 Stephens Porch,Port a John,4,110
+00837 Stephens Porch,Project Selection Coordination,12,125
+00837 Stephens Porch,Preconstruction costs,1,2950
+00837 Stephens Porch,Site Work,1,800
+00837 Stephens Porch,Grading,1,600
+00837 Stephens Porch,Dumpster Fees,6,500
+00837 Stephens Porch,Dust Control Materials,6,100
+00837 Stephens Porch,Demolition,4,300
+00837 Stephens Porch,Footing and Foundation,30,42
+00837 Stephens Porch,Framing Labor,24,450
+00837 Stephens Porch,Framing Materials,400,20
+00837 Stephens Porch,Decking Materials (Trex Enhanced Naturals),550,23.58
+00837 Stephens Porch,General Electrical,400,9
+00837 Stephens Porch,Recessed Lighting,6,125
+00837 Stephens Porch,Surface Mount Light,1,75
+00837 Stephens Porch,Recessed Fan/Light Combo,1,450
+00837 Stephens Porch,GFCI Receptacle,4,75
+00837 Stephens Porch,Gas line extension,1,1200
+00837 Stephens Porch,Roofing Specification,3.2,1100
+00837 Stephens Porch,Fireplace Surround,1,7500
+00837 Stephens Porch,Fireplace,1,9000
+00837 Stephens Porch,Countertop Materials,1,1200
+00837 Stephens Porch,Custom Window: Bifolding pass through,1,4500
+00837 Stephens Porch,Window installation,1,1500
+00837 Stephens Porch,Exterior Doors,1,1600
+00837 Stephens Porch,Exterior Door Hardware,1,450
+00837 Stephens Porch,Exterior Door Installation,1,1450
+00837 Stephens Porch,Exterior Siding Labor,12,500
+00837 Stephens Porch,Exterior Siding Materials,12,157
+00837 Stephens Porch,Exterior Trim Materials,3600,2.25
+00837 Stephens Porch,Exterior Trim Labor,600,18
+00837 Stephens Porch,Exterior Paint,8,1200
+00837 Stephens Porch,Porch Screening,52,190
+00837 Stephens Porch,Interior Trim Materials,25,3.25
+00837 Stephens Porch,Interior Trim Labor,2,425
+00837 Stephens Porch,Electrical Fixtures,1,1350
+00837 Stephens Porch,5730 Electrical Finish Installation,12,75
+00837 Stephens Porch,6125 Gutters and Downspouts,2,1200
+00837 Stephens Porch,Warranty and Quality Control,1,1200
+00837 Stephens Porch,Punch list to completion,1.5,1800
+00837 Stephens Porch,Professional Cleaning,1,600
+00822 Greenway,Permits and Fees,5,800
+00822 Greenway,Construction Management And Service,24,900
+00822 Greenway,Port a John,4,110
+00822 Greenway,Project Selection Coordination,1,3500
+00822 Greenway,Off Site Storage,1,1650
+00822 Greenway,Preconstruction costs,1,6200
+00822 Greenway,Site Work,2,800
+00822 Greenway,Grading,5,600
+00822 Greenway,Dumpster Fees,8,500
+00822 Greenway,Dust Control Materials,12,100
+00822 Greenway,Demolition,14,300
+00822 Greenway,Footing and Foundation,100,42
+00822 Greenway,Pre Slab and Slab,750,19.09
+00822 Greenway,Water Proofing - Foundation,30,50
+00822 Greenway,Termite Protection,1,400
+00822 Greenway,Framing Labor,40,450
+00822 Greenway,Framing Materials,1000,20
+00822 Greenway,General Plumbing,5,1200
+00822 Greenway,New Vent thru Roof,2,515.06
+00822 Greenway,Water and Sewer installation,2,572.97
+00822 Greenway,Cut and Cap drain and water prior to demo (per fixture),2,164.3
+00822 Greenway,General Electrical,1100,9
+00822 Greenway,Recessed Lighting,12,125
+00822 Greenway,Surface Mount Light,1,75
+00822 Greenway,Receptacle,1,25
+00822 Greenway,One Way Switches,1,25
+00822 Greenway,Recessed Fan/Light Combo,1,450
+00822 Greenway,GFCI Receptacle,6,75
+00822 Greenway,Dimmer Switches,1,75
+00822 Greenway,3 Way Switches,1,35
+00822 Greenway,Relocation of Supply Duct,3,475
+00822 Greenway,Relocation of Return Vent,1,875
+00822 Greenway,Roofing Specification,8,1100
+00822 Greenway,Metal Roof Accents,1,2000
+00822 Greenway,Brick Facade: Weaving,1,64.25
+00822 Greenway,Brick Facade: Entire Wall,20,137
+00822 Greenway,Windows,12,600
+00822 Greenway,Window installation,12,300
+00822 Greenway,Exterior Doors,1,900
+00822 Greenway,Exterior Door Hardware,1,250
+00822 Greenway,Exterior Door Installation,1,1450
+00822 Greenway,Interior Doors: Pre-hung,3,275
+00822 Greenway,Interior Door Hardware,3,75
+00822 Greenway,Interior Door Installation,3,75
+00822 Greenway,Garage door,1,4300
+00822 Greenway,Insulation,400,4.5
+00822 Greenway,Exterior Siding Labor,16,500
+00822 Greenway,Exterior Siding Materials,16,157
+00822 Greenway,Exterior Trim Materials,800,2.25
+00822 Greenway,Exterior Trim Labor,200,18
+00822 Greenway,Exterior Paint,13,1200
+00822 Greenway,Drywall Hang and Finish,2000,2.78
+00822 Greenway,Drywall Materials,4200,0.5
+00822 Greenway,Hardwood Flooring,700,10.25
+00822 Greenway,Hardwood Finishing,700,3.75
+00822 Greenway,Interior Trim Materials,300,3.25
+00822 Greenway,Interior Trim Labor,9,425
+00822 Greenway,Laundry room tile,1,1400
+00822 Greenway,Ceramic Tile Installation,1,1200
+00822 Greenway,Custom Built Ins and Other Cabinetry,1,28000
+00822 Greenway,Countertop Materials,40,105
+00822 Greenway,Cabinet Hardware,1,1200
+00822 Greenway,5520 Appliance Installation,8,75
+00822 Greenway,Plumbing Fixtures,1,1200
+00822 Greenway,5600 Finish Plumbing Installation,6,75
+00822 Greenway,Electrical Fixtures,1,1950
+00822 Greenway,5730 Electrical Finish Installation,16,75
+00822 Greenway,Finish HVAC,1,450
+00822 Greenway,Paint Materials,1,450
+00822 Greenway,Interior Paint,8,1100
+00822 Greenway,Driveway and Exterior Concrete paths,1400,8.95
+00822 Greenway,6125 Gutters and Downspouts,5,1200
+00822 Greenway,Warranty and Quality Control,3,1200
+00822 Greenway,Punch list to completion,2,1800
+00822 Greenway,Professional Cleaning,1,600
+00691 Helburg Addition,Permits and Fees,6,800
+00691 Helburg Addition,Construction Management And Service,20,900
+00691 Helburg Addition,Port a John,5,110
+00691 Helburg Addition,Project Selection Coordination,1,3500
+00691 Helburg Addition,Off Site Storage,1,1650
+00691 Helburg Addition,Site Work,1,800
+00691 Helburg Addition,Grading,6,600
+00691 Helburg Addition,Dumpster Fees,8,500
+00691 Helburg Addition,Dust Control Materials,8,100
+00691 Helburg Addition,Demolition,14,300
+00691 Helburg Addition,Footing and Foundation,100,42
+00691 Helburg Addition,Water Proofing - Foundation,60,50
+00691 Helburg Addition,Crawlspace Treatment (OPTIONAL INCLUDED),1,2950
+00691 Helburg Addition,Termite Protection,1,400
+00691 Helburg Addition,Framing Labor,40,450
+00691 Helburg Addition,Framing Materials,500,20
+00691 Helburg Addition,General Plumbing,4,1200
+00691 Helburg Addition,New Vent thru Roof,1,515.06
+00691 Helburg Addition,New Fixture Location outside footprint (requires Water and Sewer add-on),3,927
+00691 Helburg Addition,Water and Sewer installation,4,572.97
+00691 Helburg Addition,General Electrical,900,9
+00691 Helburg Addition,Electrical Box installation,1,4925
+00691 Helburg Addition,Recessed Lighting,12,125
+00691 Helburg Addition,Surface Mount Light,3,75
+00691 Helburg Addition,Receptacle,1,25
+00691 Helburg Addition,One Way Switches,1,25
+00691 Helburg Addition,Recessed Fan/Light Combo,1,450
+00691 Helburg Addition,GFCI Receptacle,4,75
+00691 Helburg Addition,Dimmer Switches,2,75
+00691 Helburg Addition,3 Way Switches,1,35
+00691 Helburg Addition,New System and Duct work,1,14500
+00691 Helburg Addition,Relocation of Supply Duct,2,475
+00691 Helburg Addition,Relocation of Return Vent,1,875
+00691 Helburg Addition,Tile Prep and Waterproofing - walk in shower,1,1600
+00691 Helburg Addition,Roofing Specification,4.5,1100
+00691 Helburg Addition,Brick Facade: Entire Wall,100,137
+00691 Helburg Addition,Windows,6,600
+00691 Helburg Addition,Window installation,6,300
+00691 Helburg Addition,Interior Doors: Pre-hung,9,275
+00691 Helburg Addition,Interior Door Hardware,12,75
+00691 Helburg Addition,Interior Door Installation,9,75
+00691 Helburg Addition,Pocket Doors,1,700
+00691 Helburg Addition,Insulation,450,4.5
+00691 Helburg Addition,Exterior Trim Materials,400,2.25
+00691 Helburg Addition,Exterior Trim Labor,100,18
+00691 Helburg Addition,Drywall Hang and Finish,2200,2.78
+00691 Helburg Addition,Drywall Materials,3400,0.5
+00691 Helburg Addition,Hardwood Flooring,600,10.25
+00691 Helburg Addition,Hardwood Finishing,800,3.75
+00691 Helburg Addition,Interior Trim Materials,140,3.25
+00691 Helburg Addition,Interior Trim Labor,8,425
+00691 Helburg Addition,Primary Bath Tile,1,5700
+00691 Helburg Addition,Ceramic Tile Installation,5,1200
+00691 Helburg Addition,Custom Bathroom Vanities,1,6500
+00691 Helburg Addition,Semi Custom Cabinetry,1,2000
+00691 Helburg Addition,Countertop Materials,1,1200
+00691 Helburg Addition,Cabinet Hardware,1,650
+00691 Helburg Addition,Cabinet Installation Costs,10,65
+00691 Helburg Addition,Plumbing Fixtures,1,4450
+00691 Helburg Addition,Bathroom Hardware,1,950
+00691 Helburg Addition,5600 Finish Plumbing Installation,12,75
+00691 Helburg Addition,Electrical Fixtures,1,2025
+00691 Helburg Addition,5730 Electrical Finish Installation,12,75
+00691 Helburg Addition,Finish HVAC,1,450
+00691 Helburg Addition,Paint Materials,1,450
+00691 Helburg Addition,Interior Paint,8,1100
+00691 Helburg Addition,6100 Landscaping Specifications - french drainage,1,5350
+00691 Helburg Addition,6125 Gutters and Downspouts,2.2,1200
+00691 Helburg Addition,Warranty and Quality Control,1,2270
+00691 Helburg Addition,Punch list to completion,3,1800
+00691 Helburg Addition,Professional Cleaning,1,600
+00806 Woods Addition (fixed fee),Permits and Fees,4,800
+00806 Woods Addition (fixed fee),Construction Management And Service,16,900
+00806 Woods Addition (fixed fee),Port a John,4,110
+00806 Woods Addition (fixed fee),Project Selection Coordination,12,125
+00806 Woods Addition (fixed fee),Preconstruction costs,1,1500
+00806 Woods Addition (fixed fee),Site Work,1,800
+00806 Woods Addition (fixed fee),Grading,1,600
+00806 Woods Addition (fixed fee),Dumpster Fees,8,500
+00806 Woods Addition (fixed fee),Dust Control Materials,10,100
+00806 Woods Addition (fixed fee),Demolition,4,300
+00806 Woods Addition (fixed fee),Footing and Foundation,70,42
+00806 Woods Addition (fixed fee),Water Proofing - Foundation,26,50
+00806 Woods Addition (fixed fee),Termite Protection,1,400
+00806 Woods Addition (fixed fee),Framing Labor,20,450
+00806 Woods Addition (fixed fee),Framing Materials,520,20
+00806 Woods Addition (fixed fee),General Plumbing,1,1200
+00806 Woods Addition (fixed fee),New Vent thru Roof,1,515.06
+00806 Woods Addition (fixed fee),New Fixture Location outside footprint (requires Water and Sewer add-on),3,927
+00806 Woods Addition (fixed fee),Water and Sewer installation,2,572.97
+00806 Woods Addition (fixed fee),General Electrical,450,9
+00806 Woods Addition (fixed fee),Recessed Lighting,6,125
+00806 Woods Addition (fixed fee),Surface Mount Light,3,75
+00806 Woods Addition (fixed fee),Recessed Fan/Light Combo,1,450
+00806 Woods Addition (fixed fee),GFCI Receptacle,1,75
+00806 Woods Addition (fixed fee),New System and Duct work,1,5800
+00806 Woods Addition (fixed fee),Tile Prep and Waterproofing - walk in shower,1,1600
+00806 Woods Addition (fixed fee),Roofing Specification,4,1100
+00806 Woods Addition (fixed fee),Brick Facade: Entire Wall,70,137
+00806 Woods Addition (fixed fee),Windows,5,600
+00806 Woods Addition (fixed fee),Window installation,5,300
+00806 Woods Addition (fixed fee),Exterior Doors,1,900
+00806 Woods Addition (fixed fee),Exterior Door Hardware,1,250
+00806 Woods Addition (fixed fee),Exterior Door Installation,1,1450
+00806 Woods Addition (fixed fee),Interior Doors: Pre-hung,1,275
+00806 Woods Addition (fixed fee),Interior Door Hardware,1,75
+00806 Woods Addition (fixed fee),Interior Door Installation,1,75
+00806 Woods Addition (fixed fee),Glass Shower Door,1,2250
+00806 Woods Addition (fixed fee),Insulation,500,4.5
+00806 Woods Addition (fixed fee),Exterior Trim Materials,400,2.25
+00806 Woods Addition (fixed fee),Exterior Trim Labor,70,18
+00806 Woods Addition (fixed fee),Drywall Hang and Finish,1500,2.78
+00806 Woods Addition (fixed fee),Drywall Materials,1500,0.5
+00806 Woods Addition (fixed fee),LVP Flooring,500,6.5
+00806 Woods Addition (fixed fee),LVP Flooring Installation,500,2
+00806 Woods Addition (fixed fee),Interior Trim Materials,100,3.25
+00806 Woods Addition (fixed fee),Interior Trim Labor,3,425
+00806 Woods Addition (fixed fee),Hall Bath Tile,1,2200
+00806 Woods Addition (fixed fee),Ceramic Tile Installation,4,1200
+00806 Woods Addition (fixed fee),Semi Custom Cabinetry,1,5000
+00806 Woods Addition (fixed fee),Countertop Materials (remnant),1,1800
+00806 Woods Addition (fixed fee),Cabinet Hardware,1,700
+00806 Woods Addition (fixed fee),Plumbing Fixtures,1,2150
+00806 Woods Addition (fixed fee),Bathroom Hardware,1,650
+00806 Woods Addition (fixed fee),5600 Finish Plumbing Installation,12,75
+00806 Woods Addition (fixed fee),Electrical Fixtures,1,2700
+00806 Woods Addition (fixed fee),5730 Electrical Finish Installation,12,75
+00806 Woods Addition (fixed fee),Finish HVAC,1,450
+00806 Woods Addition (fixed fee),Paint Materials,1,450
+00806 Woods Addition (fixed fee),Interior Paint,3,1100
+00806 Woods Addition (fixed fee),Driveway and Exterior Concrete paths,1200,8.95
+00806 Woods Addition (fixed fee),6125 Gutters and Downspouts,2,1200
+00806 Woods Addition (fixed fee),Warranty and Quality Control,1,1600
+00806 Woods Addition (fixed fee),Punch list to completion,1,1800
+00806 Woods Addition (fixed fee),Professional Cleaning,1,600
+00749 Frandsen,Permits and Fees,9,800
+00749 Frandsen,Construction Management And Service,45,900
+00749 Frandsen,Port a John,7,110
+00749 Frandsen,Project Selection Coordination,1,7500
+00749 Frandsen,Off Site Storage,2,1650
+00749 Frandsen,Preconstruction costs,1,10500
+00749 Frandsen,Site Work,3,800
+00749 Frandsen,Grading,3,600
+00749 Frandsen,Dumpster Fees,24,500
+00749 Frandsen,Dust Control Materials,20,100
+00749 Frandsen,Demolition,80,300
+00749 Frandsen,Temporary Power Pole,1,120
+00749 Frandsen,Footing and Foundation,90,42
+00749 Frandsen,Water Proofing - Foundation,90,50
+00749 Frandsen,Termite Protection,1,400
+00749 Frandsen,Engineering letter,1,1850
+00749 Frandsen,Framing Labor,90,450
+00749 Frandsen,Framing Materials,1,20
+00749 Frandsen,General Plumbing,1,38000
+00749 Frandsen,New Vent thru Roof,4,515.06
+00749 Frandsen,Water and Sewer installation,3,572.97
+00749 Frandsen,Cut and Cap drain and water prior to demo (per fixture),12,164.3
+00749 Frandsen,Tankless Water Heater System (2),2,4897.32
+00749 Frandsen,General Electrical,4600,9
+00749 Frandsen,Recessed Lighting,42,125
+00749 Frandsen,Surface Mount Light,1,75
+00749 Frandsen,Receptacle,1,25
+00749 Frandsen,One Way Switches,1,25
+00749 Frandsen,Recessed Fan/Light Combo,4,450
+00749 Frandsen,GFCI Receptacle,1,75
+00749 Frandsen,Under Cabinet Lighting,2,875
+00749 Frandsen,Dimmer Switches,1,75
+00749 Frandsen,3 Way Switches,1,35
+00749 Frandsen,New System and Duct work,1,22000
+00749 Frandsen,Relocation of Supply Duct,12,475
+00749 Frandsen,Relocation of Return Vent,2,875
+00749 Frandsen,Tile Prep and Waterproofing - walk in shower,3,1600
+00749 Frandsen,Tile Prep and Water Proofing- tile surround,2,900
+00749 Frandsen,Roofing Specification,7,1100
+00749 Frandsen,Fireplace Surround,1,7500
+00749 Frandsen,Fireplace,1,9000
+00749 Frandsen,Brick Facade: Entire Wall,160,137
+00749 Frandsen,Windows,26,1800
+00749 Frandsen,Window installation,26,300
+00749 Frandsen,Exterior Doors,2,1500
+00749 Frandsen,Exterior Door Hardware,2,250
+00749 Frandsen,Exterior Door Installation,2,1450
+00749 Frandsen,Interior Doors: Pre-hung,20,275
+00749 Frandsen,Interior Door Hardware,26,75
+00749 Frandsen,Interior Door Installation,26,75
+00749 Frandsen,Glass Shower Door,3,2250
+00749 Frandsen,Insulation,1400,4.5
+00749 Frandsen,Exterior Trim Materials,1000,2.25
+00749 Frandsen,Exterior Trim Labor,250,18
+00749 Frandsen,Exterior Paint (OPTIONAL INCLUDED),1,39750
+00749 Frandsen,Drywall Hang and Finish,9000,2.78
+00749 Frandsen,Drywall Materials,12000,0.5
+00749 Frandsen,Hardwood Flooring,1800,10.25
+00749 Frandsen,Hardwood Finishing,4000,3.75
+00749 Frandsen,Interior Trim Materials,700,3.25
+00749 Frandsen,Interior Trim Labor,50,425
+00749 Frandsen,Interior Trim - Accents,1,4000
+00749 Frandsen,Bathroom Tile,1,15500
+00749 Frandsen,Backsplash Tile,2,1800
+00749 Frandsen,Ceramic Tile Installation,20,1200
+00749 Frandsen,Custom Kitchen Cabinetry,75,600
+00749 Frandsen,Custom Bathroom Vanities,1,27450
+00749 Frandsen,Custom Built Ins and Other Cabinetry,1,42600
+00749 Frandsen,Countertop Materials,200,125
+00749 Frandsen,Cabinet Hardware,1,3750
+00749 Frandsen,Appliances,1,20000
+00749 Frandsen,5520 Appliance Installation,30,75
+00749 Frandsen,Plumbing Fixtures,1,28700
+00749 Frandsen,Bathroom Hardware,1,3800
+00749 Frandsen,5600 Finish Plumbing Installation,40,75
+00749 Frandsen,Electrical Fixtures,1,18000
+00749 Frandsen,5730 Electrical Finish Installation,80,75
+00749 Frandsen,Finish HVAC,1,450
+00749 Frandsen,Paint Materials,1,450
+00749 Frandsen,Interior Paint,1,36000
+00749 Frandsen,6125 Gutters and Downspouts,5,1200
+00749 Frandsen,Warranty and Quality Control,8,1200
+00749 Frandsen,Punch list to completion,5,1800
+00749 Frandsen,Professional Cleaning,2,600
+00650 Graf-Meintzer Porch (fixed fee),Permits and Fees,3,800
+00650 Graf-Meintzer Porch (fixed fee),Construction Management And Service,10,900
+00650 Graf-Meintzer Porch (fixed fee),Port a John,2,110
+00650 Graf-Meintzer Porch (fixed fee),Project Selection Coordination,12,125
+00650 Graf-Meintzer Porch (fixed fee),Site Work,1,800
+00650 Graf-Meintzer Porch (fixed fee),Grading,1,600
+00650 Graf-Meintzer Porch (fixed fee),Dumpster Fees,5,500
+00650 Graf-Meintzer Porch (fixed fee),Dust Control Materials,4,100
+00650 Graf-Meintzer Porch (fixed fee),Demolition,3,300
+00650 Graf-Meintzer Porch (fixed fee),Footing and Foundation,80,42
+00650 Graf-Meintzer Porch (fixed fee),Pre Slab and Slab,350,19.09
+00650 Graf-Meintzer Porch (fixed fee),Framing Labor,12,450
+00650 Graf-Meintzer Porch (fixed fee),Framing Materials,300,20
+00650 Graf-Meintzer Porch (fixed fee),General Electrical,200,9
+00650 Graf-Meintzer Porch (fixed fee),Recessed Lighting,8,125
+00650 Graf-Meintzer Porch (fixed fee),Surface Mount Light,2,75
+00650 Graf-Meintzer Porch (fixed fee),GFCI Receptacle,4,75
+00650 Graf-Meintzer Porch (fixed fee),Roofing Specification,4,1100
+00650 Graf-Meintzer Porch (fixed fee),Brick Chimney,1,13000
+00650 Graf-Meintzer Porch (fixed fee),Fireplace Surround,1,950
+00650 Graf-Meintzer Porch (fixed fee),Fireplace,1,3200
+00650 Graf-Meintzer Porch (fixed fee),Exterior Trim Materials,500,2.25
+00650 Graf-Meintzer Porch (fixed fee),Tongue and Groove 5.25in,300,12.5
+00650 Graf-Meintzer Porch (fixed fee),Exterior Trim Labor,340,18
+00650 Graf-Meintzer Porch (fixed fee),Exterior Paint,3,1200
+00650 Graf-Meintzer Porch (fixed fee),Electrical Fixtures,1,1600
+00650 Graf-Meintzer Porch (fixed fee),5730 Electrical Finish Installation,4,75
+00650 Graf-Meintzer Porch (fixed fee),6125 Gutters and Downspouts,1.8,1200
+00650 Graf-Meintzer Porch (fixed fee),Warranty and Quality Control,1,1200
+00650 Graf-Meintzer Porch (fixed fee),Punch list to completion,1,1800
+00650 Graf-Meintzer Porch (fixed fee),Professional Cleaning,1,600
+00708 Mettelka Kitchen (fixed fee),Permits and Fees,1,800
+00708 Mettelka Kitchen (fixed fee),Construction Management And Service,10,900
+00708 Mettelka Kitchen (fixed fee),Port a John,3,110
+00708 Mettelka Kitchen (fixed fee),Project Selection Coordination,1,3500
+00708 Mettelka Kitchen (fixed fee),Dumpster Fees,1,500
+00708 Mettelka Kitchen (fixed fee),Dust Control Materials,5,100
+00708 Mettelka Kitchen (fixed fee),Demolition,1,300
+00708 Mettelka Kitchen (fixed fee),Plumbing Fixture swap out same location,3,625
+00708 Mettelka Kitchen (fixed fee),New Vent thru Roof,1,515.06
+00708 Mettelka Kitchen (fixed fee),Cut and Cap drain and water prior to demo (per fixture),3,164.3
+00708 Mettelka Kitchen (fixed fee),General Electrical,120,9
+00708 Mettelka Kitchen (fixed fee),Recessed Lighting,8,125
+00708 Mettelka Kitchen (fixed fee),GFCI Receptacle,10,75
+00708 Mettelka Kitchen (fixed fee),Under Cabinet Lighting,1,875
+00708 Mettelka Kitchen (fixed fee),Drywall Hang and Finish,400,2.78
+00708 Mettelka Kitchen (fixed fee),Drywall Materials,600,0.5
+00708 Mettelka Kitchen (fixed fee),LVP Flooring,70,6.5
+00708 Mettelka Kitchen (fixed fee),LVP Flooring Installation,70,2
+00708 Mettelka Kitchen (fixed fee),Interior Trim Materials,50,3.25
+00708 Mettelka Kitchen (fixed fee),Interior Trim Labor,3,425
+00708 Mettelka Kitchen (fixed fee),Semi Custom Kitchen Cabinetry,54,625
+00708 Mettelka Kitchen (fixed fee),Custom Cabinetry Add ons,1,1200
+00708 Mettelka Kitchen (fixed fee),Countertop Materials,80,155
+00708 Mettelka Kitchen (fixed fee),Cabinet Hardware,1,1650
+00708 Mettelka Kitchen (fixed fee),Appliances,1,8500
+00708 Mettelka Kitchen (fixed fee),5520 Appliance Installation,16,75
+00708 Mettelka Kitchen (fixed fee),Plumbing Fixtures,1,3450
+00708 Mettelka Kitchen (fixed fee),5600 Finish Plumbing Installation,12,75
+00708 Mettelka Kitchen (fixed fee),Electrical Fixtures,1,450
+00708 Mettelka Kitchen (fixed fee),5730 Electrical Finish Installation,5,75
+00708 Mettelka Kitchen (fixed fee),Paint Materials,1,450
+00708 Mettelka Kitchen (fixed fee),Interior Paint,1,1100
+00708 Mettelka Kitchen (fixed fee),Warranty and Quality Control,1,1200
+00708 Mettelka Kitchen (fixed fee),Punch list to completion,1,1800
+00708 Mettelka Kitchen (fixed fee),Professional Cleaning,1,600
+00571 Parker,Permits and Fees,7,800
+00571 Parker,Construction Management And Service,24,900
+00571 Parker,Port a John,6,110
+00571 Parker,Project Selection Coordination,50,125
+00571 Parker,Off Site Storage,2,1650
+00571 Parker,Site Work,5,800
+00571 Parker,Grading,8,600
+00571 Parker,Dumpster Fees,15,500
+00571 Parker,Dust Control Materials,24,100
+00571 Parker,Demolition,40,300
+00571 Parker,Footing and Foundation,140,42
+00571 Parker,Water Proofing - Foundation,70,50
+00571 Parker,Crawlspace Treatment (INCLUDED),1,4500
+00571 Parker,Termite Protection,1,400
+00571 Parker,Framing Labor,40,450
+00571 Parker,Framing Materials,770,20
+00571 Parker,Plumbing Fixture swap out same location,5,625
+00571 Parker,New Fixture location in same footprint- Tub,1,1525
+00571 Parker,New Vent thru Roof,3,515.06
+00571 Parker,New Fixture Location outside footprint (requires Water and Sewer add-on),8,927
+00571 Parker,Cut and Cap drain and water prior to demo (per fixture),12,164.3
+00571 Parker,Tankless Water Heater System,1,4897.32
+00571 Parker,General Electrical,2385,9
+00571 Parker,Recessed Lighting,30,125
+00571 Parker,Surface Mount Light,10,75
+00571 Parker,Receptacle,1,25
+00571 Parker,One Way Switches,1,25
+00571 Parker,Recessed Fan/Light Combo,3,450
+00571 Parker,GFCI Receptacle,1,75
+00571 Parker,Under Cabinet Lighting,3,875
+00571 Parker,Dimmer Switches,12,75
+00571 Parker,3 Way Switches,8,35
+00571 Parker,Pop Up Countertop Receptacle,2,275
+00571 Parker,New System and Duct work,1,14000
+00571 Parker,Relocation of Supply Duct,5,475
+00571 Parker,Relocation of Return Vent,2,875
+00571 Parker,Tile Prep and Waterproofing - walk in shower,1,1600
+00571 Parker,Tile Prep and Water Proofing- tile surround,1,900
+00571 Parker,Roofing Specification,14,1100
+00571 Parker,Firebox and Gas logs,1,11000
+00571 Parker,Fireplace Surround,1,7500
+00571 Parker,Brick Facade: Foundation Wall,35,137
+00571 Parker,Windows,23,500
+00571 Parker,Window installation,23,300
+00571 Parker,Exterior Doors,2,900
+00571 Parker,Exterior Door Hardware,2,250
+00571 Parker,Exterior Door Installation,2,1450
+00571 Parker,Front Door,1,3500
+00571 Parker,Front Door Hardware,1,400
+00571 Parker,Interior Doors: Pre-hung,13,275
+00571 Parker,Interior Door Hardware,13,75
+00571 Parker,Interior Door Installation,13,75
+00571 Parker,Pocket Doors,2,700
+00571 Parker,Glass Shower Door,1,2250
+00571 Parker,Insulation,2385,4.5
+00571 Parker,Exterior Siding Labor,20,500
+00571 Parker,Exterior Siding Materials,20,157
+00571 Parker,Exterior Shutters,8,400
+00571 Parker,Exterior Trim Materials,2000,2.25
+00571 Parker,Exterior Trim Labor,200,18
+00571 Parker,Exterior Paint,1,18750
+00571 Parker,Drywall Hang and Finish,6000,2.78
+00571 Parker,Hardwood Flooring,1506,10.25
+00571 Parker,Hardwood Finishing,1963,3.75
+00571 Parker,Interior Trim Materials,2400,3.25
+00571 Parker,Interior Trim Labor,25,425
+00571 Parker,Primary Bath Tile,1,5700
+00571 Parker,Hall Bath Tile,1,2200
+00571 Parker,Backsplash Tile,1,1800
+00571 Parker,Ceramic Tile Installation,10,1200
+00571 Parker,Custom Kitchen Cabinetry,50,625
+00571 Parker,Custom Bathroom Vanities,1,10000
+00571 Parker,Countertop Materials,100,105
+00571 Parker,Cabinet Hardware,1,2700
+00571 Parker,Closet Systems,16,350
+00571 Parker,Appliances,1,20000
+00571 Parker,5520 Appliance Installation,27,75
+00571 Parker,Plumbing Fixtures,1,18250
+00571 Parker,Bathroom Hardware,1,1850
+00571 Parker,Electrical Fixtures,1,7650
+00571 Parker,5730 Electrical Finish Installation,40,75
+00571 Parker,Finish HVAC,1,450
+00571 Parker,Paint Materials,3,450
+00571 Parker,Interior Paint,1.2,18000
+00571 Parker,6125 Gutters and Downspouts,6,1200
+00571 Parker,Warranty and Quality Control,1,560
+00571 Parker,Punch list to completion,4,1800
+00571 Parker,Professional Cleaning,4,600
+00763 Huntington (fixed fee),Permits and Fees,1,800
+00763 Huntington (fixed fee),Construction Management And Service,12,750
+00763 Huntington (fixed fee),Port a John,3,110
+00763 Huntington (fixed fee),Project Selection Coordination,1,2500
+00763 Huntington (fixed fee),Dumpster Fees,4,500
+00763 Huntington (fixed fee),Dust Control Materials,12,100
+00763 Huntington (fixed fee),Demolition,5,300
+00763 Huntington (fixed fee),General Plumbing,3,1200
+00763 Huntington (fixed fee),Plumbing Fixture swap out and relocations,6,625
+00763 Huntington (fixed fee),Cut and Cap drain and water prior to demo (per fixture),7,164.3
+00763 Huntington (fixed fee),General Electrical,100,9
+00763 Huntington (fixed fee),Surface Mount Light,4,75
+00763 Huntington (fixed fee),Recessed Fan/Light Combo,3,450
+00763 Huntington (fixed fee),GFCI Receptacle,4,75
+00763 Huntington (fixed fee),Tile Prep and Waterproofing - walk in shower,1,1600
+00763 Huntington (fixed fee),Tile Prep and Water Proofing- tile surround,1,900
+00763 Huntington (fixed fee),Glass Shower Door,1.5,2250
+00763 Huntington (fixed fee),Drywall Hang and Finish,1000,2.78
+00763 Huntington (fixed fee),Drywall Materials,1,0.5
+00763 Huntington (fixed fee),Hardwood Flooring,100,10.25
+00763 Huntington (fixed fee),Hardwood Finishing,250,3.75
+00763 Huntington (fixed fee),Interior Trim Materials,300,3.25
+00763 Huntington (fixed fee),Interior Trim Labor,5,425
+00763 Huntington (fixed fee),Primary Bath Tile,1,5700
+00763 Huntington (fixed fee),Hall Bath Tile,1,2200
+00763 Huntington (fixed fee),Ceramic Tile Installation,9,1200
+00763 Huntington (fixed fee),Cabinet Painting- Custom Cabinets only,14,75
+00763 Huntington (fixed fee),Countertop Materials,90,125
+00763 Huntington (fixed fee),Cabinet Removal and Installation Costs,30,65
+00763 Huntington (fixed fee),Plumbing Fixtures,1,11800
+00763 Huntington (fixed fee),Bathroom Hardware,1,1600
+00763 Huntington (fixed fee),5600 Finish Plumbing Installation,18,75
+00763 Huntington (fixed fee),Electrical Fixtures,1,1575
+00763 Huntington (fixed fee),5730 Electrical Finish Installation,15,75
+00763 Huntington (fixed fee),Finish HVAC,1,450
+00763 Huntington (fixed fee),Paint Materials,1,450
+00763 Huntington (fixed fee),Interior Paint,3,1100
+00763 Huntington (fixed fee),Warranty and Quality Control,1,1200
+00763 Huntington (fixed fee),Punch list to completion,2,1800
+00763 Huntington (fixed fee),Professional Cleaning,1,600
+00676 Groenhof,Permits and Fees,9,800
+00676 Groenhof,Construction Management And Service,22,900
+00676 Groenhof,Port a John,5,110
+00676 Groenhof,Project Selection Coordination,1,4000
+00676 Groenhof,Off Site Storage,1,1650
+00676 Groenhof,Site Work + tree removal,6,800
+00676 Groenhof,Grading,4,600
+00676 Groenhof,Dumpster Fees,8,500
+00676 Groenhof,Dust Control Materials,8,100
+00676 Groenhof,Demolition,1,12000
+00676 Groenhof,Footing and Foundation,75,42
+00676 Groenhof,Water Proofing - Foundation,20,50
+00676 Groenhof,Crawlspace Treatment (OPTIONAL),1,2759
+00676 Groenhof,Termite Protection,1,400
+00676 Groenhof,Framing Labor,36,450
+00676 Groenhof,Framing Materials,550,20
+00676 Groenhof,General Plumbing,3,1200
+00676 Groenhof,Plumbing Fixture swap out same location,1,625
+00676 Groenhof,New Fixture Location within same footprint,1,1325
+00676 Groenhof,New Fixture location in same footprint- Tub,1,1525
+00676 Groenhof,New Vent thru Roof,1,515.06
+00676 Groenhof,Water and Sewer installation,1,572.97
+00676 Groenhof,General Electrical,500,9
+00676 Groenhof,Recessed Lighting,6,125
+00676 Groenhof,Surface Mount Light,2,75
+00676 Groenhof,Receptacle,8,25
+00676 Groenhof,One Way Switches,1,25
+00676 Groenhof,Recessed Fan/Light Combo,1,450
+00676 Groenhof,GFCI Receptacle,1,75
+00676 Groenhof,Dimmer Switches,1,75
+00676 Groenhof,New System and Duct work,1,9500
+00676 Groenhof,Relocation of Supply Duct,1,475
+00676 Groenhof,Relocation of Return Vent,1,875
+00676 Groenhof,Tile Prep and Waterproofing - walk in shower,1,1600
+00676 Groenhof,Roofing Specification,4,1100
+00676 Groenhof,Brick Facade: foundation Wall,60,45
+00676 Groenhof,Windows,6,600
+00676 Groenhof,Window installation,6,300
+00676 Groenhof,Exterior Doors,1,900
+00676 Groenhof,Exterior Door Hardware,1,250
+00676 Groenhof,Exterior Door Installation,1,1450
+00676 Groenhof,Interior Doors: Pre-hung,5,275
+00676 Groenhof,Interior Door Hardware,5,75
+00676 Groenhof,Interior Door Installation,5,75
+00676 Groenhof,Glass Shower Door,1,2250
+00676 Groenhof,Insulation,500,4.5
+00676 Groenhof,Exterior Siding Labor,10,500
+00676 Groenhof,Exterior Siding Materials,10,157
+00676 Groenhof,Exterior Trim Materials,700,2.25
+00676 Groenhof,Exterior Trim Labor,270,18
+00676 Groenhof,Exterior Paint,2,1200
+00676 Groenhof,Drywall Hang and Finish,2500,2.78
+00676 Groenhof,Drywall Materials,3500,0.5
+00676 Groenhof,Hardwood Flooring,400,14.25
+00676 Groenhof,Hardwood Finishing,400,3.75
+00676 Groenhof,Interior Trim Materials,200,3.25
+00676 Groenhof,Interior Trim Labor,6,425
+00676 Groenhof,Primary Bath Tile,1,5700
+00676 Groenhof,Ceramic Tile Installation,5,1200
+00676 Groenhof,Custom Bathroom Vanities,1,6500
+00676 Groenhof,Countertop Materials,1,1200
+00676 Groenhof,Cabinet Hardware,1,450
+00676 Groenhof,Closet Systems,1,4200
+00676 Groenhof,Plumbing Fixtures,1,4950
+00676 Groenhof,Bathroom Hardware,1,950
+00676 Groenhof,5600 Finish Plumbing Installation,12,75
+00676 Groenhof,Electrical Fixtures,1,1800
+00676 Groenhof,5730 Electrical Finish Installation,16,75
+00676 Groenhof,Finish HVAC,1,450
+00676 Groenhof,Paint Materials,1,450
+00676 Groenhof,Interior Paint,5,1100
+00676 Groenhof,Driveway and Exterior Concrete paths,600,8.95
+00676 Groenhof,6125 Gutters and Downspouts,2,1200
+00676 Groenhof,Warranty and Quality Control,1,2250
+00676 Groenhof,Punch list to completion,3,1800
+00676 Groenhof,Professional Cleaning,1,600
+00687 Dittmer Mud Area (fixed fee),Permits and Fees,1.5,800
+00687 Dittmer Mud Area (fixed fee),Construction Management And Service,8,900
+00687 Dittmer Mud Area (fixed fee),Port a John,3,110
+00687 Dittmer Mud Area (fixed fee),Project Selection Coordination,1,1450
+00687 Dittmer Mud Area (fixed fee),Dumpster Fees,3,500
+00687 Dittmer Mud Area (fixed fee),Dust Control Materials,8,100
+00687 Dittmer Mud Area (fixed fee),Demolition,3,300
+00687 Dittmer Mud Area (fixed fee),Footing and Foundation,12,42
+00687 Dittmer Mud Area (fixed fee),Framing Labor,5,450
+00687 Dittmer Mud Area (fixed fee),Framing Materials,1,20
+00687 Dittmer Mud Area (fixed fee),Deck Framing Labor,50,17.25
+00687 Dittmer Mud Area (fixed fee),Decking Materials (Trex Enhanced Naturals),80,23.58
+00687 Dittmer Mud Area (fixed fee),Hose spigot relocation,1,450
+00687 Dittmer Mud Area (fixed fee),General Electrical,135,9
+00687 Dittmer Mud Area (fixed fee),Receptacle,1,25
+00687 Dittmer Mud Area (fixed fee),One Way Switches,1,25
+00687 Dittmer Mud Area (fixed fee),Roofing Specification,1,1100
+00687 Dittmer Mud Area (fixed fee),Exterior Doors,1,1100
+00687 Dittmer Mud Area (fixed fee),Exterior Door Hardware,1,250
+00687 Dittmer Mud Area (fixed fee),Exterior Door Installation,1,1150
+00687 Dittmer Mud Area (fixed fee),Exterior Siding Labor,1,500
+00687 Dittmer Mud Area (fixed fee),Exterior Siding Materials,1,157
+00687 Dittmer Mud Area (fixed fee),Exterior Trim Materials,1,2300
+00687 Dittmer Mud Area (fixed fee),Exterior Trim Labor,80,18
+00687 Dittmer Mud Area (fixed fee),Exterior Paint,1.5,1200
+00687 Dittmer Mud Area (fixed fee),Drywall Hang and Finish,1,950
+00687 Dittmer Mud Area (fixed fee),Interior Trim Materials,80,3.25
+00687 Dittmer Mud Area (fixed fee),Interior Trim Labor,3,425
+00687 Dittmer Mud Area (fixed fee),Custom Built Ins and Other Cabinetry,1,5600
+00687 Dittmer Mud Area (fixed fee),Cabinet Hardware,1,450
+00687 Dittmer Mud Area (fixed fee),Electrical Fixtures,1,700
+00687 Dittmer Mud Area (fixed fee),5730 Electrical Finish Installation,6,75
+00687 Dittmer Mud Area (fixed fee),Interior Paint,1,650
+00687 Dittmer Mud Area (fixed fee),6125 Gutters and Downspouts,1,700
+00687 Dittmer Mud Area (fixed fee),Warranty and Quality Control,1,900
+00687 Dittmer Mud Area (fixed fee),Punch list to completion,1,1800
+00687 Dittmer Mud Area (fixed fee),Professional Cleaning,1,350
+00636 Weissman Porch (fixed fee),Permits and Fees,2,800
+00636 Weissman Porch (fixed fee),Construction Management And Service,10,900
+00636 Weissman Porch (fixed fee),Port a John,3,110
+00636 Weissman Porch (fixed fee),Preconstruction costs,1,2250
+00636 Weissman Porch (fixed fee),Site Work,2,800
+00636 Weissman Porch (fixed fee),Dumpster Fees,5,500
+00636 Weissman Porch (fixed fee),Dust Control Materials,6,100
+00636 Weissman Porch (fixed fee),Demolition,5,300
+00636 Weissman Porch (fixed fee),Footing and Foundation,26,42
+00636 Weissman Porch (fixed fee),Framing Labor,10,450
+00636 Weissman Porch (fixed fee),Framing Materials,100,20
+00636 Weissman Porch (fixed fee),Deck Framing Labor,384,17.25
+00636 Weissman Porch (fixed fee),Decking Materials (Trex Enhanced Naturals),400,23.58
+00636 Weissman Porch (fixed fee),General Electrical,250,9
+00636 Weissman Porch (fixed fee),Recessed Lighting,4,125
+00636 Weissman Porch (fixed fee),Hardscape lighting,1,1600
+00636 Weissman Porch (fixed fee),Surface Mount Light,2,75
+00636 Weissman Porch (fixed fee),Exterior GFCI Receptacle,2,175
+00636 Weissman Porch (fixed fee),Roofing Specification,1,3800
+00636 Weissman Porch (fixed fee),Exterior Doors,14,900
+00636 Weissman Porch (fixed fee),Exterior Door Hardware,1,250
+00636 Weissman Porch (fixed fee),Exterior Door Installation,1.7,1450
+00636 Weissman Porch (fixed fee),Exterior Siding Labor,3,500
+00636 Weissman Porch (fixed fee),Exterior Siding Materials,2,157
+00636 Weissman Porch (fixed fee),Exterior Trim Materials,1,3200
+00636 Weissman Porch (fixed fee),Exterior Trim Labor,1,2200
+00636 Weissman Porch (fixed fee),Exterior Paint,3,1200
+00636 Weissman Porch (fixed fee),Drywall Hang and Finish,350,2.78
+00636 Weissman Porch (fixed fee),Drywall Materials,200,0.5
+00636 Weissman Porch (fixed fee),Interior Trim Materials,40,3.25
+00636 Weissman Porch (fixed fee),Interior Trim Labor,1,425
+00636 Weissman Porch (fixed fee),Electrical Fixtures,3,450
+00636 Weissman Porch (fixed fee),5730 Electrical Finish Installation,1,75
+00636 Weissman Porch (fixed fee),Interior Paint,1,450
+00636 Weissman Porch (fixed fee),6125 Gutters and Downspouts,2,1200
+00636 Weissman Porch (fixed fee),Warranty and Quality Control,1,1200
+00636 Weissman Porch (fixed fee),Punch list to completion,1,1800
+00636 Weissman Porch (fixed fee),Professional Cleaning,1,350
+00844 Malm,Permits and Fees,10,800
+00844 Malm,Construction Management And Service,40,1100
+00844 Malm,Port a John,10,110
+00844 Malm,Project Selection Coordination,80,125
+00844 Malm,Off Site Storage,2,1650
+00844 Malm,Site Work,1,800
+00844 Malm,Dumpster Fees,20,500
+00844 Malm,Dust Control Materials,14,100
+00844 Malm,Demolition,1,22000
+00844 Malm,Temporary Power Pole,1,1800
+00844 Malm,Footing and Foundation,40,42
+00844 Malm,Crawlspace Treatment (OPTIONAL NOT INCLUDED),1,4500
+00844 Malm,Framing Labor,1,62000
+00844 Malm,Framing Materials,2200,20
+00844 Malm,General Plumbing,1,22000
+00844 Malm,Cut and Cap drain and water prior to demo (per fixture),4,164.3
+00844 Malm,Tankless Water Heater System,1,4897.32
+00844 Malm,General Electrical (full rewire),3200,9
+00844 Malm,Recessed Lighting,34,125
+00844 Malm,Recessed Fan/Light Combo,4,450
+00844 Malm,Under Cabinet Lighting,1,875
+00844 Malm,Pop Up Countertop Receptacle,2,275
+00844 Malm,New System and Duct work,1,24500
+00844 Malm,Relocation of Supply Duct,2,475
+00844 Malm,Relocation of Return Vent,1,875
+00844 Malm,Tile Prep and Waterproofing - walk in shower,1,1600
+00844 Malm,Tile Prep and Water Proofing- tile surround,3,900
+00844 Malm,Roofing Specification,12,1100
+00844 Malm,Brick Chimney (NOT INCLUDED),1,13000
+00844 Malm,Firebox and Gas logs (NOT INCLUDED),1,3200
+00844 Malm,Fireplace Surround (NOT INCLUDED),1,7500
+00844 Malm,Fireplace,1,9000
+00844 Malm,Brick Facade: Entire Wall,40,137
+00844 Malm,Windows,25,900
+00844 Malm,Window installation,25,300
+00844 Malm,Exterior Doors,1,1200
+00844 Malm,Exterior Door Hardware,1,250
+00844 Malm,Exterior Door Installation,1,1450
+00844 Malm,Front Door,1,4500
+00844 Malm,Front Door Hardware,1,600
+00844 Malm,Interior Doors: Pre-hung,9,275
+00844 Malm,Interior Door Hardware,9,75
+00844 Malm,Interior Door Installation,9,75
+00844 Malm,Glass Shower Door,2,2250
+00844 Malm,Insulation,2200,4.5
+00844 Malm,Exterior Siding Labor,20,500
+00844 Malm,Exterior Siding Materials,20,157
+00844 Malm,Exterior Trim Materials,1200,2.25
+00844 Malm,Exterior Trim Labor,400,18
+00844 Malm,Exterior Paint,20,1200
+00844 Malm,Drywall Hang and Finish,6500,2.78
+00844 Malm,Drywall Materials,8500,0.5
+00844 Malm,Hardwood Flooring,1200,10.25
+00844 Malm,Hardwood Finishing,3200,3.75
+00844 Malm,Interior Trim Materials,1200,3.25
+00844 Malm,Interior Trim Labor,32,425
+00844 Malm,Primary Bath Tile,1,5700
+00844 Malm,Other Bath Tile,5,2200
+00844 Malm,Backsplash Tile,1,1800
+00844 Malm,Ceramic Tile Installation,16,1200
+00844 Malm,Custom Kitchen Cabinetry,1,37000
+00844 Malm,Custom Bathroom Vanities,1,17000
+00844 Malm,Custom Built Ins and Other Cabinetry,1,19500
+00844 Malm,Custom Cabinetry Add ons,1,3500
+00844 Malm,Countertop Materials,140,105
+00844 Malm,Cabinet Hardware,1,3150
+00844 Malm,Closet Systems,1,5550
+00844 Malm,Appliances,1,16000
+00844 Malm,5520 Appliance Installation,20,75
+00844 Malm,Plumbing Fixtures,1,21250
+00844 Malm,Bathroom Hardware,1,2900
+00844 Malm,5600 Finish Plumbing Installation,40,75
+00844 Malm,Electrical Fixtures,1,6825
+00844 Malm,5730 Electrical Finish Installation,120,75
+00844 Malm,Finish HVAC,1,450
+00844 Malm,Paint Materials,6,450
+00844 Malm,Interior Paint,22,1100
+00844 Malm,6125 Gutters and Downspouts,7,1200
+00844 Malm,Warranty and Quality Control,6,1200
+00844 Malm,Punch list to completion,5,1800
+00844 Malm,Professional Cleaning,2,600
+00845 McNelly,Permits and Fees,5,800
+00845 McNelly,Construction Management And Service,24,900
+00845 McNelly,Port a John,5,110
+00845 McNelly,Project Selection Coordination,40,125
+00845 McNelly,Off Site Storage,1,1650
+00845 McNelly,Dumpster Fees,1,500
+00845 McNelly,Dust Control Materials,1,100
+00845 McNelly,Demolition,40,300
+00845 McNelly,Framing Labor,16,450
+00845 McNelly,Framing Materials,200,20
+00845 McNelly,General Plumbing,12,1200
+00845 McNelly,New Vent thru Roof,2,515.06
+00845 McNelly,Water and Sewer installation,3,572.97
+00845 McNelly,General Electrical (full rewire),3000,9
+00845 McNelly,Recessed Lighting,10,125
+00845 McNelly,Surface Mount Light,4,75
+00845 McNelly,Recessed Fan/Light Combo,2,450
+00845 McNelly,Under Cabinet Lighting,1,875
+00845 McNelly,Dimmer Switches,3,75
+00845 McNelly,Relocation of Supply Duct,4,475
+00845 McNelly,Relocation of Return Vent,1,875
+00845 McNelly,Tile Prep and Waterproofing - walk in shower,1,1600
+00845 McNelly,Tile Prep and Water Proofing- tile surround,1,900
+00845 McNelly,Windows,10,600
+00845 McNelly,Window installation,10,300
+00845 McNelly,Exterior Doors,2,1200
+00845 McNelly,Exterior Door Hardware,2,250
+00845 McNelly,Exterior Door Installation,1,1450
+00845 McNelly,Front Door,1,3500
+00845 McNelly,Front Door Hardware,1,400
+00845 McNelly,Interior Doors: Pre-hung,4,275
+00845 McNelly,Interior Door Hardware,4,75
+00845 McNelly,Interior Door Installation,4,75
+00845 McNelly,Glass Shower Door,1,2250
+00845 McNelly,Insulation,400,4.5
+00845 McNelly,Drywall Hang and Finish,5700,2.78
+00845 McNelly,Drywall Materials,5500,0.5
+00845 McNelly,Hardwood Flooring (weaving),300,10.25
+00845 McNelly,Hardwood Finishing,1800,3.75
+00845 McNelly,Interior Trim Materials,800,3.25
+00845 McNelly,Interior Trim Labor,18,425
+00845 McNelly,Primary Bath Tile,1,5700
+00845 McNelly,Hall Bath Tile,3,2200
+00845 McNelly,Backsplash Tile,1,1800
+00845 McNelly,Ceramic Tile Installation,15,1200
+00845 McNelly,Custom Kitchen Cabinetry,1,28000
+00845 McNelly,Custom Bathroom Vanities,1,17000
+00845 McNelly,Countertop Materials,1,16000
+00845 McNelly,Cabinet Hardware,1,2450
+00845 McNelly,Closet Systems,1,3500
+00845 McNelly,Appliances,1,16000
+00845 McNelly,5520 Appliance Installation,16,75
+00845 McNelly,Plumbing Fixtures,1,18250
+00845 McNelly,Bathroom Hardware,1,2900
+00845 McNelly,5600 Finish Plumbing Installation,30,75
+00845 McNelly,Electrical Fixtures,1,5850
+00845 McNelly,5730 Electrical Finish Installation,20,75
+00845 McNelly,Finish HVAC,1,450
+00845 McNelly,Paint Materials,1,450
+00845 McNelly,Interior Paint,15,1100
+00845 McNelly,Warranty and Quality Control,3,1200
+00845 McNelly,Punch list to completion,2,1800
+00845 McNelly,Professional Cleaning,1.5,600
+00835 Taggart,Permits and Fees,6,800
+00835 Taggart,Construction Management And Service,26,900
+00835 Taggart,Port a John,5,110
+00835 Taggart,Project Selection Coordination,40,125
+00835 Taggart,Off Site Storage,1,1650
+00835 Taggart,Dumpster Fees,1,500
+00835 Taggart,Dust Control Materials,1,100
+00835 Taggart,Demolition,1,300
+00835 Taggart,Framing Labor,24,450
+00835 Taggart,Framing Materials,400,20
+00835 Taggart,General Plumbing,2,1200
+00835 Taggart,Plumbing Fixture swap out same location,4,625
+00835 Taggart,New Fixture Location within same footprint,1,1325
+00835 Taggart,Cut and Cap drain and water prior to demo (per fixture),4,164.3
+00835 Taggart,General Electrical,600,9
+00835 Taggart,Recessed Lighting,22,125
+00835 Taggart,Surface Mount Light,6,75
+00835 Taggart,Under Cabinet Lighting,1,875
+00835 Taggart,Pop Up Countertop Receptacle,2,275
+00835 Taggart,Relocation of Supply Duct,6,475
+00835 Taggart,Gas line to range,2,875
+00835 Taggart,Windows,9,1100
+00835 Taggart,Window installation,9,300
+00835 Taggart,Exterior Doors,1,1200
+00835 Taggart,Exterior Door Hardware,1,250
+00835 Taggart,Exterior Door Installation,1,1450
+00835 Taggart,Front Door,1,5500
+00835 Taggart,Front Door Hardware,1,800
+00835 Taggart,Interior Doors: Pre-hung,1,1750
+00835 Taggart,Interior Door Hardware,4,75
+00835 Taggart,Interior Door Installation,4,75
+00835 Taggart,Insulation,250,4.5
+00835 Taggart,Exterior Siding Labor,30,500
+00835 Taggart,Exterior Siding Materials,30,157
+00835 Taggart,Exterior Trim Materials,1200,2.25
+00835 Taggart,Exterior Trim Labor,400,18
+00835 Taggart,Exterior Paint,1,19800
+00835 Taggart,Drywall Hang and Finish,4200,2.78
+00835 Taggart,Drywall Materials,5500,0.5
+00835 Taggart,LVP Flooring,2100,6.5
+00835 Taggart,LVP Flooring Installation,2100,2
+00835 Taggart,Interior Trim Materials,400,3.25
+00835 Taggart,Interior Trim Labor,16,425
+00835 Taggart,Custom Kitchen Cabinetry,68,625
+00835 Taggart,Custom Built Ins and Other Cabinetry,1,16500
+00835 Taggart,Countertop Materials,140,105
+00835 Taggart,Cabinet Hardware,1,2650
+00835 Taggart,Appliances,1,7900
+00835 Taggart,5520 Appliance Installation,16,75
+00835 Taggart,Plumbing Fixtures,1,5150
+00835 Taggart,5600 Finish Plumbing Installation,14,75
+00835 Taggart,Electrical Fixtures,1,2700
+00835 Taggart,5730 Electrical Finish Installation,14,75
+00835 Taggart,Finish HVAC,1,450
+00835 Taggart,Paint Materials,1,450
+00835 Taggart,Interior Paint,14,1100
+00835 Taggart,Warranty and Quality Control,3,1200
+00835 Taggart,Punch list to completion,3,1800
+00835 Taggart,Professional Cleaning,1,600

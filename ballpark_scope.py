@@ -28,7 +28,8 @@ SCOPE_SCHEMA = """{
     "whole_home": true,                      // whole-home renovation or addition
     "punch_list_days": 5,
     "floor_plan_sf": 2200,                   // renovated area
-    "addition_sf": 0, "foundation_sf": 0, "slab_sf": 0, "deck_sf": 0, "heated_sf": 2800, "waterproofing_lf": 0,
+    "addition_sf": 0, "foundation_sf": 0, "foundation_perimeter_lf": 0, "framed_sf": 0,
+    "slab_sf": 0, "deck_sf": 0, "heated_sf": 2800, "waterproofing_lf": 0,
     "wall_ceiling_sf": null,                 // only from Rendr; otherwise leave null
     "rooms": [                               // every renovated room (paint, devices, drywall)
       {"name": "Kitchen", "type": "kitchen|primary_bath|hall_bath|powder|other",
@@ -36,12 +37,12 @@ SCOPE_SCHEMA = """{
     ],
     "exterior": {"roof_squares": 0, "siding_squares": 0, "trim_lf": 0, "brick_facade_lf": 0,
                  "foundation_brick_lf": 0, "windows": 0, "window_tier": null, "exterior_doors": 0,
-                 "front_door": false, "gutters": false, "driveway_sf": 0, "garage_doors_single": 0,
+                 "front_door": false, "gutters": 0, "driveway_sf": 0, "garage_doors_single": 0,
                  "garage_doors_double": 0, "porch_screening_lf": 0, "full_exterior_repaint": false,
                  "brick_chimney": false, "landscaping": false, "metal_roof_accents": false},
     "flooring": {"tile_sf": 0, "hardwood_new_sf": 0, "hardwood_refinish_sf": 0, "lvp_sf": 0, "carpet_sf": 0},
     "tile_areas": [ {"name": "Primary bath", "kind": "primary_bath|hall_bath_tub|backsplash|small",
-                     "tier": "Premium", "prep": "walk_in_shower|tub_surround|null", "material_sf": 180} ],
+                     "tier": "Premium", "prep": "walk_in_shower|tub_surround|null"} ],
     "cabinetry": {"lowers_lf": 0, "uppers_lf": 0, "full_height_lf": 0, "vanities_lf": 0, "builtins_lf": 0},
     "countertops": [ {"name": "Kitchen", "sf": 60, "tier": "Premium"} ],
     "closets": {"primary": 0, "small": 0},
@@ -50,7 +51,7 @@ SCOPE_SCHEMA = """{
     "mechanical": {"full_rewire": false, "hvac_tons": 0, "new_ductwork": false, "supply_relocations": 0,
                    "return_relocations": 0, "finish_hvac": 0, "water_heater": "none|tank|tankless",
                    "crawlspace": false},
-    "plumbing": {"swap_same": 0, "new_in_footprint": 0, "tub_in_footprint": 0, "new_outside_footprint": 0,
+    "plumbing": {"fixture_count": 0, "swap_same": 0, "new_in_footprint": 0, "tub_in_footprint": 0, "new_outside_footprint": 0,
                  "tub_outside_footprint": 0, "water_sewer_10lf": 0, "cut_and_cap": 0, "vent_thru_roof": 0},
     "new_service": {"water_tap": false, "rewa_fee": false, "sewer_tap": false},
     "fixtures": [ {"category": "appliance|plumbing|lighting", "item": "refrigerator", "tier": "Premium",
@@ -58,9 +59,6 @@ SCOPE_SCHEMA = """{
     "estimates": {
       "demo_days": {"value": 6, "reasoning": "..."},
       "framing_days": {"value": 10, "reasoning": "..."},
-      "trim_days": {"value": 8, "reasoning": "..."},
-      "finish_plumbing_hours": {"value": 24, "reasoning": "..."},
-      "finish_electrical_hours": {"value": 40, "reasoning": "..."},
       "appliance_install_hours": {"value": 6, "reasoning": "..."}
     }
   },
@@ -101,15 +99,21 @@ job's general tier for other rooms. A partial room still counts as a room. tall_
 rooms such as a two-story foyer. Give sf when you can estimate it; perimeter_lf only from Rendr.
 - addition_sf is all new heated SF. foundation_sf is only the new ground-floor footprint that needs \
 footings: 0 for a second-story addition built on the existing house; for a two-story addition, its \
-footprint, not both floors.
+footprint, not both floors. foundation_perimeter_lf: the LF of new footing (usually 3 sides of an \
+addition; the 4th is the existing house) when you can estimate it. framed_sf: SF of walls being \
+framed or opened up (new walls, the addition, opened walls), NOT the whole renovated area; framing \
+materials and insulation are priced on it.
+- gutters: number of gutter units (about 1-2 for a porch or addition, 5-7 for a whole house), 0 if \
+no gutter work.
+- plumbing.fixture_count: every plumbing fixture being installed (toilets, sinks, showers, tubs, \
+dishwasher, laundry, tub filler). Leave 0 to let the engine count by room.
 - A typical bathroom has 4 plumbing fixtures (toilet, sink, shower, tub or second sink). Classify each \
 fixture's plumbing work: swap_same (same location), new_in_footprint (moved within the existing house), \
 tub_in_footprint, new_outside_footprint / tub_outside_footprint (in an addition; also count \
 water_sewer_10lf runs). cut_and_cap is one per fixture removed before demo.
 - tile_areas: one per tiled space. kind = primary_bath (large primary bath), hall_bath_tub (hall bath \
 with a tile tub surround), backsplash (kitchen backsplash), small (bath floor only, shower only, \
-laundry, etc.). prep = walk_in_shower or tub_surround when that space has one. material_sf = the tile \
-SF for that space (floor + shower walls + surround), estimated.
+laundry, etc.). prep = walk_in_shower or tub_surround when that space has one.
 - fixtures: list each appliance, plumbing fixture and light fixture named or clearly implied by the \
 scope (a remodeled kitchen implies refrigerator, range or cooktop + oven, dishwasher, microwave, hood; \
 a bath implies toilet, sink(s), faucet(s), shower valve/trim, tub filler if a tub). Use the item names \
@@ -121,9 +125,9 @@ the brand is one of the tier's own brands, leave unit_price null; the tier table
 search for nothing else.
 - estimates: OCC has no fixed rule yet for these, so estimate them from the scope and explain the \
 math in one sentence each: demo_days (demolition crew days at $300/day), framing_days (framing crew \
-days at $300/day), trim_days (interior trim carpenter days at $425/day), finish_plumbing_hours, \
-finish_electrical_hours, appliance_install_hours (all at $75/hr). Omit an estimate whose work isn't \
-in scope.
+days at $450/day; Tyler's ballparks run 5-12 days small, 16-30 medium, 36-40 for additions), \
+appliance_install_hours ($75/hr, about 16 hrs per kitchen). Trim days and finish plumbing/electrical \
+hours come from the engine's per-room rules. Omit an estimate whose work isn't in scope.
 - sources: for every number you set, say where it came from ("tool page", "scope summary video", \
 "walkthrough video 3", "comment Oct 6", "estimated from ...").
 - conflicts: every place two inputs disagreed, and which one you used.
