@@ -316,6 +316,13 @@ built-in LF swings both ways, and room counts above what the visit shows are kep
   needs the real product levels and prices for windows, exterior doors and front doors (likely a
   window/door section in `ballpark_tier_prices.json` with a level picked per job, like fixtures).
 
+## Review doc for Tyler (Nov 17, 2026)
+
+Everything open from today is in one doc for Tyler to comment on: "Ballpark Tool - Questions for
+Tyler" (https://claude.ai/artifact/EP68zMBZLk95rAY4Yh7WGt). It covers the dry-run results, the window and
+door levels draft, 13 questions only he can answer, every rule taken from his ballparks (to confirm or
+correct), and what to re-evaluate. Fold his answers back into the rules and rerun the five jobs.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
