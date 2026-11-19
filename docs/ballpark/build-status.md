@@ -336,7 +336,7 @@ Jason and Tyler went through the review doc (Granola, "Ballpark pricing tool", N
 - **Tile:** install $1,200 per unit (5 per primary bath, 3 per other bath). Tile material is a separate
   allowance: $5,500 primary, $2,200 hall/ensuite, $1,800 kitchen backsplash.
 - **Preconstruction:** share of the contract price: 2% under $250K, 1.5% to $600K, 1% over (plans,
-  pricing, selections). Still added only when plans are needed.
+  pricing, selections). Jason, Nov 19: on every job (PR #42).
 - **Survey:** $1,850, only when someone says one is needed. Engineering $1,850 letter / $2,800 full (kept).
 - **Site and grading:** 1 each by default; more on a sloped lot.
 - **Exterior paint:** a dictated whole-house figure goes in as a lump and wins over unit pricing.
@@ -383,6 +383,17 @@ form entries, videos and photos read:
 - **Other gaps:** dumpsters at 1 per 2.5 weeks give 9 where Tyler entered 1 on McNelly/Taggart (8 on
   Greenway); preconstruction now prices on McNelly and Taggart (~$5-5.7K) where Tyler had none (he had
   it on Gentles $2,950 and Greenway $6,200).
+
+## Nov 19: precon on every job, pricing inputs sheet
+
+- **Preconstruction on every job (PR #42).** Jason: it covers estimating, plans and the dialed-in
+  estimate, so every ballpark carries it. Rates unchanged (2% / 1.5% / 1%); Jason named 2% and 1.5%,
+  the 1% over $600K tier is to confirm.
+- **Pricing inputs sheet** for Jason and Tyler: https://claude.ai/artifact/UVniKxtKAPNaCq4v4kRUbV
+  (Windows, Doors by type x fiberglass/wood, Tile allowances, Fixture allowances by tier). Today's
+  numbers are filled in; the yellow "Your number" columns are theirs. Once filled, wire them into
+  `ballpark_pricing.py` (doors need new types + material on the tool page in sales-lead-tool; the
+  front door with sidelights/transom replaces the $3,500 template Front Door line).
 
 ## Not done / open
 
