@@ -357,7 +357,32 @@ read no videos or photos (confidence low) and are not a fair comparison yet:
 | Gentles | $131,139 | $136,921 | +4.4% |
 | Barber | $655,952 | $684,367 | +4.3% |
 
-McNelly, Greenway and Taggart wait for a new CompanyCam token in Render; then rerun all five.
+New CompanyCam token (Personal Access Token, no expiry) put in Render the same day. Full rerun, same
+form entries, videos and photos read:
+
+| Job | Tyler's cost | Run 1 | After framed-SF fix (PR #41) |
+|---|---:|---:|---:|
+| Gentles | $131,139 | $130,451 (-0.5%) | not rerun |
+| Barber | $655,952 | $651,532 (-0.7%) | not rerun |
+| McNelly | $343,745 | $379,165 (+10.3%) | $379,300 (+10.3%) |
+| Greenway | $298,728 | $344,602 (+15.4%) | $328,806 (+10.1%) |
+| Taggart | $312,968 | $337,776 (+7.9%) | $364,715 (+16.5%) |
+
+- **Framed SF fix (PR #41):** the read was adding up wall surface area (Greenway 2,600 SF, Taggart 900,
+  McNelly 600 vs Tyler's 1,000 / 400 / 200). Framing materials and insulation are priced on it. The
+  rule now says floor area of the framed/reframed space. After: Greenway 1,750 (addition + detached
+  garage), McNelly 400, Taggart 1,040 (840 SF converted + 200).
+- **Run-to-run swing:** Taggart moved $27K between two runs with the same inputs (the second read added
+  a 2-ton HVAC system $10K, gutters $6K, more LVP and foundation waterproofing). Expect about +/-8% from
+  the read alone.
+- **Plumbing double-count (open, for Tyler):** McNelly carries General Plumbing 17 x $1,200 AND swap 8 x
+  $625 AND new-location 9 x $1,325 ($37K rough plumbing vs Tyler's $17K, 12 x General Plumbing only).
+  Tyler's budgets use General Plumbing per fixture and the swap/move lines as 1-each tokens (Barber,
+  Gentles) or a few (Taggart 4 swap + 1 move with only 2 General). Needs his rule: which line carries
+  a fixture.
+- **Other gaps:** dumpsters at 1 per 2.5 weeks give 9 where Tyler entered 1 on McNelly/Taggart (8 on
+  Greenway); preconstruction now prices on McNelly and Taggart (~$5-5.7K) where Tyler had none (he had
+  it on Gentles $2,950 and Greenway $6,200).
 
 ## Not done / open
 
