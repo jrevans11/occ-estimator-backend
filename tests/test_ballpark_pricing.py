@@ -84,7 +84,7 @@ class PrepAndManagement(unittest.TestCase):
 
     def test_removed_lines_absent(self):
         names = {l["name"] for l in lines(self.r)}
-        for gone in ("Interior Design", "Preconstruction costs", "Site Work", "Grading",
+        for gone in ("Interior Design", "Site Work", "Grading",
                      "Interior Concrete structures", "Whole Home Audio System", "Exterior Shutters"):
             self.assertNotIn(gone, names)
 
@@ -259,6 +259,11 @@ class SiteLines(unittest.TestCase):
         full = run({"duration_weeks": 15, "site": {"engineering": "full"}})
         self.assertEqual(one(full, "engineering")["cost"], 2800)
         self.assertEqual(lines(run({"duration_weeks": 15, "site": {"engineering": "none"}}), "engineering"), [])
+
+    def test_precon_on_every_job(self):
+        # Jason, Nov 19 2026: preconstruction goes on every job, plans or not.
+        r = run({"duration_weeks": 15, "rooms": [{"type": "kitchen", "tier": "Quality"}]})
+        self.assertAlmostEqual(one(r, "preconstruction")["price"], 0.02 * r["total_price"], delta=2)
 
 
 class Exterior(unittest.TestCase):
