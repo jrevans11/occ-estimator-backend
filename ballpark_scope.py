@@ -39,12 +39,15 @@ SCOPE_SCHEMA = """{
                  "foundation_brick_lf": 0, "windows": 0, "window_tier": null, "exterior_doors": 0,
                  "front_door": false, "gutters": 0, "driveway_sf": 0, "garage_doors_single": 0,
                  "garage_doors_double": 0, "porch_screening_lf": 0, "full_exterior_repaint": false,
-                 "paint_units": 0,
+                 "paint_units": 0, "paint_amount": null, "original_wood_windows": false,
+                 "specialty_windows": 0,
+                 "door_types": {"single": 0, "sidelights": 0, "french": 0, "sliding": 0, "specialty": 0},
                  "brick_chimney": false, "landscaping": false, "metal_roof_accents": false},
     "flooring": {"tile_sf": 0, "hardwood_new_sf": 0, "hardwood_refinish_sf": 0, "lvp_sf": 0, "carpet_sf": 0},
     "tile_areas": [ {"name": "Primary bath", "kind": "primary_bath|hall_bath_tub|backsplash|small",
                      "tier": "Premium", "prep": "walk_in_shower|tub_surround|null"} ],
-    "cabinetry": {"lowers_lf": 0, "uppers_lf": 0, "full_height_lf": 0, "vanities_lf": 0, "builtins_lf": 0},
+    "cabinetry": {"lowers_lf": 0, "uppers_lf": 0, "full_height_lf": 0, "vanities_lf": 0, "builtins_lf": 0,
+                  "builtins_low_lf": 0},
     "countertops": [ {"name": "Kitchen", "sf": 60, "tier": "Premium"} ],
     "closets": {"primary": 0, "small": 0},
     "mirrors": 0, "interior_doors": 0, "pocket_doors": 0, "glass_shower_doors": 0,
@@ -120,8 +123,23 @@ materials and insulation are priced on it.
 usually means a full repaint). Otherwise, when only part of the exterior is painted (an addition, a \
 porch, new trim, touch-up to match), set exterior.paint_units: Tyler's $1,200 units, about 1-3 for a \
 porch or small area, 3-8 for an addition, 10-20 for most of the house. Exterior paint discussed on \
-site is in scope unless it was explicitly excluded.
-- cabinetry.builtins_lf: LF of custom built-ins and other cabinetry outside the kitchen and vanities \
+site is in scope unless it was explicitly excluded. When Jason or Tyler states a dollar number for the \
+exterior paint ("painting the whole house is about $19,000"), put it in exterior.paint_amount; it wins \
+over the units and the full-repaint rule.
+- Windows: exterior.windows is the number of window UNITS. A large unit (an old slider, a big picture \
+window, a mulled pair) counts as 2. window_tier is the window level: Quality (vinyl, about $600), \
+Premium (Andersen 100 Series or similar, about $1,200), Luxury (Andersen 400 Series or similar, about \
+$2,500). Set it from what was said on site; leave it null to use the job's tier. \
+original_wood_windows = true when new windows must match the home's original wood windows (priced at \
+Luxury, and interior paint goes up for the sash). specialty_windows: count of odd units (unusual \
+size or shape, a pass-through) that Tyler prices by hand.
+- Exterior doors: count each by type in exterior.door_types: single (a plain single door unit, about \
+$900), sidelights (a door unit with sidelights and/or a transom, about $1,150), french, sliding, and \
+specialty (custom or unusual units Tyler prices by hand). exterior_doors is the total. front_door \
+stays true only for an upgraded front entry door.
+- cabinetry.builtins_lf: LF of FULL-HEIGHT custom built-ins ($1,100/LF); cabinetry.builtins_low_lf: LF \
+of built-in uppers and lowers or base-only built-ins ($625/LF). Measure from the plans when they are \
+available. Built-ins means custom built-ins and other cabinetry outside the kitchen and vanities \
 (bookcases, mudroom lockers, window seats, bar or pantry cabinetry, entertainment walls, laundry \
 cabinets). Estimate the LF whenever any are mentioned (a mudroom bench and lockers about 6-8 LF, a pair \
 of bookcases flanking a fireplace about 8-12 LF, a pantry or bar wall about 10-15 LF).
@@ -132,8 +150,12 @@ addition, up to 5-6 + 8 for a big addition on a sloped lot. Leave them null to l
 each when there's ground work; 0 when there is truly none. engineering: "letter" when a load-bearing \
 wall or beam is changed, "full" for an addition or major structural change, else "none". \
 preconstruction: true when the job needs plans or drawings before construction (additions, porches, \
-new structures, major layout changes). survey: true when property lines, setbacks or an easement \
-came up. Tyler prices preconstruction and the survey himself.
+new structures, major layout changes); the engine prices it as a share of the contract. survey: true \
+ONLY when someone says a lot survey is needed (clients often already have one); a mention of \
+setbacks or property lines alone goes in open_questions, not survey. Grading units go up with the \
+slope of the lot.
+- mechanical.full_rewire: true only when a full rewire was called for on site (for example "we need \
+a full rewire"). Plaster coming off is not by itself a rewire; put it in open_questions.
 - gutters: number of gutter units (about 1-2 for a porch or addition, 5-7 for a whole house), 0 if \
 no gutter work.
 - plumbing.fixture_count: every plumbing fixture being installed (toilets, sinks, showers, tubs, \

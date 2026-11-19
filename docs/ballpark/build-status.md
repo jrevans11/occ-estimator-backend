@@ -316,12 +316,38 @@ built-in LF swings both ways, and room counts above what the visit shows are kep
   needs the real product levels and prices for windows, exterior doors and front doors (likely a
   window/door section in `ballpark_tier_prices.json` with a level picked per job, like fixtures).
 
-## Review doc for Tyler (Nov 17, 2026)
+## Review doc for Tyler (Nov 17, 2026) - answered Nov 19
 
 Everything open from today is in one doc for Tyler to comment on: "Ballpark Tool - Questions for
 Tyler" (https://claude.ai/artifact/EP68zMBZLk95rAY4Yh7WGt). It covers the dry-run results, the window and
 door levels draft, 13 questions only he can answer, every rule taken from his ballparks (to confirm or
 correct), and what to re-evaluate. Fold his answers back into the rules and rerun the five jobs.
+
+## Tyler's answers (Nov 19, 2026 meeting)
+
+Jason and Tyler went through the review doc (Granola, "Ballpark pricing tool", Nov 19). Now in the engine:
+
+- **Markup:** flat 28% on every job. Brackets removed.
+- **Windows** (material per unit, install $300 each): Quality (vinyl) $600, Premium (Andersen 100) $1,200,
+  Luxury (Andersen 400) $2,500. A large unit (old slider, picture window, mulled pair) counts as 2.
+  Matching original wood windows: Luxury, plus 10% on interior paint. Specialty windows: $0, priced in review.
+- **Exterior doors by type:** single $900, sidelights/transom $1,150, French and sliding $0 placeholders
+  (Tyler said "higher", no number), specialty $0 placeholder.
+- **Tile:** install $1,200 per unit (5 per primary bath, 3 per other bath). Tile material is a separate
+  allowance: $5,500 primary, $2,200 hall/ensuite, $1,800 kitchen backsplash.
+- **Preconstruction:** share of the contract price: 2% under $250K, 1.5% to $600K, 1% over (plans,
+  pricing, selections). Still added only when plans are needed.
+- **Survey:** $1,850, only when someone says one is needed. Engineering $1,850 letter / $2,800 full (kept).
+- **Site and grading:** 1 each by default; more on a sloped lot.
+- **Exterior paint:** a dictated whole-house figure goes in as a lump and wins over unit pricing.
+- **Built-ins:** $1,100/LF full height (kept), new $625/LF for uppers and lowers. Measure from plans.
+- **Full rewire:** only when dictated. CM stays $900/week. Fixture allowances unchanged.
+- **Tool page:** window level chips, wood-window match, specialty windows, door type counts, exterior
+  paint $, built-ins uppers/lowers LF.
+
+Judgement calls (Jason to confirm): Premium/Luxury windows at $1,200/$2,500 (Tyler also said "+50% /
++150%", which would be $900/$1,500); wood-window paint bump 10% (he said 5-10%); French/sliding doors
+have no price yet; precon only on plan jobs.
 
 ## Not done / open
 

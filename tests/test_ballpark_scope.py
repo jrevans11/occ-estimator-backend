@@ -30,6 +30,28 @@ class Prompt(unittest.TestCase):
         self.assertIn("cabinetry.builtins_lf", self.p)
 
 
+class TylerNov19Rules(unittest.TestCase):
+    def setUp(self):
+        self.p = bs.system_prompt()
+
+    def test_new_schema_fields(self):
+        for k in ('"paint_amount"', '"original_wood_windows"', '"specialty_windows"', '"door_types"',
+                  '"builtins_low_lf"'):
+            self.assertIn(k, self.p)
+
+    def test_paint_windows_survey_rules(self):
+        self.assertIn("exterior.paint_amount", self.p)
+        self.assertIn("counts as 2", self.p)
+        self.assertIn("ONLY when someone says a lot survey is needed", self.p)
+
+    def test_door_types_merge_from_form(self):
+        merged = bs.merge_form({"exterior": {"exterior_doors": 3, "door_types": {"single": 3}}},
+                               {"exterior": {"door_types": {"french": 1}, "window_tier": "Luxury"}})
+        self.assertEqual(merged["exterior"]["door_types"]["french"], 1)
+        self.assertEqual(merged["exterior"]["door_types"]["single"], 3)
+        self.assertEqual(merged["exterior"]["window_tier"], "Luxury")
+
+
 class UserContent(unittest.TestCase):
     def test_duration_labelled_weeks(self):
         text = bs.build_user_content({"job": {"number": "00999"}}, {"duration_range": "20-25", "tier": "Premium"}, {})
