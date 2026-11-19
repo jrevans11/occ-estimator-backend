@@ -229,7 +229,8 @@ GRADING_UNIT = 600                # Tyler: Grading $600 x 1-8
 ENGINEERING = {"letter": 1850, "full": 2800}   # Frandsen engineering letter / McDowell engineering
 SURVEY = 1850                     # Tyler, Nov 19 2026: only when Jason says a survey is needed
 # Tyler, Nov 19 2026: preconstruction (plans, pricing, selections; ~90% drawings)
-# is a share of the contract price: (contract price ceiling, rate).
+# is a share of the contract price: (contract price ceiling, rate). Jason,
+# Nov 19 2026: it goes on every job, not only jobs with plans.
 PRECON_RATES = [(250000, 0.02), (600000, 0.015), (None, 0.01)]
 CRAWLSPACE_TREATMENT = 4500
 FRAMING_MATERIALS_PER_SF = 20
@@ -1194,8 +1195,8 @@ def _finish(b, scope, top_tier, punch_entered=False):
     b.add("warranty", 1, warranty,
           note=f"1% of ${subtotal:,.0f} cost before warranty, minimum ${WARRANTY_MIN:,}")
 
-    if (scope.get("site") or {}).get("preconstruction"):
-        _precon_line(b)
+    # Jason, Nov 19 2026: preconstruction goes on every job.
+    _precon_line(b)
 
     total_cost = b.cost()
     markup, margin = markup_bracket(total_cost)

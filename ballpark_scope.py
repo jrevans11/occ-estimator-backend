@@ -153,7 +153,8 @@ addition, up to 5-6 + 8 for a big addition on a sloped lot. Leave them null to l
 each when there's ground work; 0 when there is truly none. engineering: "letter" when a load-bearing \
 wall or beam is changed, "full" for an addition or major structural change, else "none". \
 preconstruction: true when the job needs plans or drawings before construction (additions, porches, \
-new structures, major layout changes); the engine prices it as a share of the contract. survey: true \
+new structures, major layout changes); this is for the notes only, the engine prices preconstruction \
+on every job as a share of the contract. survey: true \
 ONLY when someone says a lot survey is needed (clients often already have one); a mention of \
 setbacks or property lines alone goes in open_questions, not survey. Grading units go up with the \
 slope of the lot.
