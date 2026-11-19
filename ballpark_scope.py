@@ -116,9 +116,12 @@ rooms such as a two-story foyer. Give sf when you can estimate it; perimeter_lf 
 - addition_sf is all new heated SF. foundation_sf is only the new ground-floor footprint that needs \
 footings: 0 for a second-story addition built on the existing house; for a two-story addition, its \
 footprint, not both floors. foundation_perimeter_lf: the LF of new footing (usually 3 sides of an \
-addition; the 4th is the existing house) when you can estimate it. framed_sf: SF of walls being \
-framed or opened up (new walls, the addition, opened walls), NOT the whole renovated area; framing \
-materials and insulation are priced on it.
+addition; the 4th is the existing house) when you can estimate it. framed_sf: FLOOR AREA (SF) of \
+the space being framed or reframed, NOT wall surface area and NOT the whole renovated area; framing \
+materials and insulation are priced on it. Use the addition's (or new garage's) floor SF, plus \
+about 100-400 SF for interior walls moved or opened in the existing house. Tyler's budgets: 200 SF \
+for a bath or kitchen remodel with a wall or two moved, 400 SF for a larger interior reconfiguration, \
+about 1,000 SF for a 750 SF addition plus small reframes. Never add up wall heights times lengths.
 - Exterior paint: full_exterior_repaint = true when the whole house is being painted (new siding \
 usually means a full repaint). Otherwise, when only part of the exterior is painted (an addition, a \
 porch, new trim, touch-up to match), set exterior.paint_units: Tyler's $1,200 units, about 1-3 for a \

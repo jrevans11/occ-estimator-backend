@@ -44,6 +44,11 @@ class TylerNov19Rules(unittest.TestCase):
         self.assertIn("counts as 2", self.p)
         self.assertIn("ONLY when someone says a lot survey is needed", self.p)
 
+    def test_framed_sf_is_floor_area(self):
+        # Nov 19 rerun: reading framed_sf as wall surface gave Greenway 2,600 SF (Tyler 1,000).
+        self.assertIn("framed_sf: FLOOR AREA", self.p)
+        self.assertIn("NOT wall surface area", self.p)
+
     def test_door_types_merge_from_form(self):
         merged = bs.merge_form({"exterior": {"exterior_doors": 3, "door_types": {"single": 3}}},
                                {"exterior": {"door_types": {"french": 1}, "window_tier": "Luxury"}})
