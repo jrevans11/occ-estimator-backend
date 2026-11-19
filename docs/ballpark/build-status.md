@@ -349,6 +349,16 @@ Judgement calls (Jason to confirm): Premium/Luxury windows at $1,200/$2,500 (Tyl
 +150%", which would be $900/$1,500); wood-window paint bump 10% (he said 5-10%); French/sliding doors
 have no price yet; precon only on plan jobs.
 
+Rerun after the change (Nov 19), same form entries as Nov 17. **CompanyCam token expired**, so these
+read no videos or photos (confidence low) and are not a fair comparison yet:
+
+| Job | Tyler's cost | Tool cost | Diff |
+|---|---:|---:|---:|
+| Gentles | $131,139 | $136,921 | +4.4% |
+| Barber | $655,952 | $684,367 | +4.3% |
+
+McNelly, Greenway and Taggart wait for a new CompanyCam token in Render; then rerun all five.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
