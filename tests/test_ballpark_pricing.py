@@ -39,11 +39,9 @@ class RangeAndMarkup(unittest.TestCase):
         self.assertEqual(bp.price_range(412_750)["text"], "$400K – $450K")
         self.assertEqual(bp.price_range(958_815)["text"], "$950K – $1.05M")
 
-    def test_brackets_by_cost(self):
-        self.assertEqual(bp.markup_bracket(390_624), (0.28, 0.219))
-        self.assertEqual(bp.markup_bracket(390_625), (0.25, 0.200))
-        self.assertEqual(bp.markup_bracket(609_755), (0.25, 0.200))
-        self.assertEqual(bp.markup_bracket(609_756), (0.23, 0.187))
+    def test_flat_markup_every_size(self):   # Tyler + Jason, Nov 19 2026
+        for cost in (100_000, 390_625, 609_756, 2_000_000):
+            self.assertEqual(bp.markup_bracket(cost), (0.28, 0.219))
 
     def test_one_markup_on_every_line(self):
         r = run({"duration_weeks": 15, "punch_list_days": 2, "rooms": [{"type": "kitchen", "tier": "Premium", "sf": 200}]})
@@ -180,7 +178,8 @@ class Finishes(unittest.TestCase):
             {"name": "Kitchen", "kind": "backsplash", "tier": "Premium"},
             {"name": "Laundry floor", "kind": "small", "tier": "Quality"},
         ]})
-        self.assertEqual(one(r, "tile_primary")["cost"], 5700)
+        self.assertEqual(one(r, "tile_primary")["cost"], 5500)
+        self.assertTrue(one(r, "tile_primary")["allowance"])
         self.assertEqual(one(r, "tile_hall")["cost"], 2200)
         self.assertEqual(one(r, "tile_backsplash")["cost"], 1800)
         self.assertEqual(one(r, "tile_ceramic")["quantity"], 5 + 3 + 1)
@@ -198,6 +197,8 @@ class Finishes(unittest.TestCase):
         self.assertEqual(one(r, "cabinets_kitchen", "full height")["cost"], 4 * 1250)
         self.assertEqual(one(r, "vanities")["cost"], 6 * 625)
         self.assertEqual(one(r, "builtins")["cost"], 5 * 1100)
+        low = run({"duration_weeks": 15, "cabinetry": {"builtins_low_lf": 8}})
+        self.assertEqual(one(low, "builtins")["cost"], 8 * 625)
         self.assertEqual(lines(r, "cabinet_install"), [])
         self.assertEqual(lines(r, "cabinet_paint"), [])
         self.assertEqual(one(r, "countertops")["cost"], 50 * 237.5)
@@ -251,10 +252,10 @@ class SiteLines(unittest.TestCase):
     def test_engineering_precon_survey(self):
         r = run({"duration_weeks": 15, "site": {"engineering": "letter", "preconstruction": True, "survey": True}})
         self.assertEqual(one(r, "engineering")["cost"], 1850)
-        for key in ("preconstruction", "survey"):
-            line = one(r, key)
-            self.assertEqual(line["cost"], 0)
-            self.assertTrue(line["placeholder"])
+        self.assertEqual(one(r, "survey")["cost"], 1850)
+        precon = one(r, "preconstruction")
+        self.assertFalse(precon["placeholder"])
+        self.assertAlmostEqual(precon["price"], 0.02 * r["total_price"], delta=2)   # under $250K: 2%
         full = run({"duration_weeks": 15, "site": {"engineering": "full"}})
         self.assertEqual(one(full, "engineering")["cost"], 2800)
         self.assertEqual(lines(run({"duration_weeks": 15, "site": {"engineering": "none"}}), "engineering"), [])
@@ -263,8 +264,35 @@ class SiteLines(unittest.TestCase):
 class Exterior(unittest.TestCase):
     def test_window_tier_price_and_install(self):
         r = run({"duration_weeks": 15, "exterior": {"windows": 10, "window_tier": "Premium"}})
-        self.assertEqual(one(r, "windows")["cost"], 9000)
+        self.assertEqual(one(r, "windows")["cost"], 12000)
         self.assertEqual(one(r, "window_install")["cost"], 3000)
+        lux = run({"duration_weeks": 15, "exterior": {"windows": 2, "window_tier": "Quality"}})
+        self.assertEqual(one(lux, "windows")["cost"], 1200)
+
+    def test_original_wood_windows_luxury_and_paint_bump(self):
+        r = run({"duration_weeks": 15, "rooms": [{"type": "other", "tier": "Quality"}],
+                 "exterior": {"windows": 4, "window_tier": "Quality", "original_wood_windows": True}})
+        self.assertEqual(one(r, "windows")["cost"], 4 * 2500)
+        self.assertEqual(one(r, "int_paint")["cost"], 1210)
+
+    def test_specialty_windows_and_doors_are_placeholders(self):
+        r = run({"duration_weeks": 15, "exterior": {"specialty_windows": 1, "door_types": {"specialty": 2}}})
+        for key in ("specialty_windows", "specialty_doors"):
+            self.assertEqual(one(r, key)["cost"], 0)
+            self.assertTrue(one(r, key)["placeholder"])
+
+    def test_door_types(self):
+        r = run({"duration_weeks": 15, "exterior": {"door_types": {"single": 2, "sidelights": 1, "sliding": 1}}})
+        doors = lines(r, "ext_doors")
+        self.assertEqual(sorted(l["cost"] for l in doors), [0, 1150, 1800])
+        self.assertEqual(one(r, "ext_door_install")["quantity"], 4)
+        old = run({"duration_weeks": 15, "exterior": {"exterior_doors": 3}})
+        self.assertEqual(one(old, "ext_doors")["cost"], 2700)
+
+    def test_paint_amount_wins(self):
+        r = run({"duration_weeks": 15, "heated_sf": 2500,
+                 "exterior": {"paint_amount": 19000, "full_exterior_repaint": True}})
+        self.assertEqual(one(r, "ext_paint")["cost"], 19000)
 
     def test_partial_exterior_paint_units(self):
         r = run({"duration_weeks": 15, "exterior": {"paint_units": 13}})

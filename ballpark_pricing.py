@@ -21,8 +21,11 @@ Jason's Oct 27, 2026 answers to the spec's Recommended items:
 Nov 17, 2026: rates and quantity rules replaced with Tyler's observed practice
 on the 20 most recent real Preliminary Ballparks (docs/ballpark/case-studies/
 pricing-patterns.md). Jason: "use what Tyler does, then tweak it if needed."
-The markup bracket (spec section 7) was NOT changed: Tyler used 28% on most
-jobs of every size, but that is Jason's call and is flagged in the docs.
+
+Nov 19, 2026: Tyler's answers to the review doc (Granola "Ballpark pricing
+tool"): flat 28% markup, window levels $600 / $1,200 / $2,500, door types,
+tile lumps are allowances, preconstruction as a % of the contract, survey
+$1,850, built-ins $625 / $1,100 per LF, a dictated exterior paint number.
 
 Standard library only.
 """
@@ -199,6 +202,10 @@ EXTRA_LINES = {
                     "description": "Structural engineering for the work shown on the plans."},
     "survey": {"name": "Lot Survey", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
                "description": "Lot survey."},
+    "specialty_windows": {"name": "Specialty Windows", "phase": "4500", "cost_type": COST_TYPE_MATERIALS,
+                          "unit": "Each", "description": "Specialty window units, priced during review."},
+    "specialty_doors": {"name": "Specialty Exterior Doors", "phase": "4500", "cost_type": COST_TYPE_MATERIALS,
+                        "unit": "Each", "description": "Specialty exterior door units, priced during review."},
 }
 
 # ── Rates set by Tyler and Jason (spec section 6) ───────────────────────────
@@ -220,6 +227,10 @@ DEMO_PER_DAY = 300
 SITE_WORK_UNIT = 800              # Tyler: Site Work $800 x 1-6 on 12 of 20 ballparks
 GRADING_UNIT = 600                # Tyler: Grading $600 x 1-8
 ENGINEERING = {"letter": 1850, "full": 2800}   # Frandsen engineering letter / McDowell engineering
+SURVEY = 1850                     # Tyler, Nov 19 2026: only when Jason says a survey is needed
+# Tyler, Nov 19 2026: preconstruction (plans, pricing, selections; ~90% drawings)
+# is a share of the contract price: (contract price ceiling, rate).
+PRECON_RATES = [(250000, 0.02), (600000, 0.015), (None, 0.01)]
 CRAWLSPACE_TREATMENT = 4500
 FRAMING_MATERIALS_PER_SF = 20
 FRAMING_LABOR_PER_DAY = 450
@@ -234,9 +245,18 @@ FINISH_ELECTRICAL_HRS_PER_ROOM = 1.5
 RECESSED_PER_ROOM = 1.5
 HVAC_PER_TON = 5000
 NEW_DUCTWORK = 7500
-WINDOW_PRICE = {"Quality": 600, "Premium": 900, "Luxury": 1800}
+# Tyler, Nov 19 2026: three window levels. A large unit (old slider, big
+# picture window) counts as 2 windows. Original wood windows to match = Luxury,
+# plus a bump on interior paint for painting the sash.
+WINDOW_PRICE = {"Quality": 600, "Premium": 1200, "Luxury": 2500}
 WINDOW_PRODUCT = {"Quality": "vinyl", "Premium": "Andersen 100 Series", "Luxury": "Andersen 400 Series"}
 WINDOW_INSTALL = 300
+WOOD_WINDOW_PAINT_BUMP = 0.10     # Tyler: "add 5 to 10% of the paint price"
+# Tyler, Nov 19 2026: exterior door unit by type. French and sliding are
+# "higher" with no number yet, so they come in as $0 for review.
+EXT_DOOR_PRICE = {"single": 900, "sidelights": 1150, "french": None, "sliding": None}
+EXT_DOOR_LABEL = {"single": "single door unit", "sidelights": "door unit with sidelights or transom",
+                  "french": "French door unit", "sliding": "sliding door unit"}
 GARAGE_DOOR_SINGLE = 3500
 GARAGE_DOOR_DOUBLE = 7200
 EXT_PAINT_PER_HEATED_SF = 8
@@ -255,12 +275,15 @@ FLOORING = {"hardwood": 10.25, "hardwood_finishing": 3.75, "lvp": 6.50, "lvp_ins
 INT_PAINT_ROOM = 1100
 INT_PAINT_TALL_ROOM = 2000
 PAINT_MATERIALS_UNIT = 450
-TILE_LABOR = {"primary_bath": 5700, "hall_bath_tub": 2200, "backsplash": 1800, "small": 1200}
+# Tyler, Nov 19 2026: the per-space lumps are tile material ALLOWANCES; the
+# Ceramic Tile Installation units ($1,200, 5 per primary bath, 3 per other) are install.
+TILE_LABOR = {"primary_bath": 5500, "hall_bath_tub": 2200, "backsplash": 1800, "small": 1200}
 CERAMIC_TILE_UNIT = 1200
 CERAMIC_UNITS = {"primary_bath": 5, "hall_bath_tub": 3, "backsplash": 0, "small": 1}
 CABINET_PER_LF = 625
 FULL_HEIGHT_PER_LF = 1250
-BUILTINS_PER_LF = 1100
+BUILTINS_PER_LF = 1100            # full-height built-ins
+BUILTINS_LOW_PER_LF = 625         # Tyler, Nov 19 2026: built-in uppers/lowers
 COUNTERTOP_PER_SF = {"Quality": 105, "Premium": 125, "Luxury": 237.50}
 BATH_HARDWARE_FIRST = 950         # Tyler: $950 on a one-bath job
 BATH_HARDWARE_EACH_MORE = 650     # 2 baths = $1,600, matching his multi-bath jobs
@@ -287,12 +310,10 @@ DURATION_RANGES = {   # tool-page dropdown -> midpoint weeks
 DEFAULT_WEEKS_SINGLE_SPACE = 15
 DEFAULT_WEEKS_WHOLE_HOME = 32.5
 
-# Markup bracket by total job cost (spec section 7).
-BRACKETS = [
-    (390625, 0.28, 0.219),
-    (609756, 0.25, 0.200),
-    (None, 0.23, 0.187),
-]
+# Markup: flat 28% on every job (Tyler and Jason, Nov 19 2026; the old
+# 28/25/23% bracket is gone). Tyler adjusts it by hand in review.
+MARKUP = 0.28
+MARGIN = round(MARKUP / (1 + MARKUP), 3)   # 0.219
 
 ROOM_KINDS = ("kitchen", "primary_bath", "hall_bath", "powder", "other")
 DEFAULT_CEILING_FT = 8
@@ -462,10 +483,8 @@ def by_cost(table, total_cost):
 
 
 def markup_bracket(total_cost):
-    for ceiling, markup, margin in BRACKETS:
-        if ceiling is None or total_cost < ceiling:
-            return markup, margin
-    return BRACKETS[-1][1], BRACKETS[-1][2]
+    """Flat 28% on every job size (kept as a function so callers don't change)."""
+    return MARKUP, MARGIN
 
 
 # ── The engine ──────────────────────────────────────────────────────────────
@@ -568,12 +587,9 @@ def _site_lines(b, scope, ext):
         b.add("engineering", 1, ENGINEERING[eng],
               name="Engineering letter" if eng == "letter" else "Engineering",
               note=f"structural work calls for {'an engineering letter' if eng == 'letter' else 'engineering'}")
-    if site.get("preconstruction"):
-        b.add("preconstruction", 1, placeholder="plans or drawings needed before construction; Tyler to price "
-                                                "($1,500-$10,500 on his ballparks)")
+    # Preconstruction is priced in _finish as a share of the contract price.
     if site.get("survey"):
-        b.add("survey", 1, placeholder="property lines, setbacks or an easement came up; Tyler to price "
-                                       "($1,850 on Gentles)")
+        b.add("survey", 1, SURVEY, note=f"a lot survey is needed (${SURVEY:,})")
 
 
 def _days_line(b, scope, key, est_key, rate, label):
@@ -812,8 +828,10 @@ def price_scope(scope, template, tier_prices=None):
         line_key = {"primary_bath": "tile_primary", "hall_bath_tub": "tile_hall",
                     "backsplash": "tile_backsplash"}.get(kind)
         if line_key:
-            b.add(line_key, 1, TILE_LABOR[kind], unit="",
-                  note=f"{label}: {kind.replace('_', ' ')} lump ${TILE_LABOR[kind]:,}")
+            b.add(line_key, 1, TILE_LABOR[kind], unit="", allowance=True,
+                  description=f"Tile material allowance for the {label.lower()}: ${TILE_LABOR[kind]:,}. "
+                              f"Installation is a separate line.",
+                  note=f"{label}: tile allowance ${TILE_LABOR[kind]:,}")
         if CERAMIC_UNITS[kind]:
             ceramic_units += CERAMIC_UNITS[kind]
             ceramic_parts.append(f"{label} {CERAMIC_UNITS[kind]}")
@@ -833,20 +851,40 @@ def price_scope(scope, template, tier_prices=None):
     if ext.get("brick_chimney"):
         b.add("chimney", 1, None)
     windows = _count(ext.get("windows"))
+    wood_match = bool(ext.get("original_wood_windows"))
     if windows:
-        wt = _tier(ext.get("window_tier"), top_tier)
+        wt = "Luxury" if wood_match else _tier(ext.get("window_tier"), top_tier)
         b.add("windows", windows, WINDOW_PRICE[wt], allowance=True, unit="Each",
               name=f"Windows - {wt} allowance ({WINDOW_PRODUCT[wt]}, ${WINDOW_PRICE[wt]:,} each)",
               description=f"Window package, {WINDOW_PRODUCT[wt]}, to match the home unless the client "
                           f"chooses otherwise. Allowance is ${WINDOW_PRICE[wt]:,} per window; installation "
                           f"is a separate line.",
-              note=f"{windows} windows, {wt} tier" + ("" if ext.get("window_tier") else " (job's highest tier)"))
+              note=f"{windows} window units, {wt} level" + (
+                  " (original wood windows to match)" if wood_match else
+                  "" if ext.get("window_tier") else " (job's highest tier)") + "; large units count as 2")
         b.add("window_install", windows, WINDOW_INSTALL, unit="Each", description="Installation of windows.")
-    ext_doors = _count(ext.get("exterior_doors"))
+    if _count(ext.get("specialty_windows")):
+        b.add("specialty_windows", _count(ext["specialty_windows"]),
+              placeholder="specialty window (unusual size or shape); Tyler prices it in review")
+    door_types = ext.get("door_types") or {}
+    typed = {k: _count(door_types.get(k)) for k in EXT_DOOR_PRICE if _count(door_types.get(k))}
+    if not typed and _count(ext.get("exterior_doors")):
+        typed = {"single": _count(ext["exterior_doors"])}
+    for kind, n in typed.items():
+        price = EXT_DOOR_PRICE[kind]
+        if price is None:
+            b.add("ext_doors", n, name=f"Exterior Doors - {EXT_DOOR_LABEL[kind]}",
+                  placeholder=f"{n} {EXT_DOOR_LABEL[kind]}(s); no standard price yet, Tyler prices it in review")
+        else:
+            b.add("ext_doors", n, price, name=f"Exterior Doors - {EXT_DOOR_LABEL[kind]}",
+                  note=f"{n} x ${price:,} ({EXT_DOOR_LABEL[kind]})")
+    ext_doors = sum(typed.values())
     if ext_doors:
-        b.add("ext_doors", ext_doors, None)
         b.add("ext_door_install", ext_doors, None)
         b.add("ext_door_hw", ext_doors, None)
+    if _count(door_types.get("specialty")):
+        b.add("specialty_doors", _count(door_types["specialty"]),
+              placeholder="specialty exterior door; Tyler prices it in review")
     if ext.get("front_door"):
         b.add("front_door", 1, None)
         b.add("front_door_hw", 1, None)
@@ -864,7 +902,11 @@ def price_scope(scope, template, tier_prices=None):
         b.add("ext_trim_materials", lf, None, unit="Linear Feet",
               note=f"{lf:g} LF entered; the template prices trim materials per SF, so LF is used as SF")
         b.add("ext_trim_labor", lf, None)
-    if ext.get("full_exterior_repaint"):
+    if _num(ext.get("paint_amount")) > 0:
+        amount = _num(ext["paint_amount"])
+        b.add("ext_paint", 1, amount, unit="Each",
+              note=f"${amount:,.0f} exterior paint number given on site")
+    elif ext.get("full_exterior_repaint"):
         heated = _num(scope.get("heated_sf"))
         if heated > 0:
             b.add("ext_paint", heated, EXT_PAINT_PER_HEATED_SF, unit="Square Feet",
@@ -942,11 +984,15 @@ def price_scope(scope, template, tier_prices=None):
         b.note("5000", f"{_num(floors['tile_sf']):g} SF of tile floor is priced in 5300 Tile, not here")
     regular = sum(1 for r in rooms if not r.get("tall_ceiling"))
     tall = sum(1 for r in rooms if r.get("tall_ceiling"))
+    bump = 1 + WOOD_WINDOW_PAINT_BUMP if (wood_match and windows) else 1
+    bump_note = f" + {WOOD_WINDOW_PAINT_BUMP:.0%} for painting wood window sash" if bump > 1 else ""
     if regular:
-        b.add("int_paint", regular, INT_PAINT_ROOM, unit="Rooms", note=f"{regular} rooms x ${INT_PAINT_ROOM:,}")
+        b.add("int_paint", regular, INT_PAINT_ROOM * bump, unit="Rooms",
+              note=f"{regular} rooms x ${INT_PAINT_ROOM:,}{bump_note}")
     if tall:
-        b.add("int_paint", tall, INT_PAINT_TALL_ROOM, unit="Rooms", name="Interior Paint - tall-ceiling rooms (18 ft+)",
-              note=f"{tall} tall rooms x ${INT_PAINT_TALL_ROOM:,}")
+        b.add("int_paint", tall, INT_PAINT_TALL_ROOM * bump, unit="Rooms",
+              name="Interior Paint - tall-ceiling rooms (18 ft+)",
+              note=f"{tall} tall rooms x ${INT_PAINT_TALL_ROOM:,}{bump_note}")
     if rooms:
         n = 1 if len(rooms) < 20 else math.ceil(len(rooms) / 6)
         b.add("paint_materials", n, PAINT_MATERIALS_UNIT,
@@ -957,6 +1003,7 @@ def price_scope(scope, template, tier_prices=None):
     full_height = _num(cab.get("full_height_lf"))
     vanities = _num(cab.get("vanities_lf"))
     builtins = _num(cab.get("builtins_lf"))
+    builtins_low = _num(cab.get("builtins_low_lf"))
     if lowers_uppers:
         b.add("cabinets_kitchen", lowers_uppers, CABINET_PER_LF,
               note=f"{_num(cab.get('lowers_lf')):g} LF lowers + {_num(cab.get('uppers_lf')):g} LF uppers")
@@ -965,8 +1012,12 @@ def price_scope(scope, template, tier_prices=None):
     if vanities:
         b.add("vanities", vanities, CABINET_PER_LF)
     if builtins:
-        b.add("builtins", builtins, BUILTINS_PER_LF, note=f"{builtins:g} LF x ${BUILTINS_PER_LF:,}")
-    cab_lf = lowers_uppers + full_height + vanities + builtins
+        b.add("builtins", builtins, BUILTINS_PER_LF, note=f"{builtins:g} LF full height x ${BUILTINS_PER_LF:,}")
+    if builtins_low:
+        b.add("builtins", builtins_low, BUILTINS_LOW_PER_LF,
+              name="Custom Built Ins and Other Cabinetry - uppers and lowers",
+              note=f"{builtins_low:g} LF uppers/lowers x ${BUILTINS_LOW_PER_LF:,}")
+    cab_lf = lowers_uppers + full_height + vanities + builtins + builtins_low
     if cab_lf:
         # No Cabinet Installation / Cabinet Painting lines: Tyler used them on
         # 3 and 1 of ~10 cabinet jobs; his $625/LF reads as installed and finished.
@@ -1105,6 +1156,20 @@ def _sized_lines(scope, top_tier, job_cost, punch_entered):
     return out
 
 
+def _precon_line(b):
+    """Preconstruction (plans, pricing, selections) as a share of the contract
+    price, Tyler's Nov 19 2026 rule: 2% under $250K, 1.5% to $600K, 1% above.
+    The contract price includes this line, so solve P = rate x (rest + P)."""
+    rest_price = b.cost() * (1 + MARKUP)
+    rate = by_cost(PRECON_RATES, rest_price)
+    price = rate * rest_price / (1 - rate)
+    rate = by_cost(PRECON_RATES, rest_price + price)
+    price = rate * rest_price / (1 - rate)
+    b.add("preconstruction", 1, round(price / (1 + MARKUP), 2), unit="Each",
+          note=f"{rate:.1%} of the ~${(rest_price + price) / 1000:,.0f}K contract price "
+               f"(plans, pricing and selections)")
+
+
 def _finish(b, scope, top_tier, punch_entered=False):
     base = b.cost()
     template_cost = {"selection": (b.template.item("selection") or {}).get("unit_cost") or 125,
@@ -1128,6 +1193,9 @@ def _finish(b, scope, top_tier, punch_entered=False):
         b.add(key, qty, unit_cost, note=note)
     b.add("warranty", 1, warranty,
           note=f"1% of ${subtotal:,.0f} cost before warranty, minimum ${WARRANTY_MIN:,}")
+
+    if (scope.get("site") or {}).get("preconstruction"):
+        _precon_line(b)
 
     total_cost = b.cost()
     markup, margin = markup_bracket(total_cost)

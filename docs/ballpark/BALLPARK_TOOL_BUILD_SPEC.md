@@ -22,7 +22,7 @@ After a site visit on a **Renovation** or **Addition** job, Tyler opens the tool
 
 1. Gathers the site-visit material: CompanyCam video transcripts, photos and notes for the job's address, JobTread job comments, Rendr measurements if imported, and Tyler's dictation note from the tool page.
 2. Works out the scope and quantities.
-3. Builds the **budget** on the JobTread job from the Master Design Build Template, priced with the rules in section 6 and marked up by the bracket in section 7.
+3. Builds the **budget** on the JobTread job from the Master Design Build Template, priced with the rules in section 6 and marked up 28% (section 7).
 4. Writes the **ballpark written summary** (Project Overview, Further Items, Exclusions, price range, margin sentence) as an **internal Daily Log** on the job, formatted like the 00844 (Malm) Preliminary Ballpark, so Tyler can paste it into the ballpark document.
 5. **Stops there.** Tyler reviews the budget, creates the Preliminary Ballpark document and sends it himself.
 
@@ -294,16 +294,10 @@ Categories with no brands (cabinetry, flooring, hardware, doors, closets) use th
 
 ## 7. Markup, range and margin (Decided)
 
-**Markup bracket — picked by total job cost** (switched from price on Oct 27 to remove the gaps):
-
-| Job cost | Markup | Margin | ≈ Price line |
-|---|---|---|---|
-| under $390,625 | 28% | 21.9% | under $500K |
-| $390,625 – $609,756 | 25% | 20.0% | $500K – $750K |
-| over $609,756 | 23% | 18.7% | over $750K |
+**Markup: flat 28% on every job** (margin 21.9%). Tyler, Nov 19, 2026: the size brackets
+(28/25/23%) are gone.
 
 - One rate applies to the whole job: `unitPrice = unitCost × (1 + markup)`.
-- **No price floor** at the bracket edges. A slightly bigger job may price lower; Tyler reviews.
 - Design-build is cost-plus. Allowances are stated to clients at **cost**.
 
 **Price range** for the summary:
@@ -312,7 +306,7 @@ Categories with no brands (cabinetry, flooring, hardware, doors, closets) use th
 - Display like Malm: "$950K – $1.05M".
 - Worked examples: $186,400 → $180K – $210K; $412,750 → $400K – $450K; $958,815 (Malm) → $950K – $1.05M.
 
-**Footer margin sentence:** keep it; fill in the bracket's margin (21.9% / 20.0% / 18.7%).
+**Footer margin sentence:** keep it; 21.9% margin on every job.
 
 ---
 
