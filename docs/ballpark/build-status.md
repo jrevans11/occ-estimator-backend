@@ -427,6 +427,46 @@ Jason went through the pricing inputs sheet; the sheet's "Your number" columns n
   If Tyler has one, point `tile_materials` at it.
 - Fixture allowances: kept.
 
+## Nov 20: five dry runs on today's rules (after PR #43 and #44)
+
+All five ran clean on Render (dry run, nothing written). Claude cost $0.21-0.32 a run.
+
+| Job | Tyler | Nov 19 run | Nov 20 run | vs Tyler |
+|---|---|---|---|---|
+| Gentles 00895 | $131,139 | $130,451 | $138,892 | +5.9% |
+| Barber 00892 | $655,952 | $651,532 | $644,298 | -1.8% |
+| McNelly 00845 | $343,745 | $379,300 | $346,150 | +0.7% |
+| Greenway 00822 | $298,728 | $328,806 | $305,122 | +2.1% |
+| Taggart 00835 | $312,968 | $364,715 | $317,461 | +1.4% |
+
+- Plumbing tokens work: General Plumbing carries the count, swap/new/tub lines sit at 1 each.
+- Gentles is up mostly from the new Tile Materials line (190 SF x $17.50 Premium).
+- **Barber hall baths:** the 4 secondary baths have tiled walk-in showers, and the read put them under
+  "small" (prompt says small = "shower only"). Result: 5 Ceramic Tile Installation units at $1,200 and
+  50 SF of material each, no Hall Bath Tile line (Tyler: 5 x $2,200). McNelly's tub-surround hall baths
+  came out right. Possible fix: hall_bath = any full secondary bath with a tiled tub surround or walk-in
+  shower; small = floor-only areas, laundry, powder. Changes pricing, so waiting on Jason.
+- Smaller differences: McNelly windows read as 4 Luxury ($2,500) vs Tyler's 10 at $600, and 8 interior
+  doors vs 4; Taggart windows Quality $600 vs Tyler $1,100 and front door $3,500 vs $5,500; Greenway
+  garage door $7,200 vs Tyler $4,300. Taggart and McNelly totals still land within 1.5%.
+- **CompanyCam gap found:** on Woods, Strawderman and Huntington, Tyler's photos are in a separate
+  project he created, and the project linked to the JobTread job is empty. The tool reads the linked
+  project and only searches by address when there is no link, so it would read nothing there.
+- **Model:** scope read runs on Claude Opus 5.5 at medium effort (`scope_quickpass.py`, overridable by
+  Render SCOPE_MODEL / SCOPE_EFFORT). Kept: misses come from the read rules, not the model, and
+  Sonnet would save about $0.10 a run.
+
+### Next dry-run candidates (Tyler ballparks with usable site-visit material)
+
+No Tyler ballpark is newer than Barber (Nov 16). Each needs a tool-page form entered first.
+
+- **Malm 00844:** strongest. 9 videos (~5.5 min), all tile types, windows, front and exterior doors.
+- **Groenhof 00676:** good fit for today's changes. 2 videos, windows, exterior door, primary tile,
+  General Plumbing 3 plus swap/new/tub tokens.
+- **Stephens 00837 (porch):** decent videos; tests the custom window and exterior door lines only.
+- Weak material: Parker 00571 (no videos, though the scope fits well), Helburg 00691 (~74s video),
+  McDowell 00904 (no photos), Strawderman 00859 (linked project empty, see above).
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
