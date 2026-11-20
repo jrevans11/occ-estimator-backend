@@ -483,5 +483,57 @@ class CostCodesAndPlaceholders(unittest.TestCase):
         self.assertEqual(numbers[-1], "6200")
 
 
+
+class StatedPrices(unittest.TestCase):
+    """Dollar figures Tyler or Jason gave win over the tool's pricing (Jason, Nov 20 2026)."""
+
+    def test_stated_price_replaces_tool_lines(self):
+        scope = {"duration_weeks": 40, "framed_sf": 2200, "estimates": {"framing_days": {"value": 38}},
+                 "stated_prices": [{"item": "Framing labor", "lines": ["framing_labor"], "amount": 62000,
+                                    "source": "tool-page notes"}]}
+        r = run(scope)
+        labor = one(r, "framing_labor")
+        self.assertEqual((labor["quantity"], labor["unit_cost"], labor["cost"]), (1, 62000, 62000))
+        self.assertEqual(one(r, "framing_materials")["quantity"], 2200)   # quantities still priced
+        self.assertTrue(any("62,000 stated price" in x for x in r["review"]))
+
+    def test_stated_price_replaces_a_placeholder(self):
+        scope = {"duration_weeks": 15, "exterior": {"specialty_windows": 1},
+                 "stated_prices": [{"item": "Bifold pass-through window", "lines": ["specialty_windows"],
+                                    "amount": 6000}]}
+        r = run(scope)
+        line = one(r, "specialty_windows")
+        self.assertEqual((line["cost"], line["placeholder"]), (6000, ""))
+        self.assertFalse(any("$0 placeholder" in x and "Specialty Windows" in x for x in r["review"]))
+
+    def test_stated_price_for_work_the_tool_did_not_price_adds_the_line(self):
+        r = run({"duration_weeks": 15, "stated_prices": [
+            {"item": "Fireplace, surround and gas line", "lines": ["fireplace", "fireplace_surround"],
+             "amount": 17700}]})
+        self.assertEqual(one(r, "fireplace")["cost"], 17700)
+        self.assertEqual(lines(r, "fireplace_surround"), [])
+
+    def test_stated_price_outside_the_template_gets_its_own_line(self):
+        r = run({"duration_weeks": 15, "stated_prices": [
+            {"item": "Outdoor pizza oven", "lines": None, "amount": 4500, "phase": "4200", "cost_type": "sub"}]})
+        line = one(r, "stated_price")
+        self.assertEqual((line["name"], line["phase"], line["cost"], line["cost_type"]),
+                         ("Outdoor pizza oven", "4200", 4500, bp.COST_TYPE_SUB))
+
+    def test_stated_price_without_a_phase_or_on_a_sized_line_is_flagged_not_applied(self):
+        r = run({"duration_weeks": 15, "stated_prices": [
+            {"item": "Something", "lines": None, "amount": 900},
+            {"item": "Permits", "lines": ["permits"], "amount": 5000}]})
+        self.assertEqual(lines(r, "stated_price"), [])
+        self.assertNotEqual(one(r, "permits")["cost"], 5000)
+        self.assertEqual(sum("not added" in x or "not applied" in x for x in r["review"]), 2)
+
+    def test_zero_or_missing_amount_is_ignored(self):
+        base = run({"duration_weeks": 15, "exterior": {"trim_lf": 100}})
+        r = run({"duration_weeks": 15, "exterior": {"trim_lf": 100},
+                 "stated_prices": [{"item": "Trim", "lines": ["ext_trim_labor"], "amount": None}]})
+        self.assertEqual(r["total_cost"], base["total_cost"])
+
+
 if __name__ == "__main__":
     unittest.main()

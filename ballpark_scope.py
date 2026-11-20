@@ -65,6 +65,9 @@ SCOPE_SCHEMA = """{
              "preconstruction": false, "survey": false},
     "fixtures": [ {"category": "appliance|plumbing|lighting", "item": "refrigerator", "tier": "Premium",
                    "quantity": 1, "brand": null, "unit_price": null, "price_source": null, "room": "Kitchen"} ],
+    "stated_prices": [                       // only dollar figures actually stated; usually empty
+      {"item": "Fireplace, surround and gas line", "lines": ["fireplace", "fireplace_surround"],
+       "amount": 17700, "phase": null, "cost_type": null, "source": "tool-page notes"} ],
     "estimates": {
       "demo_days": {"value": 6, "reasoning": "..."},
       "framing_days": {"value": 10, "reasoning": "..."},
@@ -86,8 +89,8 @@ SCOPE_SCHEMA = """{
 SYSTEM_PROMPT = """You are the estimator for Owners Choice Construction (OCC), a design-build renovation \
 contractor in Greenville, SC. After a site visit on a Renovation or Addition job, you read everything \
 captured on the visit and write down the scope as quantities, so a pricing engine can build a \
-Preliminary Ballpark budget. You do NOT price anything except brand-named fixtures (see below); the \
-engine applies OCC's unit rates.
+Preliminary Ballpark budget. You do NOT price anything except brand-named fixtures (see below) and \
+dollar figures Tyler or Jason actually stated (stated_prices, below); the engine applies OCC's unit rates.
 
 WHAT YOU READ (most trusted first):
 1. Tyler's tool-page entries. Every value he entered is final: copy it exactly into the scope. A field \
@@ -132,6 +135,16 @@ porch or small area, 3-8 for an addition, 10-20 for most of the house. Exterior 
 site is in scope unless it was explicitly excluded. When Jason or Tyler states a dollar number for the \
 exterior paint ("painting the whole house is about $19,000"), put it in exterior.paint_amount; it wins \
 over the units and the full-repaint rule.
+- stated_prices: when Tyler or Jason states a dollar figure for a piece of work (tool-page notes, \
+scope summary video, comments: "framing labor is about $62,000", "fireplace, surround and gas line \
+$17,700", "the bifold pass-through window is $6,000"), add {"item", "lines", "amount", "phase", \
+"cost_type", "source"}. amount is the budget COST he gave, as stated (never compute or guess one). \
+lines: the engine line keys it replaces (one or more from: {line_keys}); every line under those keys \
+becomes one line at his number. Keep the scope quantities as usual too. When it is not one of those \
+lines, set lines to null and give the budget phase number it belongs in (e.g. "4500" windows and \
+doors, "4200" masonry and fireplaces, "3100" rough structure) and cost_type labor|materials|sub|other. \
+source says where it came from ("tool-page notes", "scope summary video 1:20"). Exterior paint still \
+uses exterior.paint_amount; brand-named fixtures still use fixtures[].unit_price.
 - Exterior trim: exterior.trim_lf is the LF of exterior trim to install (fascia, soffit, frieze, \
 corner boards, window and door casing, porch beams, columns, ceiling and rail trim); the engine adds \
 trim materials from it. Count all of it, not just one run. Tyler's ballparks: about 12-20 LF per \
@@ -285,7 +298,9 @@ class ScopeError(Exception):
 
 
 def system_prompt():
-    return (SYSTEM_PROMPT.replace("{malm}", MALM_EXAMPLE).replace("{schema}", SCOPE_SCHEMA))
+    keys = ", ".join(k for k in list(bp.T) + list(bp.EXTRA_LINES) if k not in bp.SIZED_KEYS)
+    return (SYSTEM_PROMPT.replace("{malm}", MALM_EXAMPLE).replace("{schema}", SCOPE_SCHEMA)
+            .replace("{line_keys}", keys))
 
 
 def tier_table_items(tier_prices):

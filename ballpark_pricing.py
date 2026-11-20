@@ -1128,7 +1128,58 @@ def price_scope(scope, template, tier_prices=None):
     punch = _num(scope.get("punch_list_days"))
     if punch > 0:
         b.add("punch", punch, PUNCH_PER_DAY, note="entered on the tool page")
+    _apply_stated_prices(b, scope)
     return _finish(b, scope, top_tier, punch_entered=punch > 0)
+
+
+# Lines sized from the job total in _finish; a stated price can't replace them.
+SIZED_KEYS = ("selection", "storage", "punch", "cleaning", "permits", "warranty", "preconstruction")
+STATED_COST_TYPES = {"labor": COST_TYPE_LABOR, "materials": COST_TYPE_MATERIALS, "sub": COST_TYPE_SUB,
+                     "other": COST_TYPE_OTHER}
+
+
+def _apply_stated_prices(b, scope):
+    """Dollar figures Tyler or Jason gave (notes box, video, comments) win over
+    the tool's pricing (Jason, Nov 20 2026). Each entry is
+    {"item", "lines": [template keys] or null, "amount", "phase", "cost_type", "source"}.
+    With lines: every tool line under those keys becomes one line at the stated
+    cost. Without: a new line in the given phase."""
+    for sp in scope.get("stated_prices") or []:
+        amount = _num(sp.get("amount"))
+        item = (sp.get("item") or "").strip()
+        source = (sp.get("source") or "given on site").strip()
+        if amount <= 0 or not item:
+            continue
+        keys = sp.get("lines") or []
+        if isinstance(keys, str):
+            keys = [keys]
+        keys = [k for k in keys if k in T or k in EXTRA_LINES]
+        if any(k in SIZED_KEYS for k in keys):
+            b.review.append(f"Stated price for {item} (${amount:,.0f}, {source}) not applied: that line is "
+                            f"sized from the job total. Adjust it by hand if needed.")
+            continue
+        if keys:
+            old = [l for l in b.lines if l["key"] in keys]
+            old_cost = sum(l["cost"] for l in old)
+            first = old[0] if old else None
+            b.lines = [l for l in b.lines if l["key"] not in keys]
+            placeholder_names = {l["name"] for l in old if l["placeholder"]}
+            b.review = [r for r in b.review if not any(r.startswith(f"{n}: $0 placeholder") for n in placeholder_names)]
+            line = b.add(keys[0], 1, amount, unit="Each", name=(first or {}).get("name"),
+                         description=(first or {}).get("description"),
+                         note=f"${amount:,.0f} stated price ({source}); replaces the tool's "
+                              f"${old_cost:,.0f}" if old else f"${amount:,.0f} stated price ({source})")
+        else:
+            phase = str(sp.get("phase") or "").strip()
+            if phase not in b.template.phase_by_number:
+                b.review.append(f"Stated price for {item} (${amount:,.0f}, {source}) not added: no budget "
+                                f"phase given for it. Add it by hand.")
+                continue
+            line = b.add("stated_price", 1, amount, name=item[:200], unit="Each", phase=phase, description="",
+                         cost_type=STATED_COST_TYPES.get((sp.get("cost_type") or "").lower(), COST_TYPE_SUB),
+                         note=f"${amount:,.0f} stated price ({source}); not a template line")
+        if line:
+            b.review.append(f"{line['name']}: ${amount:,.0f} stated price used ({source}).")
 
 
 def _with_job_tier(scope):
