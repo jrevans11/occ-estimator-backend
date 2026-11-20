@@ -502,8 +502,38 @@ No Tyler ballpark is newer than Barber (Nov 16). Malm, Groenhof and Stephens are
 
 - Weak material only: Parker 00571 (no videos, though the scope fits well), Helburg 00691 (~74s
   video), McDowell 00904 (no photos), Strawderman 00859 (linked project empty, see above).
-- Next useful runs: reruns of these three after any trim / framing / demo rule change, and Tyler's
-  next new ballpark.
+- Next useful runs: reruns after any framing / demo rule change, and Tyler's next new ballpark.
+
+## Nov 20: exterior trim fix (PR #49) and reruns
+
+Jason chose to fix exterior trim and framing first. The change:
+
+- **Trim materials = trim LF x 3** (`EXT_TRIM_MATERIALS_PER_LF`). Tyler's materials qty runs about 3x
+  his labor LF (Malm and Taggart 1,200 / 400; median about 3-4 across 11 ballparks). Before, the
+  tool carried materials 1:1 with LF.
+- **Read guidance for trim LF** in `ballpark_scope.py`: count all trim (fascia, soffit, frieze,
+  corners, casing, porch beams, columns, ceiling and rail trim). About 12-20 LF per siding square on
+  a re-side, plus about 20 LF per 100 SF of addition, and about 1 LF per SF of a new porch.
+- **Framing not changed.** Groenhof is close; Stephens' framing is fine once the Deck Framing
+  Materials line is counted; Malm's gap is Tyler's $62K lump (open question #4). A framing-days
+  floor would push Greenway and Taggart $12-17K over Tyler, and a trim LF floor from siding and
+  addition overshoots Taggart and Parker, so neither was added.
+
+Reruns on Render after the deploy (dry run):
+
+| Job | Tyler | Before | After | Trim LF / materials |
+|---|---|---|---|---|
+| Stephens 00837 | $155,159 | $112,951 (-27.2%) | $141,813 (-8.6%) | 600 / 1,800 (Tyler 600 / 3,600) |
+| Groenhof 00676 | $231,047 | $210,560 (-8.9%) | $196,379 (-15.0%) | 100 / 300 (Tyler 270 / 700) |
+| Malm 00844 | $751,325 | $673,304 (-10.4%) | $678,603 (-9.7%) | 480 / 1,440 (Tyler 400 / 1,200) |
+
+- **Stephens:** the fix worked as intended; trim is now $14.9K vs Tyler's $16.9K.
+- **Groenhof:** went the wrong way, mostly from run-to-run variation, not the rule. The read gave
+  only 100 LF trim despite the guidance (expected 170-220), windows came back 4 Premium ($6K) instead
+  of 4 Luxury ($10K), siding 6 squares, framing 28 days / 650 SF. Open: Groenhof's trim read is
+  still low.
+- **Malm:** trim now matches Tyler's ratio. The remaining gap is still framing (Tyler's lump),
+  windows and the missing front door / fireplace items listed above.
 
 ## Not done / open
 
