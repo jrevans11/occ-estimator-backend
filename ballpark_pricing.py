@@ -298,6 +298,9 @@ PORCH_SCREENING_PER_LF = 140
 GUTTER_UNIT = 1200
 GUTTER_UNITS_DEFAULT = {"whole_home": 6, "partial": 2}
 INSULATION_PER_SF = 4.50
+# Exterior trim: Tyler's materials qty runs ~3x his labor LF (Malm, Taggart 1,200/400;
+# median ~3-4 across 11 ballparks), so materials = LF x 3.
+EXT_TRIM_MATERIALS_PER_LF = 3
 INT_TRIM_MATERIALS_PER_SF = 3.25
 INT_TRIM_MATERIALS_SF_PER_ROOM = 50
 INT_TRIM_LABOR_PER_DAY = 425
@@ -963,9 +966,10 @@ def price_scope(scope, template, tier_prices=None):
         b.add("siding_labor", sq, None)
     if _num(ext.get("trim_lf")) > 0:
         lf = _num(ext["trim_lf"])
-        b.add("ext_trim_materials", lf, None, unit="Linear Feet",
-              note=f"{lf:g} LF entered; the template prices trim materials per SF, so LF is used as SF")
-        b.add("ext_trim_labor", lf, None)
+        b.add("ext_trim_materials", lf * EXT_TRIM_MATERIALS_PER_LF, None,
+              note=f"{lf:g} LF x {EXT_TRIM_MATERIALS_PER_LF} (Tyler's ballparks carry about 3 units of "
+                   f"trim material per LF installed, e.g. Malm and Taggart 1,200 / 400)")
+        b.add("ext_trim_labor", lf, None, unit="Linear Feet", note=f"{lf:g} LF of exterior trim")
     if _num(ext.get("paint_amount")) > 0:
         amount = _num(ext["paint_amount"])
         b.add("ext_paint", 1, amount, unit="Each",
