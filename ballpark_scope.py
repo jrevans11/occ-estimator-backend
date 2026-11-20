@@ -132,6 +132,12 @@ porch or small area, 3-8 for an addition, 10-20 for most of the house. Exterior 
 site is in scope unless it was explicitly excluded. When Jason or Tyler states a dollar number for the \
 exterior paint ("painting the whole house is about $19,000"), put it in exterior.paint_amount; it wins \
 over the units and the full-repaint rule.
+- Exterior trim: exterior.trim_lf is the LF of exterior trim to install (fascia, soffit, frieze, \
+corner boards, window and door casing, porch beams, columns, ceiling and rail trim); the engine adds \
+trim materials from it. Count all of it, not just one run. Tyler's ballparks: about 12-20 LF per \
+siding square on a re-side (Malm 20 squares: 400 LF, Taggart 30: 400), about 20 LF per 100 SF of an \
+addition on top of that (Helburg 450 SF addition: 100 LF), and about 1 LF per SF of a new covered or \
+screened porch (Stephens 550 SF porch: 600 LF, Graf-Meintzer 350 SF: 340 LF).
 - Windows: exterior.windows is the number of window UNITS. A mulled double counts as 2, a triple as 3, \
 and a large or unusual size (an old slider, a big picture window) as 2. window_tier is the window level: Quality (vinyl, about $600), \
 Premium (Andersen 100 Series or similar, about $1,200), Luxury (Andersen 400 Series or similar, about \

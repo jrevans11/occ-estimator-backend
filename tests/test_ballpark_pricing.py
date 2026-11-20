@@ -438,6 +438,12 @@ class FoundationAndTier(unittest.TestCase):
         self.assertEqual(one(est, "framing_materials")["quantity"], 500)   # 25% of the floor plan
         self.assertTrue(any("Framed area not given" in x for x in est["review"]))
 
+    def test_exterior_trim_materials_are_three_per_lf(self):
+        r = run({"duration_weeks": 15, "exterior": {"trim_lf": 400}})
+        self.assertEqual(one(r, "ext_trim_labor")["quantity"], 400)
+        self.assertEqual(one(r, "ext_trim_materials")["quantity"], 1200)   # Malm / Taggart: 1,200 / 400
+        self.assertEqual(one(r, "ext_trim_materials")["cost"], 1200 * 2.25)
+
     def test_no_tier_is_flagged(self):
         r = run({"duration_weeks": 15, "rooms": [{"type": "other"}]})
         self.assertTrue(any("No tier" in x for x in r["review"]))
