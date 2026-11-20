@@ -41,11 +41,14 @@ SCOPE_SCHEMA = """{
                  "garage_doors_double": 0, "porch_screening_lf": 0, "full_exterior_repaint": false,
                  "paint_units": 0, "paint_amount": null, "original_wood_windows": false,
                  "specialty_windows": 0,
-                 "door_types": {"single": 0, "sidelights": 0, "french": 0, "sliding": 0, "specialty": 0},
+                 "door_types": {"single": 0, "single_wood": 0, "sidelights": 0, "sidelights_wood": 0,
+                                "front_andersen": 0, "french": 0, "french_wood": 0, "sliding": 0,
+                                "sliding_andersen": 0, "specialty": 0},
+                 "wood_doors_stained": false,
                  "brick_chimney": false, "landscaping": false, "metal_roof_accents": false},
     "flooring": {"tile_sf": 0, "hardwood_new_sf": 0, "hardwood_refinish_sf": 0, "lvp_sf": 0, "carpet_sf": 0},
     "tile_areas": [ {"name": "Primary bath", "kind": "primary_bath|hall_bath_tub|backsplash|small",
-                     "tier": "Premium", "prep": "walk_in_shower|tub_surround|null"} ],
+                     "tier": "Premium", "prep": "walk_in_shower|tub_surround|null", "sf": null} ],
     "cabinetry": {"lowers_lf": 0, "uppers_lf": 0, "full_height_lf": 0, "vanities_lf": 0, "builtins_lf": 0,
                   "builtins_low_lf": 0},
     "countertops": [ {"name": "Kitchen", "sf": 60, "tier": "Premium"} ],
@@ -129,17 +132,23 @@ porch or small area, 3-8 for an addition, 10-20 for most of the house. Exterior 
 site is in scope unless it was explicitly excluded. When Jason or Tyler states a dollar number for the \
 exterior paint ("painting the whole house is about $19,000"), put it in exterior.paint_amount; it wins \
 over the units and the full-repaint rule.
-- Windows: exterior.windows is the number of window UNITS. A large unit (an old slider, a big picture \
-window, a mulled pair) counts as 2. window_tier is the window level: Quality (vinyl, about $600), \
+- Windows: exterior.windows is the number of window UNITS. A mulled double counts as 2, a triple as 3, \
+and a large or unusual size (an old slider, a big picture window) as 2. window_tier is the window level: Quality (vinyl, about $600), \
 Premium (Andersen 100 Series or similar, about $1,200), Luxury (Andersen 400 Series or similar, about \
 $2,500). Set it from what was said on site; leave it null to use the job's tier. \
 original_wood_windows = true when new windows must match the home's original wood windows (priced at \
 Luxury, and interior paint goes up for the sash). specialty_windows: count of odd units (unusual \
 size or shape, a pass-through) that Tyler prices by hand.
-- Exterior doors: count each by type in exterior.door_types: single (a plain single door unit, about \
-$900), sidelights (a door unit with sidelights and/or a transom, about $1,150), french, sliding, and \
-specialty (custom or unusual units Tyler prices by hand). exterior_doors is the total. front_door \
-stays true only for an upgraded front entry door.
+- Exterior doors: count each by type in exterior.door_types: single (single door unit, fiberglass, \
+about $900), single_wood (single wood, mahogany or fir unit, about $2,500; rare), sidelights (front \
+door with sidelights and/or a transom, fiberglass, about $3,500), sidelights_wood (the same in wood, \
+about $6,000), front_andersen (an Andersen front door unit, tiered like windows: $3,000 / $4,500 / \
+$7,500), french (French door, fiberglass, about $1,900), french_wood (about $3,500), sliding (2-panel \
+vinyl or fiberglass slider, about $2,000), sliding_andersen (Andersen slider, $2,500 / $3,750 / \
+$6,250), and specialty (custom or unusual units Tyler prices by hand). exterior_doors is the total. \
+front_door = true when the front entry door is being replaced; also count it under its type \
+(sidelights, sidelights_wood or front_andersen) when the type is known. wood_doors_stained = true \
+when wood doors will be stained rather than painted (adds about 10%).
 - cabinetry.builtins_lf: LF of FULL-HEIGHT custom built-ins ($1,100/LF); cabinetry.builtins_low_lf: LF \
 of built-in uppers and lowers or base-only built-ins ($625/LF). Measure from the plans when they are \
 available. Built-ins means custom built-ins and other cabinetry outside the kitchen and vanities \
@@ -170,7 +179,9 @@ tub_in_footprint, new_outside_footprint / tub_outside_footprint (in an addition;
 water_sewer_10lf runs). cut_and_cap is one per fixture removed before demo.
 - tile_areas: one per tiled space. kind = primary_bath (large primary bath), hall_bath_tub (hall bath \
 with a tile tub surround), backsplash (kitchen backsplash), small (bath floor only, shower only, \
-laundry, etc.). prep = walk_in_shower or tub_surround when that space has one.
+laundry, etc.). prep = walk_in_shower or tub_surround when that space has one. sf = the tiled square \
+feet (floor + walls + shower) when it can be measured or estimated from the plans or notes; leave null \
+to use a typical size. Tile labor and the per-SF tile material allowance are priced separately.
 - fixtures: list each appliance, plumbing fixture and light fixture named or clearly implied by the \
 scope (a remodeled kitchen implies refrigerator, range or cooktop + oven, dishwasher, microwave, hood; \
 a bath implies toilet, sink(s), faucet(s), shower valve/trim, tub filler if a tub). Use the item names \

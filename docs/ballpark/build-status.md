@@ -329,12 +329,13 @@ Jason and Tyler went through the review doc (Granola, "Ballpark pricing tool", N
 
 - **Markup:** flat 28% on every job. Brackets removed.
 - **Windows** (material per unit, install $300 each): Quality (vinyl) $600, Premium (Andersen 100) $1,200,
-  Luxury (Andersen 400) $2,500. A large unit (old slider, picture window, mulled pair) counts as 2.
+  Luxury (Andersen 400) $2,500. A large unit (old slider, picture window, mulled pair) counts as 2
+  (Nov 20: double = 2, triple = 3, large or odd size = 2).
   Matching original wood windows: Luxury, plus 10% on interior paint. Specialty windows: $0, priced in review.
 - **Exterior doors by type:** single $900, sidelights/transom $1,150, French and sliding $0 placeholders
-  (Tyler said "higher", no number), specialty $0 placeholder.
+  (Tyler said "higher", no number), specialty $0 placeholder. Superseded Nov 20 (see below).
 - **Tile:** install $1,200 per unit (5 per primary bath, 3 per other bath). Tile material is a separate
-  allowance: $5,500 primary, $2,200 hall/ensuite, $1,800 kitchen backsplash.
+  allowance: $5,500 primary, $2,200 hall/ensuite, $1,800 kitchen backsplash. Superseded Nov 20 (see below).
 - **Preconstruction:** share of the contract price: 2% under $250K, 1.5% to $600K, 1% over (plans,
   pricing, selections). Jason, Nov 19: on every job (PR #42).
 - **Survey:** $1,850, only when someone says one is needed. Engineering $1,850 letter / $2,800 full (kept).
@@ -402,6 +403,29 @@ form entries, videos and photos read:
   General Plumbing the read's counts stand. Outside-footprint moves, vents, water/sewer and cut-and-cap
   keep their counts. McNelly drops about $15K cost (swap 8 to 1, new-location 9 to 1). Not rerun live yet.
 - Taggart (4 swaps beside 2 General) is the one case this does not copy; read as Tyler's judgement.
+
+## Nov 20: Jason's pricing sheet review (windows, doors, tile)
+
+Jason went through the pricing inputs sheet; the sheet's "Your number" columns now hold his numbers.
+
+- **Windows:** numbers kept. Counting: mulled double = 2, triple = 3, large or odd size = 2.
+- **Doors (unit material, per door):** single fiberglass $900, single wood $2,500; front door with
+  sidelights/transom fiberglass $3,500, wood $6,000; Andersen front door $3,000 / $4,500 / $7,500;
+  French fiberglass $1,900, wood $3,500; sliding 2-panel vinyl/fiberglass $2,000; Andersen slider
+  $2,500 / $3,750 / $6,250. Andersen level follows the window level, else the job's top tier. Wood
+  doors that will be stained get +10% (tool page flag). Front-type doors go on the template Front Door
+  line plus Front Door Hardware, no install line (Tyler's practice). Others get install $1,450 and
+  hardware $250 each. Specialty stays a $0 placeholder. If the read says front door but no front type
+  was entered, it prices one fiberglass sidelights door.
+- **Tile:** the $5,500 / $2,200 / $1,800 lumps are LABOR, not material. Tile material is now its own
+  "Tile Materials" allowance line per area: SF x tier rate (Quality $7.50, Premium $17.50, Luxury $50
+  per SF). SF comes from the tool page/read, else defaults primary 180, hall bath 110, backsplash 30,
+  small area 50. Ceramic Tile Installation ($1,200) is for small spaces only (1 unit), covers labor plus
+  setting materials, not tile or trim (bullnose, Schluter).
+- **Template check open:** no local JobTread key, so the live template wasn't checked for a tile
+  material line. The spec and the template snapshot show none, so the engine adds "Tile Materials".
+  If Tyler has one, point `tile_materials` at it.
+- Fixture allowances: kept.
 
 ## Not done / open
 

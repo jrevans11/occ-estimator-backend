@@ -27,6 +27,12 @@ tool"): flat 28% markup, window levels $600 / $1,200 / $2,500, door types,
 tile lumps are allowances, preconstruction as a % of the contract, survey
 $1,850, built-ins $625 / $1,100 per LF, a dictated exterior paint number.
 
+Nov 20, 2026 (Jason, Ballpark Pricing Inputs sheet): tile lumps are labor with
+a separate per-SF tile material allowance; Ceramic Tile Installation units for
+small spaces only; new door types and prices (wood, sidelights, Andersen tiers,
+French, sliding) with a 10% bump for stained wood doors; mulled windows count
+per sash (double 2, triple 3, large or odd 2).
+
 Standard library only.
 """
 
@@ -192,10 +198,11 @@ T_NAMES = {
 }
 
 # Lines the tool adds that the template doesn't have (Jason, Oct 27 2026).
-# The Tile Materials allowance was dropped Nov 17, 2026: none of Tyler's 20
-# real ballparks has a tile material line (Ceramic Tile Installation units
-# carry it).
+# Jason, Nov 20 2026: tile material goes back in as its own per-SF allowance
+# line under each tile area (the bath and backsplash lumps are labor).
 EXTRA_LINES = {
+    "tile_materials": {"name": "Tile Materials", "phase": "5300", "cost_type": COST_TYPE_MATERIALS,
+                       "unit": "Square Feet", "description": "Tile material allowance."},
     "mirrors": {"name": "Mirrors", "phase": "5400", "cost_type": COST_TYPE_MATERIALS, "unit": "Each",
                 "description": "Mirror allowance."},
     "engineering": {"name": "Engineering", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
@@ -252,18 +259,37 @@ FINISH_ELECTRICAL_HRS_PER_ROOM = 1.5
 RECESSED_PER_ROOM = 1.5
 HVAC_PER_TON = 5000
 NEW_DUCTWORK = 7500
-# Tyler, Nov 19 2026: three window levels. A large unit (old slider, big
-# picture window) counts as 2 windows. Original wood windows to match = Luxury,
-# plus a bump on interior paint for painting the sash.
+# Tyler, Nov 19 2026: three window levels. Jason, Nov 20 2026: a mulled double
+# counts as 2 windows, a triple as 3, a large or unusual size as 2. Original
+# wood windows to match = Luxury, plus a bump on interior paint for the sash.
 WINDOW_PRICE = {"Quality": 600, "Premium": 1200, "Luxury": 2500}
 WINDOW_PRODUCT = {"Quality": "vinyl", "Premium": "Andersen 100 Series", "Luxury": "Andersen 400 Series"}
 WINDOW_INSTALL = 300
 WOOD_WINDOW_PAINT_BUMP = 0.10     # Tyler: "add 5 to 10% of the paint price"
-# Tyler, Nov 19 2026: exterior door unit by type. French and sliding are
-# "higher" with no number yet, so they come in as $0 for review.
-EXT_DOOR_PRICE = {"single": 900, "sidelights": 1150, "french": None, "sliding": None}
-EXT_DOOR_LABEL = {"single": "single door unit", "sidelights": "door unit with sidelights or transom",
-                  "french": "French door unit", "sliding": "sliding door unit"}
+# Exterior door unit by type (Tyler Nov 19, Jason Nov 20 2026). Andersen units
+# are tiered like windows: base, +50%, +150%. Front-door types go on the
+# template's Front Door line (no install line, as Tyler does it); the rest go on
+# Exterior Doors with hardware and installation per door.
+EXT_DOOR_PRICE = {
+    "single": 900, "single_wood": 2500,
+    "sidelights": 3500, "sidelights_wood": 6000,
+    "front_andersen": {"Quality": 3000, "Premium": 4500, "Luxury": 7500},
+    "french": 1900, "french_wood": 3500,
+    "sliding": 2000,
+    "sliding_andersen": {"Quality": 2500, "Premium": 3750, "Luxury": 6250},
+}
+EXT_DOOR_LABEL = {
+    "single": "single door unit, fiberglass", "single_wood": "single door unit, wood",
+    "sidelights": "front door with sidelights or transom, fiberglass",
+    "sidelights_wood": "front door with sidelights or transom, wood",
+    "front_andersen": "Andersen front door unit",
+    "french": "French door unit, fiberglass", "french_wood": "French door unit, wood",
+    "sliding": "sliding door unit, 2-panel vinyl or fiberglass",
+    "sliding_andersen": "Andersen sliding door unit",
+}
+FRONT_DOOR_TYPES = ("sidelights", "sidelights_wood", "front_andersen")
+WOOD_DOOR_TYPES = ("single_wood", "sidelights_wood", "french_wood")
+WOOD_DOOR_STAIN_BUMP = 0.10       # Jason: stained wood doors cost more to finish than painted
 GARAGE_DOOR_SINGLE = 3500
 GARAGE_DOOR_DOUBLE = 7200
 EXT_PAINT_PER_HEATED_SF = 8
@@ -282,11 +308,17 @@ FLOORING = {"hardwood": 10.25, "hardwood_finishing": 3.75, "lvp": 6.50, "lvp_ins
 INT_PAINT_ROOM = 1100
 INT_PAINT_TALL_ROOM = 2000
 PAINT_MATERIALS_UNIT = 450
-# Tyler, Nov 19 2026: the per-space lumps are tile material ALLOWANCES; the
-# Ceramic Tile Installation units ($1,200, 5 per primary bath, 3 per other) are install.
+# Jason, Nov 20 2026: the per-space lumps are tile LABOR. Tile material is a
+# separate per-SF allowance by the space's tier. Ceramic Tile Installation
+# units are for small spaces only: labor plus setting materials (mortar, backer
+# board), not tile or trim (bullnose, Schluter).
 TILE_LABOR = {"primary_bath": 5500, "hall_bath_tub": 2200, "backsplash": 1800, "small": 1200}
+TILE_MATERIAL_PER_SF = {"Quality": 7.50, "Premium": 17.50, "Luxury": 50}
+TILE_SF_DEFAULT = {"primary_bath": 180, "hall_bath_tub": 110, "backsplash": 30, "small": 50}
 CERAMIC_TILE_UNIT = 1200
-CERAMIC_UNITS = {"primary_bath": 5, "hall_bath_tub": 3, "backsplash": 0, "small": 1}
+CERAMIC_UNITS = {"primary_bath": 0, "hall_bath_tub": 0, "backsplash": 0, "small": 1}
+CERAMIC_DESCRIPTION = ("Tile installation labor for small tile areas, including setting materials (mortar, "
+                       "backer board). Tile and trim pieces (bullnose, Schluter) are not included.")
 CABINET_PER_LF = 625
 FULL_HEIGHT_PER_LF = 1250
 BUILTINS_PER_LF = 1100            # full-height built-ins
@@ -824,9 +856,9 @@ def price_scope(scope, template, tier_prices=None):
         if n:
             b.add(key, n, None)
 
-    # 3900 / 5300 Tile. Tyler: a lump per bath/backsplash plus Ceramic Tile
-    # Installation units (~5 per primary bath, ~3 per other bath); no
-    # separate tile material line.
+    # 3900 / 5300 Tile (Jason, Nov 20 2026). Each area: prep line, a labor
+    # lump (primary / hall / backsplash) or Ceramic Tile Installation units
+    # (small spaces), then its own tile material allowance per SF by tier.
     ceramic_units, ceramic_parts = 0, []
     for area in scope.get("tile_areas") or []:
         kind = area.get("kind") or "small"
@@ -841,16 +873,26 @@ def price_scope(scope, template, tier_prices=None):
         line_key = {"primary_bath": "tile_primary", "hall_bath_tub": "tile_hall",
                     "backsplash": "tile_backsplash"}.get(kind)
         if line_key:
-            b.add(line_key, 1, TILE_LABOR[kind], unit="", allowance=True,
-                  description=f"Tile material allowance for the {label.lower()}: ${TILE_LABOR[kind]:,}. "
-                              f"Installation is a separate line.",
-                  note=f"{label}: tile allowance ${TILE_LABOR[kind]:,}")
+            b.add(line_key, 1, TILE_LABOR[kind], unit="",
+                  description=f"Tile installation labor for the {label.lower()}. Tile material is a "
+                              f"separate allowance.",
+                  note=f"{label}: tile labor ${TILE_LABOR[kind]:,}")
         if CERAMIC_UNITS[kind]:
             ceramic_units += CERAMIC_UNITS[kind]
             ceramic_parts.append(f"{label} {CERAMIC_UNITS[kind]}")
+        tier = _tier(area.get("tier"), top_tier)
+        sf = _num(area.get("sf"))
+        sf_note = f"{sf:g} SF" if sf > 0 else f"{TILE_SF_DEFAULT[kind]} SF (typical, no SF given)"
+        sf = sf if sf > 0 else TILE_SF_DEFAULT[kind]
+        rate = TILE_MATERIAL_PER_SF[tier]
+        b.add("tile_materials", sf, rate, allowance=True,
+              name=f"Tile Materials - {label} ({tier} allowance, ${rate:,.2f}/SF)",
+              description=f"Tile material allowance for the {label.lower()}: ${rate:,.2f} per square foot. "
+                          f"Includes tile and trim pieces.",
+              note=f"{sf_note} x ${rate:,.2f}/SF ({tier})")
     if ceramic_units:
-        b.add("tile_ceramic", ceramic_units, CERAMIC_TILE_UNIT, unit="Each",
-              note=f"{ceramic_units} units ({', '.join(ceramic_parts)}) x ${CERAMIC_TILE_UNIT:,}")
+        b.add("tile_ceramic", ceramic_units, CERAMIC_TILE_UNIT, unit="Each", description=CERAMIC_DESCRIPTION,
+              note=f"{ceramic_units} small-space units ({', '.join(ceramic_parts)}) x ${CERAMIC_TILE_UNIT:,}")
 
     # 4100-4800 / 6100 Exterior
     if _num(ext.get("roof_squares")) > 0:
@@ -874,7 +916,7 @@ def price_scope(scope, template, tier_prices=None):
                           f"is a separate line.",
               note=f"{windows} window units, {wt} level" + (
                   " (original wood windows to match)" if wood_match else
-                  "" if ext.get("window_tier") else " (job's highest tier)") + "; large units count as 2")
+                  "" if ext.get("window_tier") else " (job's highest tier)") + "; double counts as 2, triple 3, large or odd size 2")
         b.add("window_install", windows, WINDOW_INSTALL, unit="Each", description="Installation of windows.")
     if _count(ext.get("specialty_windows")):
         b.add("specialty_windows", _count(ext["specialty_windows"]),
@@ -883,24 +925,33 @@ def price_scope(scope, template, tier_prices=None):
     typed = {k: _count(door_types.get(k)) for k in EXT_DOOR_PRICE if _count(door_types.get(k))}
     if not typed and _count(ext.get("exterior_doors")):
         typed = {"single": _count(ext["exterior_doors"])}
+    if ext.get("front_door") and not any(k in typed for k in FRONT_DOOR_TYPES):
+        typed["sidelights"] = 1     # front door flagged with no type: fiberglass front door unit
+    stained = bool(ext.get("wood_doors_stained"))
+    door_tier = _tier(ext.get("window_tier"), top_tier)
+    other_doors = 0
     for kind, n in typed.items():
         price = EXT_DOOR_PRICE[kind]
-        if price is None:
-            b.add("ext_doors", n, name=f"Exterior Doors - {EXT_DOOR_LABEL[kind]}",
-                  placeholder=f"{n} {EXT_DOOR_LABEL[kind]}(s); no standard price yet, Tyler prices it in review")
+        label = EXT_DOOR_LABEL[kind]
+        if isinstance(price, dict):
+            price, label = price[door_tier], f"{label}, {door_tier} level"
+        note = f"{n} x ${price:,} ({label})"
+        if stained and kind in WOOD_DOOR_TYPES:
+            price = round(price * (1 + WOOD_DOOR_STAIN_BUMP))
+            label = f"{label}, stained"
+            note += f" + {WOOD_DOOR_STAIN_BUMP:.0%} for staining = ${price:,} each"
+        if kind in FRONT_DOOR_TYPES:
+            b.add("front_door", n, price, name=f"Front Door - {label}", note=note)
+            b.add("front_door_hw", n, None)
         else:
-            b.add("ext_doors", n, price, name=f"Exterior Doors - {EXT_DOOR_LABEL[kind]}",
-                  note=f"{n} x ${price:,} ({EXT_DOOR_LABEL[kind]})")
-    ext_doors = sum(typed.values())
-    if ext_doors:
-        b.add("ext_door_install", ext_doors, None)
-        b.add("ext_door_hw", ext_doors, None)
+            b.add("ext_doors", n, price, name=f"Exterior Doors - {label}", note=note)
+            other_doors += n
+    if other_doors:
+        b.add("ext_door_install", other_doors, None)
+        b.add("ext_door_hw", other_doors, None)
     if _count(door_types.get("specialty")):
         b.add("specialty_doors", _count(door_types["specialty"]),
               placeholder="specialty exterior door; Tyler prices it in review")
-    if ext.get("front_door"):
-        b.add("front_door", 1, None)
-        b.add("front_door_hw", 1, None)
     singles, doubles = _count(ext.get("garage_doors_single")), _count(ext.get("garage_doors_double"))
     if singles:
         b.add("garage_door", singles, GARAGE_DOOR_SINGLE, name="Garage door - single (incl. motor)")
