@@ -445,7 +445,10 @@ All five ran clean on Render (dry run, nothing written). Claude cost $0.21-0.32 
   "small" (prompt says small = "shower only"). Result: 5 Ceramic Tile Installation units at $1,200 and
   50 SF of material each, no Hall Bath Tile line (Tyler: 5 x $2,200). McNelly's tub-surround hall baths
   came out right. Possible fix: hall_bath = any full secondary bath with a tiled tub surround or walk-in
-  shower; small = floor-only areas, laundry, powder. Changes pricing, so waiting on Jason.
+  shower; small = floor-only areas, laundry, powder. **Fixed same day (Jason OK'd, PR #46):** prompt
+  now says exactly that. Barber rerun: 4 Hall Bath Tile ($2,200) + 4 hall-bath material allowances
+  (110 SF), 5 walk-in prep lines, 1 Ceramic unit (powder). Total $628,358 (-4.2% vs Tyler); the
+  tile change adds about $8K, so the rest of the move is run-to-run variation elsewhere in the read.
 - Smaller differences: McNelly windows read as 4 Luxury ($2,500) vs Tyler's 10 at $600, and 8 interior
   doors vs 4; Taggart windows Quality $600 vs Tyler $1,100 and front door $3,500 vs $5,500; Greenway
   garage door $7,200 vs Tyler $4,300. Taggart and McNelly totals still land within 1.5%.
