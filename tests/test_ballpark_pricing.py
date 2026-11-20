@@ -178,15 +178,32 @@ class Finishes(unittest.TestCase):
             {"name": "Kitchen", "kind": "backsplash", "tier": "Premium"},
             {"name": "Laundry floor", "kind": "small", "tier": "Quality"},
         ]})
+        # Jason, Nov 20 2026: lumps are labor, not allowances.
         self.assertEqual(one(r, "tile_primary")["cost"], 5500)
-        self.assertTrue(one(r, "tile_primary")["allowance"])
+        self.assertFalse(one(r, "tile_primary")["allowance"])
         self.assertEqual(one(r, "tile_hall")["cost"], 2200)
         self.assertEqual(one(r, "tile_backsplash")["cost"], 1800)
-        self.assertEqual(one(r, "tile_ceramic")["quantity"], 5 + 3 + 1)
-        self.assertEqual(one(r, "tile_ceramic")["cost"], 9 * 1200)
+        # Ceramic units only for small spaces.
+        self.assertEqual(one(r, "tile_ceramic")["quantity"], 1)
+        self.assertEqual(one(r, "tile_ceramic")["cost"], 1200)
+        self.assertIn("Schluter", one(r, "tile_ceramic")["description"])
         self.assertEqual(one(r, "tile_prep_shower")["cost"], 1600)
         self.assertEqual(one(r, "tile_prep_surround")["cost"], 900)
-        self.assertEqual(lines(r, "tile_materials"), [])
+        # One material allowance per area: typical SF x tier rate.
+        mats = {l["name"].split(" - ")[1].split(" (")[0]: l for l in lines(r, "tile_materials")}
+        self.assertEqual(len(mats), 4)
+        self.assertEqual(mats["Primary bath"]["cost"], 180 * 17.50)
+        self.assertEqual(mats["Hall bath"]["cost"], 110 * 7.50)
+        self.assertEqual(mats["Kitchen"]["cost"], 30 * 17.50)
+        self.assertEqual(mats["Laundry floor"]["cost"], 50 * 7.50)
+        self.assertTrue(all(l["allowance"] for l in mats.values()))
+
+    def test_tile_material_uses_entered_sf(self):
+        r = run({"duration_weeks": 15, "tile_areas": [
+            {"name": "Primary bath", "kind": "primary_bath", "tier": "Luxury", "sf": 240}]})
+        self.assertEqual(one(r, "tile_materials")["quantity"], 240)
+        self.assertEqual(one(r, "tile_materials")["cost"], 240 * 50)
+        self.assertEqual(lines(r, "tile_ceramic"), [])
 
     def test_cabinetry_counters_closets_mirrors(self):
         r = run({"duration_weeks": 15, "rooms": [{"type": "kitchen"}],
@@ -302,12 +319,37 @@ class Exterior(unittest.TestCase):
             self.assertTrue(one(r, key)["placeholder"])
 
     def test_door_types(self):
-        r = run({"duration_weeks": 15, "exterior": {"door_types": {"single": 2, "sidelights": 1, "sliding": 1}}})
+        r = run({"duration_weeks": 15, "exterior": {"door_types": {
+            "single": 2, "single_wood": 1, "french": 1, "french_wood": 1, "sliding": 1}}})
         doors = lines(r, "ext_doors")
-        self.assertEqual(sorted(l["cost"] for l in doors), [0, 1150, 1800])
-        self.assertEqual(one(r, "ext_door_install")["quantity"], 4)
+        self.assertEqual(sorted(l["cost"] for l in doors), [1800, 1900, 2000, 2500, 3500])
+        self.assertEqual(one(r, "ext_door_install")["quantity"], 6)
+        self.assertEqual(one(r, "ext_door_hw")["quantity"], 6)
+        self.assertEqual(lines(r, "front_door"), [])
         old = run({"duration_weeks": 15, "exterior": {"exterior_doors": 3}})
         self.assertEqual(one(old, "ext_doors")["cost"], 2700)
+
+    def test_front_doors_go_on_front_door_line(self):
+        r = run({"duration_weeks": 15, "exterior": {"front_door": True, "door_types": {"sidelights_wood": 1}}})
+        self.assertEqual(one(r, "front_door")["cost"], 6000)
+        self.assertEqual(one(r, "front_door_hw")["quantity"], 1)
+        self.assertEqual(lines(r, "ext_doors"), [])
+        self.assertEqual(lines(r, "ext_door_install"), [])
+        flag_only = run({"duration_weeks": 15, "exterior": {"front_door": True}})
+        self.assertEqual(one(flag_only, "front_door")["cost"], 3500)
+
+    def test_andersen_doors_follow_tier(self):
+        for tier, front, slider in (("Quality", 3000, 2500), ("Premium", 4500, 3750), ("Luxury", 7500, 6250)):
+            r = run({"duration_weeks": 15, "exterior": {"window_tier": tier, "door_types": {
+                "front_andersen": 1, "sliding_andersen": 1}}})
+            self.assertEqual(one(r, "front_door")["cost"], front)
+            self.assertEqual(one(r, "ext_doors")["cost"], slider)
+
+    def test_stained_wood_doors_get_bump(self):
+        r = run({"duration_weeks": 15, "exterior": {"wood_doors_stained": True, "door_types": {
+            "french_wood": 1, "french": 1, "sidelights_wood": 1}}})
+        self.assertEqual(sorted(l["cost"] for l in lines(r, "ext_doors")), [1900, 3850])
+        self.assertEqual(one(r, "front_door")["cost"], 6600)
 
     def test_paint_amount_wins(self):
         r = run({"duration_weeks": 15, "heated_sf": 2500,
