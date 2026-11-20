@@ -242,6 +242,12 @@ GENERAL_ELECTRICAL_PER_SF = 9
 GENERAL_PLUMBING_PER_FIXTURE = 1200
 PLUMBING_FIXTURES_PER_ROOM = {"primary_bath": 4, "hall_bath": 3, "powder": 2, "kitchen": 2}
 FINISH_PLUMBING_HRS_PER_FIXTURE = 3
+# Tyler's ballparks put each fixture on one line: General Plumbing ($1,200 each)
+# carries them, and the in-footprint swap / move / tub lines appear as 1-each
+# tokens beside it (Barber, Gentles, Groenhof). Without General Plumbing the
+# read's counts stand. Outside-footprint, vent, water/sewer and cut-and-cap
+# lines keep their counts.
+PLUMBING_TOKEN_LINES = ("plumb_swap", "plumb_new_in", "plumb_tub_in")
 FINISH_ELECTRICAL_HRS_PER_ROOM = 1.5
 RECESSED_PER_ROOM = 1.5
 HVAC_PER_TON = 5000
@@ -732,19 +738,25 @@ def price_scope(scope, template, tier_prices=None):
         b.add("decking", d, None, note=f"{d:g} deck SF")
 
     # 3600 / 5600 Plumbing
+    fixtures_n, fixtures_how = plumbing_fixture_count(scope)
     for key, field in (("plumb_swap", "swap_same"), ("plumb_new_in", "new_in_footprint"),
                        ("plumb_tub_in", "tub_in_footprint"), ("plumb_new_out", "new_outside_footprint"),
                        ("plumb_tub_out", "tub_outside_footprint"), ("plumb_water_sewer", "water_sewer_10lf"),
                        ("plumb_cut_cap", "cut_and_cap"), ("plumb_vent", "vent_thru_roof")):
         n = _count(plumb.get(field))
-        if n:
-            b.add(key, n, None, note=plumb.get("source") or None)
+        if not n:
+            continue
+        note = plumb.get("source") or None
+        if fixtures_n and key in PLUMBING_TOKEN_LINES and n > 1:
+            # General Plumbing already carries every fixture; Tyler keeps these as 1-each tokens.
+            note = (f"{n} read, 1 kept: General Plumbing carries each fixture" + (f" ({note})" if note else ""))
+            n = 1
+        b.add(key, n, None, note=note)
     wh = (mech.get("water_heater") or "none").lower()
     if wh == "tank":
         b.add("wh_tank", 1, None)
     elif wh == "tankless":
         b.add("wh_tankless", 1, None)
-    fixtures_n, fixtures_how = plumbing_fixture_count(scope)
     if fixtures_n:
         b.add("general_plumbing", fixtures_n, GENERAL_PLUMBING_PER_FIXTURE, unit="Each",
               note=f"{fixtures_n} fixtures x ${GENERAL_PLUMBING_PER_FIXTURE:,} ({fixtures_how})")

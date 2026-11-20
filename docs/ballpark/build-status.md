@@ -378,8 +378,7 @@ form entries, videos and photos read:
 - **Plumbing double-count (open, for Tyler):** McNelly carries General Plumbing 17 x $1,200 AND swap 8 x
   $625 AND new-location 9 x $1,325 ($37K rough plumbing vs Tyler's $17K, 12 x General Plumbing only).
   Tyler's budgets use General Plumbing per fixture and the swap/move lines as 1-each tokens (Barber,
-  Gentles) or a few (Taggart 4 swap + 1 move with only 2 General). Needs his rule: which line carries
-  a fixture.
+  Gentles) or a few (Taggart 4 swap + 1 move with only 2 General). Fixed Nov 20 (see below).
 - **Other gaps:** dumpsters at 1 per 2.5 weeks give 9 where Tyler entered 1 on McNelly/Taggart (8 on
   Greenway); preconstruction now prices on McNelly and Taggart (~$5-5.7K) where Tyler had none (he had
   it on Gentles $2,950 and Greenway $6,200).
@@ -394,6 +393,15 @@ form entries, videos and photos read:
   numbers are filled in; the yellow "Your number" columns are theirs. Once filled, wire them into
   `ballpark_pricing.py` (doors need new types + material on the tool page in sales-lead-tool; the
   front door with sidelights/transom replaces the $3,500 template Front Door line).
+
+## Nov 20: plumbing on one line per fixture
+
+- **Plumbing double-count fixed.** When General Plumbing ($1,200 per fixture) is on the budget, the
+  in-footprint swap, new-location and tub lines go in as 1-each tokens, the way Tyler enters them
+  (Barber, Gentles, Groenhof). The line note keeps what the read counted ("8 read, 1 kept"). Without
+  General Plumbing the read's counts stand. Outside-footprint moves, vents, water/sewer and cut-and-cap
+  keep their counts. McNelly drops about $15K cost (swap 8 to 1, new-location 9 to 1). Not rerun live yet.
+- Taggart (4 swaps beside 2 General) is the one case this does not copy; read as Tyler's judgement.
 
 ## Not done / open
 

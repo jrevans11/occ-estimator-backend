@@ -222,6 +222,21 @@ class Finishes(unittest.TestCase):
         given = run({"duration_weeks": 15, "plumbing": {"fixture_count": 9}, "rooms": [{"type": "kitchen"}]})
         self.assertEqual(one(given, "general_plumbing")["quantity"], 9)
 
+    def test_plumbing_location_lines_are_tokens_beside_general_plumbing(self):
+        plumb = {"fixture_count": 12, "swap_same": 8, "new_in_footprint": 9, "tub_in_footprint": 2,
+                 "new_outside_footprint": 3, "vent_thru_roof": 2, "cut_and_cap": 4}
+        r = run({"duration_weeks": 15, "plumbing": plumb})
+        self.assertEqual(one(r, "general_plumbing")["quantity"], 12)
+        for key in ("plumb_swap", "plumb_new_in", "plumb_tub_in"):
+            self.assertEqual(one(r, key)["quantity"], 1)
+        self.assertEqual(one(r, "plumb_new_out")["quantity"], 3)
+        self.assertEqual(one(r, "plumb_vent")["quantity"], 2)
+        self.assertEqual(one(r, "plumb_cut_cap")["quantity"], 4)
+        # No General Plumbing on the job: the read's counts stand.
+        alone = run({"duration_weeks": 15, "plumbing": {"swap_same": 5}})
+        self.assertEqual(lines(alone, "general_plumbing"), [])
+        self.assertEqual(one(alone, "plumb_swap")["quantity"], 5)
+
     def test_flooring(self):
         r = run({"duration_weeks": 15, "flooring": {"hardwood_new_sf": 100, "hardwood_refinish_sf": 200,
                                                     "lvp_sf": 300, "carpet_sf": 50}})
