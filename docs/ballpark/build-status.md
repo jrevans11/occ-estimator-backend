@@ -535,6 +535,34 @@ Reruns on Render after the deploy (dry run):
 - **Malm:** trim now matches Tyler's ratio. The remaining gap is still framing (Tyler's lump),
   windows and the missing front door / fireplace items listed above.
 
+## Nov 20: stated prices (PR #51)
+
+Jason: when Tyler types or says a dollar figure, the tool should use it. The read now returns
+`scope.stated_prices` (`item`, `lines` = engine line keys or null, `amount` = budget cost, `phase`,
+`cost_type`, `source`). `_apply_stated_prices()` runs before `_finish`:
+
+- With `lines`: every tool line under those keys becomes one line at the stated cost (Each), and any
+  $0 placeholder review note for them is dropped. If the tool hadn't priced it, the line is added.
+- Without `lines`: a new line in the given phase (default cost type Sub). No valid phase: flagged
+  in the review, not added.
+- Lines sized from the job total (selection, storage, punch, cleaning, permits, warranty, precon) are
+  never replaced; a stated price for them is flagged.
+- Every stated price used is listed in the review. Exterior paint still uses `paint_amount`.
+
+Reruns with the prices typed in the notes box (dry run, Nov 20):
+
+| Job | Tyler | Before | With stated prices | Notes box |
+|---|---|---|---|---|
+| Malm 00844 | $751,325 | $678,603 (-9.7%) | $751,149 (0.0%) | framing labor about $62,000, about 2,200 SF of framing |
+| Stephens 00837 | $155,159 | $141,813 (-8.6%) | $180,700 (+16.5%) | fireplace, surround and gas line $17,700; bifold window $6,000 |
+
+- Both runs picked up every stated price correctly.
+- Stephens went over: the two stated items added the intended $23.7K, but the read also varied
+  (framing 650 SF vs 450 last run and Tyler's 400, trim 750 vs 600 LF, footing 60 LF, paint 5
+  units) and the job crossed $160K, which adds 32 selection hours and a storage unit. Deck Framing
+  Materials ($9.5K, not in Tyler's budget) is still there. Run-to-run variation in the read is now
+  the main open item on small jobs; Tyler entering the quantities he knows is the fix.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
