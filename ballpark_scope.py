@@ -177,9 +177,11 @@ dishwasher, laundry, tub filler). Leave 0 to let the engine count by room.
 fixture's plumbing work: swap_same (same location), new_in_footprint (moved within the existing house), \
 tub_in_footprint, new_outside_footprint / tub_outside_footprint (in an addition; also count \
 water_sewer_10lf runs). cut_and_cap is one per fixture removed before demo.
-- tile_areas: one per tiled space. kind = primary_bath (large primary bath), hall_bath_tub (hall bath \
-with a tile tub surround), backsplash (kitchen backsplash), small (bath floor only, shower only, \
-laundry, etc.). prep = walk_in_shower or tub_surround when that space has one. sf = the tiled square \
+- tile_areas: one per tiled space. kind = primary_bath (large primary bath), hall_bath_tub (any full \
+secondary bath - hall, guest, kids', Jack and Jill, basement or in-law - with a tiled tub surround OR a \
+tiled walk-in shower; despite the name, a walk-in shower counts), backsplash (kitchen backsplash), small \
+(floor-only tile, powder room, laundry, mudroom, dog wash, fireplace surround, etc.). Every full bath \
+with tiled shower or tub walls is primary_bath or hall_bath_tub, never small. prep = walk_in_shower or tub_surround when that space has one. sf = the tiled square \
 feet (floor + walls + shower) when it can be measured or estimated from the plans or notes; leave null \
 to use a typical size. Tile labor and the per-SF tile material allowance are priced separately.
 - fixtures: list each appliance, plumbing fixture and light fixture named or clearly implied by the \

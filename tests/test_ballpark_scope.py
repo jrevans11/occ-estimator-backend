@@ -79,5 +79,14 @@ class MergeKeepsExtraSpaces(unittest.TestCase):
         self.assertIn("powder", [r["type"] for r in merged["rooms"]])
 
 
+class HallBathWalkInShower(unittest.TestCase):
+    """Barber, Nov 20 2026: secondary baths with tiled walk-in showers were read as "small"."""
+
+    def test_walk_in_shower_bath_is_hall_bath(self):
+        p = bs.system_prompt()
+        self.assertIn("tiled walk-in shower; despite the name, a walk-in shower counts", p)
+        self.assertIn("never small", p)
+        self.assertNotIn("shower only", p)
+
 if __name__ == "__main__":
     unittest.main()
