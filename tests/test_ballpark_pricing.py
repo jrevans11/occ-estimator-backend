@@ -198,6 +198,15 @@ class Finishes(unittest.TestCase):
         self.assertEqual(mats["Laundry floor"]["cost"], 50 * 7.50)
         self.assertTrue(all(l["allowance"] for l in mats.values()))
 
+    def test_hall_bath_with_walk_in_shower(self):
+        r = run({"duration_weeks": 15, "tile_areas": [
+            {"name": "Guest bath", "kind": "hall_bath_tub", "tier": "Premium", "prep": "walk_in_shower"}]})
+        self.assertEqual(one(r, "tile_hall")["cost"], 2200)
+        self.assertEqual(one(r, "tile_prep_shower")["cost"], 1600)
+        self.assertEqual(lines(r, "tile_prep_surround"), [])
+        self.assertEqual(lines(r, "tile_ceramic"), [])
+        self.assertEqual(one(r, "tile_materials")["quantity"], 110)
+
     def test_tile_material_uses_entered_sf(self):
         r = run({"duration_weeks": 15, "tile_areas": [
             {"name": "Primary bath", "kind": "primary_bath", "tier": "Luxury", "sf": 240}]})
