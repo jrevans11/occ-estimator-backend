@@ -459,16 +459,51 @@ All five ran clean on Render (dry run, nothing written). Claude cost $0.21-0.32 
   Render SCOPE_MODEL / SCOPE_EFFORT). Kept: misses come from the read rules, not the model, and
   Sonnet would save about $0.10 a run.
 
+## Nov 20: Groenhof, Stephens, Malm dry runs (first runs on today's rules)
+
+All three ran clean on Render (dry run, nothing written). Forms held only what Tyler knows on site
+(tier, whole home, duration, spaces, room count, addition/foundation/deck SF).
+
+| Job | Tyler | Tool cost | vs Tyler | Tool price / range | Claude |
+|---|---|---|---|---|---|
+| Groenhof 00676 (addition + primary bath) | $231,047 | $210,560 | -8.9% | $269,519 / $275K-$300K | $0.20 |
+| Stephens 00837 (porch, 550 SF) | $155,159 | $112,951 | -27.2% | $144,576 / $140K-$160K | $0.17 |
+| Malm 00844 (whole home + 400 SF addition) | $751,325* | $673,304 | -10.4% | $861,841 / $850K-$950K | $0.34 |
+
+*Malm without Tyler's $28,200 of NOT INCLUDED options ($779,525 with them, -13.6%). The October
+filled-form Malm run was $727,459.
+
+- **Groenhof:** demo 10 x $300 vs Tyler's $12,000 lump. No new HVAC system (Tyler $9,500): the video
+  says the unit is new and should be extended, so the read followed the video. Missing: driveway /
+  concrete paths 600 SF (~$5.4K), brick foundation facade 60 LF ($2.7K), Ceramic Tile 5 x $1,200.
+  Low: exterior trim 150 LF vs Tyler 700/270, drywall 1,500 vs 2,500 SF, vanity $3,750 vs $6,500,
+  siding 7 vs 10 squares. High: windows read as 4 Luxury wood-match ($10K) vs Tyler's 6 x $600; punch
+  5 vs 3.
+- **Stephens:** fireplace + surround + gas line ($17,700) missing. "Fireplace" is not in any visit
+  material the tool reads; Tyler's number came from outside the video. Bifold pass-through window
+  ($6K) stays a $0 Specialty placeholder (by design). Exterior trim 120 LF vs Tyler's 3,600 material /
+  600 labor (~$16.5K gap); exterior paint 4 vs 8. Framing 18 days / 256 SF vs 24 / 400; door $900 vs
+  $1,600 + $450 hardware; countertop $1,200 and footing 30 LF missing. Over: Deck Framing Materials
+  550 x $17.25 ($9.5K) that Tyler doesn't carry.
+- **Malm:** framing 38 days / 700 SF ($31K) vs Tyler's $62K lump + 2,200 SF ($106K) is the biggest
+  gap. Windows 10 Premium vs Tyler's 25 x $900 (~$15K). Missing: front door ($5.1K), fireplace ($9K),
+  brick facade 40 x $137, tankless water heater. Low: CM $900 vs $1,100/week, selections 60 vs 80 hrs,
+  electrical 2,600 vs 3,200 SF, insulation 700 vs 2,200 SF. High: General Plumbing 23 x $1,200
+  ($27.6K) vs Tyler's $22K lump, roofing 30 vs 12 squares ($33K vs $13.2K), interior doors 20 vs 9.
+  Right: plumbing tokens 1 each, 5 Hall Bath Tile lines (Tyler 5 x $2,200), HVAC $22.5K vs $24.5K.
+- **Patterns:** (1) the read can't price what was never said or shown on the visit (Stephens
+  fireplace); (2) exterior trim LF runs low on porch and siding jobs; (3) framing and demo run low on
+  big jobs (Tyler uses lumps the tool doesn't); (4) window count and level often differ from Tyler's.
+  No rule changes made; fixes are Jason's call.
+
 ### Next dry-run candidates (Tyler ballparks with usable site-visit material)
 
-No Tyler ballpark is newer than Barber (Nov 16). Each needs a tool-page form entered first.
+No Tyler ballpark is newer than Barber (Nov 16). Malm, Groenhof and Stephens are now done (above).
 
-- **Malm 00844:** strongest. 9 videos (~5.5 min), all tile types, windows, front and exterior doors.
-- **Groenhof 00676:** good fit for today's changes. 2 videos, windows, exterior door, primary tile,
-  General Plumbing 3 plus swap/new/tub tokens.
-- **Stephens 00837 (porch):** decent videos; tests the custom window and exterior door lines only.
-- Weak material: Parker 00571 (no videos, though the scope fits well), Helburg 00691 (~74s video),
-  McDowell 00904 (no photos), Strawderman 00859 (linked project empty, see above).
+- Weak material only: Parker 00571 (no videos, though the scope fits well), Helburg 00691 (~74s
+  video), McDowell 00904 (no photos), Strawderman 00859 (linked project empty, see above).
+- Next useful runs: reruns of these three after any trim / framing / demo rule change, and Tyler's
+  next new ballpark.
 
 ## Not done / open
 
