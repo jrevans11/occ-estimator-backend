@@ -118,12 +118,12 @@ class Pages(unittest.TestCase):
         pages = bq.build_pages(reply())
         bath = page(pages, "room-1")
         paths = [q["path"] for q in bath["questions"]]
-        self.assertIn("tile_areas.0.sf", paths)
-        self.assertIn("tile_areas.0.prep", paths)
+        self.assertNotIn("tile_areas.0.sf", paths)          # bath tile is a flat allowance + install
+        self.assertIn("tile_areas.0.prep", paths)           # shower or tub sets the install price
         self.assertIn("countertops.1.sf", paths)
         self.assertIn("toilet", bath["info"][0])
         kitchen = [q["path"] for q in page(pages, "room-0")["questions"]]
-        self.assertIn("tile_areas.1.sf", kitchen)          # backsplash
+        self.assertNotIn("tile_areas.1.sf", kitchen)       # backsplash: flat allowance + install
         self.assertIn("countertops.0.sf", kitchen)
         self.assertIn("cabinetry.lowers_lf", kitchen)
         interior = [q["path"] for q in page(pages, "interior")["questions"]]
@@ -182,10 +182,10 @@ class Confirm(unittest.TestCase):
         self.assertEqual(scope["tile_areas"][2]["tier"], "Luxury")    # laundry, no space
 
     def test_room_tier_change_carries_to_its_items(self):
-        scope, _ = bq.confirmed_scope(reply(), {"rooms.1.tier": "Luxury", "tile_areas.0.tier": "Premium"})
+        scope, _ = bq.confirmed_scope(reply(), {"rooms.1.tier": "Luxury", "countertops.1.tier": "Premium"})
         self.assertEqual(scope["fixtures"][1]["tier"], "Luxury")
-        self.assertEqual(scope["countertops"][1]["tier"], "Luxury")
-        self.assertEqual(scope["tile_areas"][0]["tier"], "Premium")   # answered on its own
+        self.assertEqual(scope["tile_areas"][0]["tier"], "Luxury")
+        self.assertEqual(scope["countertops"][1]["tier"], "Premium")  # answered on its own
         self.assertEqual(scope["rooms"][0]["tier"], "Premium")
 
     def test_remove_a_space(self):

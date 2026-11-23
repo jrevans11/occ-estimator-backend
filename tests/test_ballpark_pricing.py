@@ -60,7 +60,7 @@ class PrepAndManagement(unittest.TestCase):
     def test_duration_uses_range_midpoint(self):
         self.assertEqual(self.r["weeks"], 17.5)
         self.assertEqual(one(self.r, "cm")["cost"], 17.5 * 900)
-        self.assertEqual(one(self.r, "dust")["quantity"], 11)        # 60% of 17.5 weeks, rounded up
+        self.assertEqual(one(self.r, "dust")["cost"], 1500)          # $1,500 per job (Nov 23 2026)
 
     def test_port_a_john_and_dumpster_round_up(self):
         self.assertEqual(one(self.r, "port_a_john")["quantity"], 5)    # 17.5 / 4.33 = 4.04 -> 5
@@ -178,48 +178,41 @@ class Finishes(unittest.TestCase):
         big = run({"duration_weeks": 30, "rooms": [{"type": "other"}] * 24})
         self.assertEqual(one(big, "paint_materials")["quantity"], 4)
 
-    def test_tile_lumps_prep_and_ceramic_units(self):
+    def test_tile_allowance_installation_prep_and_ceramic_units(self):
         r = run({"duration_weeks": 15, "tile_areas": [
             {"name": "Primary bath", "kind": "primary_bath", "tier": "Premium", "prep": "walk_in_shower"},
             {"name": "Hall bath", "kind": "hall_bath_tub", "tier": "Quality", "prep": "tub_surround"},
             {"name": "Kitchen", "kind": "backsplash", "tier": "Premium"},
             {"name": "Laundry floor", "kind": "small", "tier": "Quality"},
         ]})
-        # Jason, Nov 20 2026: lumps are labor, not allowances.
-        self.assertEqual(one(r, "tile_primary")["cost"], 5500)
-        self.assertFalse(one(r, "tile_primary")["allowance"])
-        self.assertEqual(one(r, "tile_hall")["cost"], 2200)
-        self.assertEqual(one(r, "tile_backsplash")["cost"], 1800)
-        # Ceramic units only for small spaces.
+        # Nov 23 2026: the flat fees are the tile allowance (material) ...
+        for key, cost in (("tile_primary", 5500), ("tile_hall", 2200), ("tile_backsplash", 1800)):
+            self.assertEqual(one(r, key)["cost"], cost, key)
+            self.assertTrue(one(r, key)["allowance"], key)
+            self.assertEqual(one(r, key)["cost_type"], bp.COST_TYPE_MATERIALS, key)
+        # ... and each space gets its own installation line.
+        install = {l["name"].split(" - ")[1]: l["cost"] for l in lines(r, "tile_install")}
+        self.assertEqual(install, {"Primary bath": 7500, "Hall bath": 4200, "Kitchen": 2000})
+        # Small spaces: Ceramic units plus a per-SF material allowance; nothing per-SF for baths.
         self.assertEqual(one(r, "tile_ceramic")["quantity"], 1)
         self.assertEqual(one(r, "tile_ceramic")["cost"], 1200)
         self.assertIn("Schluter", one(r, "tile_ceramic")["description"])
+        self.assertEqual(one(r, "tile_materials")["cost"], 50 * 7.50)
+        self.assertIn("Laundry floor", one(r, "tile_materials")["name"])
         self.assertEqual(one(r, "tile_prep_shower")["cost"], 1600)
         self.assertEqual(one(r, "tile_prep_surround")["cost"], 900)
-        # One material allowance per area: typical SF x tier rate.
-        mats = {l["name"].split(" - ")[1].split(" (")[0]: l for l in lines(r, "tile_materials")}
-        self.assertEqual(len(mats), 4)
-        self.assertEqual(mats["Primary bath"]["cost"], 180 * 17.50)
-        self.assertEqual(mats["Hall bath"]["cost"], 110 * 7.50)
-        self.assertEqual(mats["Kitchen"]["cost"], 30 * 17.50)
-        self.assertEqual(mats["Laundry floor"]["cost"], 50 * 7.50)
-        self.assertTrue(all(l["allowance"] for l in mats.values()))
 
-    def test_hall_bath_with_walk_in_shower(self):
+    def test_hall_bath_installation_by_shower_or_tub(self):
         r = run({"duration_weeks": 15, "tile_areas": [
             {"name": "Guest bath", "kind": "hall_bath_tub", "tier": "Premium", "prep": "walk_in_shower"}]})
         self.assertEqual(one(r, "tile_hall")["cost"], 2200)
+        self.assertEqual(one(r, "tile_install")["cost"], 5500)
         self.assertEqual(one(r, "tile_prep_shower")["cost"], 1600)
-        self.assertEqual(lines(r, "tile_prep_surround"), [])
         self.assertEqual(lines(r, "tile_ceramic"), [])
-        self.assertEqual(one(r, "tile_materials")["quantity"], 110)
-
-    def test_tile_material_uses_entered_sf(self):
-        r = run({"duration_weeks": 15, "tile_areas": [
-            {"name": "Primary bath", "kind": "primary_bath", "tier": "Luxury", "sf": 240}]})
-        self.assertEqual(one(r, "tile_materials")["quantity"], 240)
-        self.assertEqual(one(r, "tile_materials")["cost"], 240 * 50)
-        self.assertEqual(lines(r, "tile_ceramic"), [])
+        self.assertEqual(lines(r, "tile_materials"), [])
+        unknown = run({"duration_weeks": 15, "tile_areas": [{"name": "Kids bath", "kind": "hall_bath_tub"}]})
+        self.assertEqual(one(unknown, "tile_install")["cost"], 4200)
+        self.assertIn("priced as a tub", one(unknown, "tile_install")["source"])
 
     def test_cabinetry_counters_closets_mirrors(self):
         r = run({"duration_weeks": 15, "rooms": [{"type": "kitchen"}],

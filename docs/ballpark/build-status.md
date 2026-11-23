@@ -634,14 +634,17 @@ paint. He liked that a drop-in tub with tile surround was flagged automatically.
   (`exterior.paint_amount`, now a core question on the Exterior page); a repaint with no figure is a
   $0 line to fill in. Partial paint units unchanged.
 
-**Waiting on Tyler's exact words** (his Granola note wasn't readable from here):
-- Tile: "Primary Bath Tile" and "Tile Materials" are redundant, "Tile Materials" should be "Tile
-  Installation", its total is too low, and installation is missing. Conflicts with Jason's Nov 20 call
-  that the $5,500 / $2,200 / $1,800 lumps are labor. Options: lump becomes the material allowance and
-  the per-SF line becomes installation labor (needs a rate); one per-SF installation line (needs a
-  rate); or the lump renamed Tile Installation with primary bath at $7,200.
-- Dust control: "$1,500 flat (match to number of weeks)". Either $100 x every week (15 weeks = $1,500)
-  or $1,500 per job. Unchanged for now (60% of weeks x $100).
+Then, Jason's calls the same day (PR #56):
+- **Tile:** the flat fees ($5,500 primary bath / $2,200 hall bath / $1,800 backsplash) are the TILE
+  ALLOWANCE (material, allowance lines, Materials cost type), reversing the Nov 20 "lumps are labor"
+  call. Each space also gets "Tile Installation - <space>": primary bath $7,500, hall bath with
+  walk-in shower $5,500, hall bath with tub $4,200 (also used when shower/tub isn't known, flagged in
+  the line note), kitchen backsplash $2,000. The per-SF "Tile Materials" line is gone for baths and
+  backsplashes; small areas (floor-only, laundry, powder) keep Ceramic Tile Installation units plus
+  per-SF material. A Premium primary bath goes from $8,650 ($5,500 + 180 SF x $17.50) to $13,000.
+  Intake: tile SF and tile tier are no longer asked for baths and backsplashes; "Shower or tub" stays
+  (it sets the hall bath installation).
+- **Dust control:** $1,500 per job by default (was $100 x 60% of the weeks).
 
 ## Not done / open
 
