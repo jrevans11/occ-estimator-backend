@@ -565,6 +565,7 @@ class _Budget:
             cost_type = cost_type or tpl["cost_type"]
             if description is None:
                 description = tpl["description"]
+        from_template = unit_cost is None
         if unit_cost is None:
             unit_cost = (tpl or {}).get("unit_cost")
             if not unit_cost:
@@ -579,6 +580,9 @@ class _Budget:
             "quantity": round(float(quantity), 2), "unit": unit, "unit_cost": round(float(unit_cost), 2),
             "cost_type": cost_type, "cost_code": PHASE_COST_CODES.get(phase, ""),
             "description": description or "", "allowance": allowance, "placeholder": placeholder or "",
+            # The rule or source behind the line, for the dry-run line table.
+            "source": (f"$0 placeholder: {placeholder}" if placeholder
+                       else note or ("template price" if from_template else "tool rule")),
         }
         line["cost"] = round(line["quantity"] * line["unit_cost"], 2)
         self.lines.append(line)
@@ -1338,4 +1342,27 @@ def _finish(b, scope, top_tier, punch_entered=False):
         "phases": phases, "review": b.review,
         "total_cost": total_cost, "total_price": total_price,
         "markup": markup, "margin": margin, "range": price_range(total_price),
+        "inputs": scope_inputs(scope),
+    }
+
+
+def scope_inputs(scope):
+    """The scope flags and sizes that drive pricing, for the dry-run line table."""
+    ext = scope.get("exterior") or {}
+    return {
+        "whole_home": bool(scope.get("whole_home")),
+        "full_exterior_repaint": bool(ext.get("full_exterior_repaint")),
+        "gutters": ext.get("gutters"),
+        "tier": highest_tier(scope),
+        "duration_range": scope.get("duration_range") or "",
+        "weeks": duration_weeks(scope),
+        "punch_list_days": scope.get("punch_list_days"),
+        "floor_plan_sf": scope.get("floor_plan_sf"),
+        "heated_sf": scope.get("heated_sf"),
+        "framed_sf": scope.get("framed_sf"),
+        "addition_sf": scope.get("addition_sf"),
+        "siding_squares": ext.get("siding_squares"),
+        "trim_lf": ext.get("trim_lf"),
+        "rooms": [{"name": r.get("name") or "", "type": r.get("type") or "", "tier": r.get("tier") or "",
+                   "sf": r.get("sf")} for r in scope.get("rooms") or []],
     }
