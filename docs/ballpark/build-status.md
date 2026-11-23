@@ -613,6 +613,36 @@ Claude cost per job stays one read (~$0.22, a little more for the `field_status`
 itself costs nothing. Next: a dry run on Wharton 00903 and on the next new site visit, checking how many
 questions it asks and whether `field_status` comes back complete.
 
+## Tyler's first guided-intake run: fixes (Nov 23, 2026)
+
+Tyler ran the new intake and sent line-item notes. Working well per Tyler: CM, port-a-john, selection
+coordination, framing labor and materials, electrical, HVAC, tile prep, interior doors, insulation,
+siding materials, drywall ("bang on"), vanities, hardware, countertops, electrical fixtures, interior
+paint. He liked that a drop-in tub with tile surround was flagged automatically. Changed:
+
+- **Permits:** 2 x $800 on a single-space job (exactly one kitchen / bath / powder room, or a porch or
+  deck job with no siding or roofing; not whole-home, no addition), at any size. Other jobs unchanged.
+- **Preconstruction:** a $0 line on every job, priced by hand when needed (replaces 2% / 1.5% / 1%).
+- **General Plumbing:** off. Rough plumbing is itemized at the read's counts (same location, new
+  location, tub, cut and cap, ...), no more 1-each tokens. Those counts are now core questions on the
+  intake's Mechanical page. The fixture count still sets finish plumbing hours (3 per fixture).
+- **Mirrors:** $700 each inside the Plumbing Fixtures allowance (job's top tier), no Mirrors line.
+- **Plumbing fixtures shown twice:** items with no tier price (e.g. a drop-in tub) now stay on their
+  tier's allowance line ("some unpriced") and go to the review list, instead of a second $0 line for
+  the same tier. A tier with only unpriced items still gets one $0 placeholder.
+- **Exterior paint:** no heated-SF formula. Full repaint is yes/no plus the figure Tyler enters
+  (`exterior.paint_amount`, now a core question on the Exterior page); a repaint with no figure is a
+  $0 line to fill in. Partial paint units unchanged.
+
+**Waiting on Tyler's exact words** (his Granola note wasn't readable from here):
+- Tile: "Primary Bath Tile" and "Tile Materials" are redundant, "Tile Materials" should be "Tile
+  Installation", its total is too low, and installation is missing. Conflicts with Jason's Nov 20 call
+  that the $5,500 / $2,200 / $1,800 lumps are labor. Options: lump becomes the material allowance and
+  the per-SF line becomes installation labor (needs a rate); one per-SF installation line (needs a
+  rate); or the lump renamed Tile Installation with primary bath at $7,200.
+- Dust control: "$1,500 flat (match to number of weeks)". Either $100 x every week (15 weeks = $1,500)
+  or $1,500 per job. Unchanged for now (60% of weeks x $100).
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
