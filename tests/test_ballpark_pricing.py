@@ -111,6 +111,13 @@ class PercentLines(unittest.TestCase):
         self.assertEqual(permits(550_000, addition), 7)
         self.assertEqual(permits(800_000, addition), 9)
         self.assertEqual(permits(120_000, {}), 1)                   # interior only, under $150K
+        # Tyler, Nov 23 2026: a kitchen, bath or porch job gets 2, at any size.
+        bath = {"rooms": [{"type": "primary_bath"}, {"type": "other"}]}
+        self.assertEqual(permits(180_000, bath), 2)
+        self.assertEqual(permits(180_000, {"deck_sf": 300}), 2)
+        self.assertEqual(permits(180_000, {"rooms": [{"type": "kitchen"}, {"type": "hall_bath"}]}), 4)
+        self.assertEqual(permits(180_000, dict(bath, whole_home=True)), 4)
+        self.assertEqual(permits(180_000, {"exterior": {"siding_squares": 20}}), 4)
 
     def test_size_driven_completion_lines(self):
         small = run({"duration_weeks": 10})
@@ -231,8 +238,10 @@ class Finishes(unittest.TestCase):
         self.assertEqual(one(r, "cabinet_hw")["cost"], 2500)          # kitchen, Quality
         self.assertEqual(one(r, "closets", "primary")["cost"], 9000)
         self.assertEqual(one(r, "closets", "shelf")["cost"], 1050)
-        self.assertEqual(one(r, "mirrors")["cost"], 1400)
-        self.assertEqual(one(r, "mirrors")["phase"], "5400")
+        # Mirrors ride in the plumbing fixture allowance (Tyler, Nov 23).
+        self.assertEqual(lines(r, "mirrors"), [])
+        self.assertEqual(one(r, "plumbing_fixtures")["cost"], 1400)
+        self.assertIn("2 x mirror", one(r, "plumbing_fixtures")["source"])
 
     def test_bath_hardware_one_line_per_job(self):
         one_bath = run({"duration_weeks": 15, "rooms": [{"type": "primary_bath"}]})
@@ -240,28 +249,34 @@ class Finishes(unittest.TestCase):
         two = run({"duration_weeks": 15, "rooms": [{"type": "primary_bath"}, {"type": "hall_bath"}]})
         self.assertEqual(one(two, "bath_hardware")["cost"], 1600)
 
-    def test_general_plumbing_and_finish_hours_per_fixture(self):
+    def test_finish_plumbing_hours_per_fixture_and_no_general_plumbing(self):
+        # Tyler, Nov 23 2026: no General Plumbing line; the count still sets finish hours.
         r = run({"duration_weeks": 15, "rooms": [{"type": "primary_bath"}, {"type": "kitchen"}]})
-        self.assertEqual(one(r, "general_plumbing")["quantity"], 6)     # 4 + 2 by room
-        self.assertEqual(one(r, "general_plumbing")["cost"], 7200)
-        self.assertEqual(one(r, "finish_plumbing")["quantity"], 18)     # 3 hrs per fixture
+        self.assertEqual(lines(r, "general_plumbing"), [])
+        self.assertEqual(one(r, "finish_plumbing")["quantity"], 18)     # (4 + 2 by room) x 3 hrs
         given = run({"duration_weeks": 15, "plumbing": {"fixture_count": 9}, "rooms": [{"type": "kitchen"}]})
-        self.assertEqual(one(given, "general_plumbing")["quantity"], 9)
+        self.assertEqual(one(given, "finish_plumbing")["quantity"], 27)
 
-    def test_plumbing_location_lines_are_tokens_beside_general_plumbing(self):
+    def test_plumbing_is_itemized_at_the_read_counts(self):
         plumb = {"fixture_count": 12, "swap_same": 8, "new_in_footprint": 9, "tub_in_footprint": 2,
                  "new_outside_footprint": 3, "vent_thru_roof": 2, "cut_and_cap": 4}
         r = run({"duration_weeks": 15, "plumbing": plumb})
-        self.assertEqual(one(r, "general_plumbing")["quantity"], 12)
-        for key in ("plumb_swap", "plumb_new_in", "plumb_tub_in"):
-            self.assertEqual(one(r, key)["quantity"], 1)
-        self.assertEqual(one(r, "plumb_new_out")["quantity"], 3)
-        self.assertEqual(one(r, "plumb_vent")["quantity"], 2)
-        self.assertEqual(one(r, "plumb_cut_cap")["quantity"], 4)
-        # No General Plumbing on the job: the read's counts stand.
-        alone = run({"duration_weeks": 15, "plumbing": {"swap_same": 5}})
-        self.assertEqual(lines(alone, "general_plumbing"), [])
-        self.assertEqual(one(alone, "plumb_swap")["quantity"], 5)
+        self.assertEqual(lines(r, "general_plumbing"), [])
+        for key, n in (("plumb_swap", 8), ("plumb_new_in", 9), ("plumb_tub_in", 2), ("plumb_new_out", 3),
+                       ("plumb_vent", 2), ("plumb_cut_cap", 4)):
+            self.assertEqual(one(r, key)["quantity"], n, key)
+
+    def test_unpriced_fixture_stays_on_its_tier_line(self):
+        r = run({"duration_weeks": 15, "fixtures": [
+            {"category": "plumbing", "item": "toilet", "tier": "Quality"},
+            {"category": "plumbing", "item": "drop-in tub", "tier": "Quality"}]})
+        fx_lines = lines(r, "plumbing_fixtures")
+        self.assertEqual(len(fx_lines), 1)                               # one Quality line, not two
+        self.assertIn("some unpriced", fx_lines[0]["name"])
+        self.assertTrue(any("drop-in tub" in x for x in r["review"]))
+        only_unpriced = run({"duration_weeks": 15, "fixtures": [
+            {"category": "plumbing", "item": "drop-in tub", "tier": "Quality"}]})
+        self.assertTrue(one(only_unpriced, "plumbing_fixtures")["placeholder"])
 
     def test_flooring(self):
         r = run({"duration_weeks": 15, "flooring": {"hardwood_new_sf": 100, "hardwood_refinish_sf": 200,
@@ -296,15 +311,16 @@ class SiteLines(unittest.TestCase):
         self.assertEqual(one(r, "survey")["cost"], 1850)
         precon = one(r, "preconstruction")
         self.assertFalse(precon["placeholder"])
-        self.assertAlmostEqual(precon["price"], 0.02 * r["total_price"], delta=2)   # under $250K: 2%
+        self.assertEqual(precon["cost"], 0)                       # priced by hand (Tyler, Nov 23)
         full = run({"duration_weeks": 15, "site": {"engineering": "full"}})
         self.assertEqual(one(full, "engineering")["cost"], 2800)
         self.assertEqual(lines(run({"duration_weeks": 15, "site": {"engineering": "none"}}), "engineering"), [])
 
-    def test_precon_on_every_job(self):
-        # Jason, Nov 19 2026: preconstruction goes on every job, plans or not.
+    def test_precon_is_a_zero_line_on_every_job(self):
+        # Tyler, Nov 23 2026: $0 on every job, added by hand when needed.
         r = run({"duration_weeks": 15, "rooms": [{"type": "kitchen", "tier": "Quality"}]})
-        self.assertAlmostEqual(one(r, "preconstruction")["price"], 0.02 * r["total_price"], delta=2)
+        self.assertEqual(one(r, "preconstruction")["cost"], 0)
+        self.assertFalse(one(r, "preconstruction")["name"].endswith("(PRICING TBD)"))
 
 
 class Exterior(unittest.TestCase):
@@ -369,8 +385,10 @@ class Exterior(unittest.TestCase):
         r = run({"duration_weeks": 15, "exterior": {"paint_units": 13}})
         self.assertEqual(one(r, "ext_paint")["cost"], 13 * 1200)          # Greenway
         full = run({"duration_weeks": 15, "heated_sf": 2500,
-                    "exterior": {"full_exterior_repaint": True, "paint_units": 4}})
-        self.assertEqual(one(full, "ext_paint")["cost"], 20000)            # full repaint wins
+                    "exterior": {"full_exterior_repaint": True, "paint_units": 4, "paint_amount": 19000}})
+        self.assertEqual(one(full, "ext_paint")["cost"], 19000)            # the entered figure wins
+        no_figure = run({"duration_weeks": 15, "exterior": {"full_exterior_repaint": True, "paint_units": 4}})
+        self.assertEqual(one(no_figure, "ext_paint")["cost"], 0)           # full repaint wins over units
         self.assertEqual(lines(run({"duration_weeks": 15}), "ext_paint"), [])
 
     def test_garage_paint_screening_gutters(self):
@@ -378,7 +396,9 @@ class Exterior(unittest.TestCase):
                  "exterior": {"garage_doors_single": 1, "garage_doors_double": 1, "full_exterior_repaint": True,
                               "porch_screening_lf": 30, "gutters": True}})
         self.assertEqual(sum(l["cost"] for l in lines(r, "garage_door")), 10700)
-        self.assertEqual(one(r, "ext_paint")["cost"], 20000)
+        # Full repaint without a figure: a $0 line to fill in, no heated-SF formula (Tyler, Nov 23).
+        self.assertEqual(one(r, "ext_paint")["cost"], 0)
+        self.assertTrue(one(r, "ext_paint")["placeholder"])
         self.assertEqual(one(r, "porch_screening")["cost"], 4200)
         self.assertEqual(one(r, "gutters")["cost"], 2 * 1200)        # partial job default
         whole = run({"duration_weeks": 30, "whole_home": True, "exterior": {"gutters": True}})
@@ -546,7 +566,7 @@ class DryRunLineTable(unittest.TestCase):
         for line in lines(r):
             self.assertTrue(line["source"], line["name"])
         self.assertEqual(one(r, "cm")["source"], "12.5 weeks x $900/wk")
-        self.assertEqual(one(r, "ext_paint")["source"], "3000 heated SF x $8")
+        self.assertIn("enter the exterior paint figure", one(r, "ext_paint")["source"])
 
     def test_inputs_are_returned(self):
         r = run({"duration_range": "10-15", "whole_home": True, "heated_sf": 3000, "framed_sf": 200,

@@ -203,8 +203,6 @@ T_NAMES = {
 EXTRA_LINES = {
     "tile_materials": {"name": "Tile Materials", "phase": "5300", "cost_type": COST_TYPE_MATERIALS,
                        "unit": "Square Feet", "description": "Tile material allowance."},
-    "mirrors": {"name": "Mirrors", "phase": "5400", "cost_type": COST_TYPE_MATERIALS, "unit": "Each",
-                "description": "Mirror allowance."},
     "engineering": {"name": "Engineering", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
                     "description": "Structural engineering for the work shown on the plans."},
     "survey": {"name": "Lot Survey", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
@@ -235,10 +233,9 @@ SITE_WORK_UNIT = 800              # Tyler: Site Work $800 x 1-6 on 12 of 20 ball
 GRADING_UNIT = 600                # Tyler: Grading $600 x 1-8
 ENGINEERING = {"letter": 1850, "full": 2800}   # Frandsen engineering letter / McDowell engineering
 SURVEY = 1850                     # Tyler, Nov 19 2026: only when Jason says a survey is needed
-# Tyler, Nov 19 2026: preconstruction (plans, pricing, selections; ~90% drawings)
-# is a share of the contract price: (contract price ceiling, rate). Jason,
-# Nov 19 2026: it goes on every job, not only jobs with plans.
-PRECON_RATES = [(250000, 0.02), (600000, 0.015), (None, 0.01)]
+# Tyler, Nov 23 2026 (first guided-intake run): preconstruction goes in at $0
+# and is added by hand when a job needs it. (Nov 19: 2% / 1.5% / 1% of the
+# contract on every job.)
 CRAWLSPACE_TREATMENT = 4500
 FRAMING_MATERIALS_PER_SF = 20
 FRAMING_LABOR_PER_DAY = 450
@@ -246,15 +243,11 @@ FOOTING_PER_LF = 42
 FINISH_HOURLY = 75
 UNDER_CABINET_PER_KITCHEN = 875
 GENERAL_ELECTRICAL_PER_SF = 9
-GENERAL_PLUMBING_PER_FIXTURE = 1200
+# Tyler, Nov 23 2026: no General Plumbing ($1,200 a fixture) for now; rough
+# plumbing is itemized (same location, new location, tub, cut and cap, ...)
+# at the read's counts. The fixture count still sets finish plumbing hours.
 PLUMBING_FIXTURES_PER_ROOM = {"primary_bath": 4, "hall_bath": 3, "powder": 2, "kitchen": 2}
 FINISH_PLUMBING_HRS_PER_FIXTURE = 3
-# Tyler's ballparks put each fixture on one line: General Plumbing ($1,200 each)
-# carries them, and the in-footprint swap / move / tub lines appear as 1-each
-# tokens beside it (Barber, Gentles, Groenhof). Without General Plumbing the
-# read's counts stand. Outside-footprint, vent, water/sewer and cut-and-cap
-# lines keep their counts.
-PLUMBING_TOKEN_LINES = ("plumb_swap", "plumb_new_in", "plumb_tub_in")
 FINISH_ELECTRICAL_HRS_PER_ROOM = 1.5
 RECESSED_PER_ROOM = 1.5
 HVAC_PER_TON = 5000
@@ -292,7 +285,6 @@ WOOD_DOOR_TYPES = ("single_wood", "sidelights_wood", "french_wood")
 WOOD_DOOR_STAIN_BUMP = 0.10       # Jason: stained wood doors cost more to finish than painted
 GARAGE_DOOR_SINGLE = 3500
 GARAGE_DOOR_DOUBLE = 7200
-EXT_PAINT_PER_HEATED_SF = 8
 EXT_PAINT_UNIT = 1200             # Tyler's partial-paint unit (1-20 units on 9 of 20 ballparks)
 PORCH_SCREENING_PER_LF = 140
 GUTTER_UNIT = 1200
@@ -342,6 +334,7 @@ WARRANTY_MIN = 1200
 # Size-driven lines (Tyler's 20 ballparks): (job cost ceiling, value).
 PERMIT_COUNTS = [(100000, 2), (200000, 4), (400000, 5), (700000, 7), (None, 9)]
 PERMITS_SMALL_INTERIOR = (150000, 1)   # interior-only job under this cost: 1 permit
+PERMITS_SINGLE_SPACE = 2               # Tyler, Nov 23 2026: kitchen, bath or porch job
 SELECTION_BY_COST = [(160000, None), (250000, 32), (550000, 40), (None, 60)]   # None = by tier
 SELECTION_LUXURY_LARGE = 80
 PUNCH_DAYS_BY_COST = [(160000, 1), (300000, 2), (400000, 3), (None, 5)]
@@ -668,13 +661,18 @@ def _price_fixture(item, tier_prices):
     return None, ""
 
 
-def _fixture_lines(b, scope, category, key, tier_prices, label):
+def _fixture_lines(b, scope, category, key, tier_prices, label, extra=()):
+    """One allowance line per tier. Items with no tier price stay on that
+    tier's line (named "some unpriced") and go to the review list, rather than
+    a second line for the same tier (Tyler, Nov 23 2026). extra: already-priced
+    items (tier, item, qty, unit price, source), e.g. mirrors."""
     items = [f for f in scope.get("fixtures") or [] if f.get("category") == category]
-    if not items:
-        return
     by_tier = {}
     for f in items:
         by_tier.setdefault(_tier(f.get("tier")), []).append(f)
+    for tier, item, qty, price, source in extra:
+        by_tier.setdefault(_tier(tier), []).append({"item": item, "quantity": qty, "unit_price": price,
+                                                    "price_source": source})
     for tier in TIERS:
         group = by_tier.get(tier)
         if not group:
@@ -692,12 +690,16 @@ def _fixture_lines(b, scope, category, key, tier_prices, label):
             total += qty * price
             count += qty
             details.append(f"{qty} x {desc} @ ${price:,.0f} ({source})")
-        if count:
-            b.add(key, 1, total, name=f"{label} - {tier} allowance ({count} item{'s' if count != 1 else ''})",
-                  allowance=True, note="; ".join(details))
-        if unpriced:
+        if not count:
             b.add(key, 1, name=f"{label} - {tier} (unpriced items)",
                   placeholder="no tier price for: " + ", ".join(unpriced))
+            continue
+        name = f"{label} - {tier} allowance ({count} item{'s' if count != 1 else ''}"
+        name += ", some unpriced)" if unpriced else ")"
+        if unpriced:
+            details.append("NOT PRICED, add by hand: " + ", ".join(unpriced))
+            b.review.append(f"{label} - {tier}: no tier price for {', '.join(unpriced)}; add it to that line by hand.")
+        b.add(key, 1, total, name=name, allowance=True, note="; ".join(details))
 
 
 def price_scope(scope, template, tier_prices=None):
@@ -785,21 +787,16 @@ def price_scope(scope, template, tier_prices=None):
         n = _count(plumb.get(field))
         if not n:
             continue
-        note = plumb.get("source") or None
-        if fixtures_n and key in PLUMBING_TOKEN_LINES and n > 1:
-            # General Plumbing already carries every fixture; Tyler keeps these as 1-each tokens.
-            note = (f"{n} read, 1 kept: General Plumbing carries each fixture" + (f" ({note})" if note else ""))
-            n = 1
-        b.add(key, n, None, note=note)
+        b.add(key, n, None, note=plumb.get("source") or None)
     wh = (mech.get("water_heater") or "none").lower()
     if wh == "tank":
         b.add("wh_tank", 1, None)
     elif wh == "tankless":
         b.add("wh_tankless", 1, None)
-    if fixtures_n:
-        b.add("general_plumbing", fixtures_n, GENERAL_PLUMBING_PER_FIXTURE, unit="Each",
-              note=f"{fixtures_n} fixtures x ${GENERAL_PLUMBING_PER_FIXTURE:,} ({fixtures_how})")
-    _fixture_lines(b, scope, "plumbing", "plumbing_fixtures", tier_prices, "Plumbing Fixtures")
+    # Tyler, Nov 23 2026: mirrors go in the plumbing fixture allowance, not a line of their own.
+    mirrors = _count(scope.get("mirrors"))
+    extra = [(top_tier, "mirror", mirrors, MIRROR, f"${MIRROR} mirror allowance")] if mirrors else []
+    _fixture_lines(b, scope, "plumbing", "plumbing_fixtures", tier_prices, "Plumbing Fixtures", extra)
     if fixtures_n:
         hrs = fixtures_n * FINISH_PLUMBING_HRS_PER_FIXTURE
         b.add("finish_plumbing", hrs, FINISH_HOURLY,
@@ -979,12 +976,9 @@ def price_scope(scope, template, tier_prices=None):
         b.add("ext_paint", 1, amount, unit="Each",
               note=f"${amount:,.0f} exterior paint number given on site")
     elif ext.get("full_exterior_repaint"):
-        heated = _num(scope.get("heated_sf"))
-        if heated > 0:
-            b.add("ext_paint", heated, EXT_PAINT_PER_HEATED_SF, unit="Square Feet",
-                  note=f"{heated:g} heated SF x ${EXT_PAINT_PER_HEATED_SF}")
-        else:
-            b.add("ext_paint", 1, placeholder="full exterior repaint selected but no heated SF entered")
+        # Tyler, Nov 23 2026: a full repaint is a yes/no plus the dollar figure
+        # he enters; no heated-SF formula.
+        b.add("ext_paint", 1, placeholder="full exterior repaint: enter the exterior paint figure")
     elif _num(ext.get("paint_units")) > 0:
         units = _num(ext["paint_units"])
         b.add("ext_paint", units, EXT_PAINT_UNIT, unit="Each",
@@ -1115,8 +1109,6 @@ def price_scope(scope, template, tier_prices=None):
               allowance=True)
     if _count(closets.get("small")):
         b.add("closets", _count(closets["small"]), SMALL_CLOSET, name="Closets - shelf and rod")
-    if _count(scope.get("mirrors")):
-        b.add("mirrors", _count(scope["mirrors"]), MIRROR, allowance=True)
 
     # 5500 Appliances
     _fixture_lines(b, scope, "appliance", "appliances", tier_prices, "Appliances")
@@ -1244,6 +1236,21 @@ def plumbing_fixture_count(scope):
     return n, "by room: " + ", ".join(parts) if n else ""
 
 
+def is_single_space(scope):
+    """One kitchen, one bath or one porch (Tyler's single-space job): not
+    whole-home, no addition, and either exactly one kitchen / bath / powder
+    room, or none and exterior work without siding or roofing (a porch or deck)."""
+    if scope.get("whole_home") or _num(scope.get("addition_sf")) or _num(scope.get("foundation_sf")):
+        return False
+    spaces = sum(1 for r in scope.get("rooms") or [] if r.get("type") in ("kitchen", "primary_bath",
+                                                                          "hall_bath", "powder"))
+    if spaces == 1:
+        return True
+    ext = scope.get("exterior") or {}
+    return (spaces == 0 and not _is_interior_only(scope)
+            and not _num(ext.get("siding_squares")) and not _num(ext.get("roof_squares")))
+
+
 def _is_interior_only(scope):
     if _num(scope.get("addition_sf")) or _num(scope.get("foundation_sf")) or _num(scope.get("deck_sf")):
         return False
@@ -1271,7 +1278,9 @@ def _sized_lines(scope, top_tier, job_cost, punch_entered):
         out.append(("punch", days, PUNCH_PER_DAY, f"{days} day(s) by job size (none entered)"))
     cleanings = 2 if job_cost > CLEANING_TWO_OVER_COST else 1
     out.append(("cleaning", cleanings, None, f"{cleanings} (2 on jobs over $390,625)"))
-    if _is_interior_only(scope) and job_cost < PERMITS_SMALL_INTERIOR[0]:
+    if is_single_space(scope):
+        permits, why = PERMITS_SINGLE_SPACE, "single-space job"
+    elif _is_interior_only(scope) and job_cost < PERMITS_SMALL_INTERIOR[0]:
         permits, why = PERMITS_SMALL_INTERIOR[1], "small interior-only job"
     else:
         permits, why = by_cost(PERMIT_COUNTS, job_cost), f"job cost ~${job_cost / 1000:,.0f}K"
@@ -1280,17 +1289,9 @@ def _sized_lines(scope, top_tier, job_cost, punch_entered):
 
 
 def _precon_line(b):
-    """Preconstruction (plans, pricing, selections) as a share of the contract
-    price, Tyler's Nov 19 2026 rule: 2% under $250K, 1.5% to $600K, 1% above.
-    The contract price includes this line, so solve P = rate x (rest + P)."""
-    rest_price = b.cost() * (1 + MARKUP)
-    rate = by_cost(PRECON_RATES, rest_price)
-    price = rate * rest_price / (1 - rate)
-    rate = by_cost(PRECON_RATES, rest_price + price)
-    price = rate * rest_price / (1 - rate)
-    b.add("preconstruction", 1, round(price / (1 + MARKUP), 2), unit="Each",
-          note=f"{rate:.1%} of the ~${(rest_price + price) / 1000:,.0f}K contract price "
-               f"(plans, pricing and selections)")
+    """Preconstruction at $0 (Tyler, Nov 23 2026): the line is there so it can
+    be priced by hand in JobTread when a job needs plans."""
+    b.add("preconstruction", 1, 0, unit="Each", note="$0 - add by hand if this job needs plans or drawings")
 
 
 def _finish(b, scope, top_tier, punch_entered=False):
@@ -1317,7 +1318,7 @@ def _finish(b, scope, top_tier, punch_entered=False):
     b.add("warranty", 1, warranty,
           note=f"1% of ${subtotal:,.0f} cost before warranty, minimum ${WARRANTY_MIN:,}")
 
-    # Jason, Nov 19 2026: preconstruction goes on every job.
+    # Preconstruction: a $0 line on every job, priced by hand (Tyler, Nov 23 2026).
     _precon_line(b)
 
     total_cost = b.cost()
