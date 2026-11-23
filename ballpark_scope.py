@@ -25,6 +25,7 @@ WEB_SEARCH_MAX_USES = 8
 
 SCOPE_SCHEMA = """{
   "scope": {
+    "tier": "Quality|Premium|Luxury",        // the job's general tier; null if nothing points to one
     "whole_home": true,                      // whole-home renovation or addition
     "punch_list_days": 5,
     "floor_plan_sf": 2200,                   // renovated area
@@ -74,7 +75,10 @@ SCOPE_SCHEMA = """{
       "appliance_install_hours": {"value": 6, "reasoning": "..."}
     }
   },
-  "sources": {"floor_plan_sf": "tool page", "exterior.windows": "scope summary video 0:42", "...": "..."},
+  "sources": {"floor_plan_sf": "tool page", "exterior.windows": "scope summary video 0:42",
+              "rooms.1.tier": "comment Nov 14", "estimates.demo_days": "estimated from ...", "...": "..."},
+  "field_status": {"floor_plan_sf": "stated", "exterior.windows": "estimated", "exterior.gutters": "not_mentioned",
+                   "rooms.1.tier": "conflict", "...": "..."},
   "conflicts": ["Walkthrough said 2 baths; scope summary says 3. Used 3 (scope summary wins)."],
   "open_questions": ["..."],
   "confidence": "low|medium|high",
@@ -221,7 +225,16 @@ days at $450/day; Tyler's ballparks run 5-12 days small, 16-30 medium, 36-40 for
 appliance_install_hours ($75/hr, about 16 hrs per kitchen). Trim days and finish plumbing/electrical \
 hours come from the engine's per-room rules. Omit an estimate whose work isn't in scope.
 - sources: for every number you set, say where it came from ("tool page", "scope summary video", \
-"walkthrough video 3", "comment Oct 6", "estimated from ...").
+"walkthrough video 3", "comment Oct 6", "estimated from ..."). Keys are dot paths into scope; list \
+items use their 0-based index (rooms.0.tier, tile_areas.1.sf, countertops.0.sf, exterior.door_types.french).
+- field_status: Tyler confirms every number on a guided intake, so say how you know each one, using the \
+same dot paths as sources. Cover EVERY scalar field in scope (top level, exterior, exterior.door_types, \
+flooring, cabinetry, closets, mechanical, plumbing, new_service, site) and, for every item in rooms, \
+tile_areas and countertops, its tier, sf, prep and tall_ceiling. Values: "stated" (someone said, wrote or \
+measured it: the tool page, a video, a comment, Rendr), "estimated" (you worked it out or assumed it), \
+"not_mentioned" (nothing in the material; you left it at 0, false or null), "conflict" (the material \
+disagrees; explain it in conflicts). A count of 0 because the work was explicitly ruled out is "stated".
+- tier: the job's general tier when Tyler said it or the material clearly points to one, else null.
 - conflicts: every place two inputs disagreed, and which one you used.
 - missing: anything you could not determine goes in open_questions.
 
@@ -359,8 +372,10 @@ def parse_reply(text):
     if not isinstance(obj.get("scope"), dict):
         raise ScopeError("Claude's reply has no scope object.")
     obj.setdefault("summary", {})
-    for key in ("sources", "conflicts", "open_questions"):
-        obj.setdefault(key, {} if key == "sources" else [])
+    for key in ("sources", "field_status", "conflicts", "open_questions"):
+        obj.setdefault(key, {} if key in ("sources", "field_status") else [])
+    if not isinstance(obj["field_status"], dict):
+        obj["field_status"] = {}
     return obj
 
 

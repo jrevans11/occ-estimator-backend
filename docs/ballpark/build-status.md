@@ -594,11 +594,24 @@ Reruns with the prices typed in the notes box (dry run, Nov 20):
 Also open: General Electrical on every job (Nov 17) vs only when dictated (Nov 19); permits and storage
 fixed vs banded.
 
-## Guided intake (designed Nov 23, not built)
+## Guided intake (built Nov 23, not yet tried live)
 
-See `GUIDED_INTAKE_DESIGN.md`: read the site visit first, pre-fill every field with its source, then ask
-only what's missing or guessed, one page per space, review, build. Most of the Wharton gap came from
-guesses Tyler never saw; this flow puts each one in front of him.
+See `GUIDED_INTAKE_DESIGN.md` ("As built"): read the site visit first, pre-fill every field with its
+source, then ask only what's missing or guessed, one page per space, review, build. Most of the Wharton
+gap came from guesses Tyler never saw; this flow puts each one in front of him.
+
+| Piece | Where |
+|---|---|
+| Read endpoints + saved read per job | `ballpark_read.py` (`/ballpark/read`, `/ballpark/read/status`) |
+| Question catalog, pages, answers to scope | `ballpark_questions.py` |
+| `field_status` + job `tier` in the read | `ballpark_scope.py` prompt and schema |
+| Guided build (no second Claude call) | `ballpark.py` `POST /ballpark` with `from_read` |
+| Tool page | sales-lead-tool `app/intake/ballpark/page.tsx`; old form at `/intake/ballpark/form` |
+| Tests | `tests/test_ballpark_guided.py` |
+
+Claude cost per job stays one read (~$0.22, a little more for the `field_status` output); the build
+itself costs nothing. Next: a dry run on Wharton 00903 and on the next new site visit, checking how many
+questions it asks and whether `field_status` comes back complete.
 
 ## Not done / open
 
