@@ -577,6 +577,29 @@ Reruns with the prices typed in the notes box (dry run, Nov 20):
   3 days, preconstruction, and Tyler's own $0-1 placeholders. Re-priced locally with Tyler's quantities
   for trim, paint, demo, framing, punch and 10 weeks: $148,412 cost.
 
+## Wharton pricing fixes waiting for Jason (Nov 23, not approved, not built)
+
+1. Demo and framing as lump rules ($2,500 per kitchen/bath, $7,500 with structural, $15,000 whole home,
+   load-bearing $13,500, porch/garage $16,500, addition $20/SF + 125% labor). These "Nov 9" rules are not
+   written anywhere in the docs; Jason to confirm.
+2. No siding tear-off days in demo (siding labor already covers it).
+3. Separate "exterior re-side" flag instead of relying on whole_home.
+4. Heated SF entered (required with a full exterior repaint) instead of estimated.
+5. Smooth the $160K size-band cliff (selection hours, storage, permits, precon).
+6. Vanity rule: double $6,500 / single $3,500 instead of $625/LF.
+7. Primary bath tile labor $7,200 (now $5,500), if confirmed.
+8. Drop-in tub tier price (now a $0 placeholder).
+9. Duration minimums (12 wks; 19 for kitchen or primary suite), only if Jason confirms; not in the spec.
+10. Trim 12 LF per siding square stays until Tyler answers.
+Also open: General Electrical on every job (Nov 17) vs only when dictated (Nov 19); permits and storage
+fixed vs banded.
+
+## Guided intake (designed Nov 23, not built)
+
+See `GUIDED_INTAKE_DESIGN.md`: read the site visit first, pre-fill every field with its source, then ask
+only what's missing or guessed, one page per space, review, build. Most of the Wharton gap came from
+guesses Tyler never saw; this flow puts each one in front of him.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
