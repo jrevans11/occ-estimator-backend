@@ -535,5 +535,37 @@ class StatedPrices(unittest.TestCase):
         self.assertEqual(r["total_cost"], base["total_cost"])
 
 
+class DryRunLineTable(unittest.TestCase):
+    """Nov 23 2026: every line says where its number came from, and the result
+    carries the input flags, so a dry run can be checked line by line."""
+
+    def test_every_line_has_a_source(self):
+        r = run({"duration_range": "10-15", "whole_home": True, "heated_sf": 3000, "framed_sf": 200,
+                 "exterior": {"siding_squares": 60, "trim_lf": 720, "full_exterior_repaint": True},
+                 "rooms": [{"name": "Primary bath", "type": "primary_bath", "tier": "Quality"}]})
+        for line in lines(r):
+            self.assertTrue(line["source"], line["name"])
+        self.assertEqual(one(r, "cm")["source"], "12.5 weeks x $900/wk")
+        self.assertEqual(one(r, "ext_paint")["source"], "3000 heated SF x $8")
+
+    def test_inputs_are_returned(self):
+        r = run({"duration_range": "10-15", "whole_home": True, "heated_sf": 3000, "framed_sf": 200,
+                 "floor_plan_sf": 240, "punch_list_days": 3,
+                 "exterior": {"full_exterior_repaint": True, "gutters": False, "trim_lf": 720},
+                 "rooms": [{"name": "Primary bath", "type": "primary_bath", "tier": "Premium", "sf": 130}]})
+        inp = r["inputs"]
+        self.assertEqual((inp["whole_home"], inp["full_exterior_repaint"], inp["gutters"]), (True, True, False))
+        self.assertEqual((inp["tier"], inp["weeks"], inp["duration_range"]), ("Premium", 12.5, "10-15"))
+        self.assertEqual((inp["heated_sf"], inp["framed_sf"], inp["floor_plan_sf"]), (3000, 200, 240))
+        self.assertEqual(inp["rooms"], [{"name": "Primary bath", "type": "primary_bath",
+                                         "tier": "Premium", "sf": 130}])
+
+    def test_placeholder_source_says_why(self):
+        r = run({"duration_weeks": 15, "fixtures": [
+            {"category": "plumbing", "item": "drop-in tub", "tier": "Quality", "quantity": 1}]})
+        ph = [l for l in lines(r) if l["placeholder"]]
+        self.assertTrue(ph and ph[0]["source"].startswith("$0 placeholder"))
+
+
 if __name__ == "__main__":
     unittest.main()

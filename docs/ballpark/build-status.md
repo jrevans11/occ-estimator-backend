@@ -563,6 +563,20 @@ Reruns with the prices typed in the notes box (dry run, Nov 20):
   Materials ($9.5K, not in Tyler's budget) is still there. Run-to-run variation in the read is now
   the main open item on small jobs; Tyler entering the quantities he knows is the fix.
 
+## Dry-run line table (Nov 23)
+
+- Every budget line now carries `source`: the rule behind its number (e.g. "12.5 weeks x $900/wk"),
+  "template price" when the template's price is used as-is, or why it is a $0 placeholder.
+- The result carries `inputs`: whole_home, full_exterior_repaint, gutters, tier, duration and weeks,
+  punch days, floor_plan / heated / framed / addition SF, siding squares, trim LF and the room list.
+- The tool page shows the full line table under the dry-run summary (phase subtotals, flags, rule per
+  line) with a Download JSON button (sales-lead-tool `app/intake/ballpark/BudgetLines.tsx`).
+- Wharton 00903 check (Tyler $127,158 cost vs dry run $178,954): whole_home changed no line on this job
+  (gutters were off, duration was entered). The gap is trim LF (720 vs 300), the $160K size bands
+  (selection 32 hrs, storage, 4 permits), demo/framing days (incl. 6 siding tear-off demo days), punch
+  3 days, preconstruction, and Tyler's own $0-1 placeholders. Re-priced locally with Tyler's quantities
+  for trim, paint, demo, framing, punch and 10 weeks: $148,412 cost.
+
 ## Not done / open
 
 - **No live write yet.** Dry runs work end to end (Claude ~$0.25 a run, ~90 seconds). Next: a live run on
