@@ -206,7 +206,9 @@ tiled walk-in shower; despite the name, a walk-in shower counts), backsplash (ki
 (floor-only tile, powder room, laundry, mudroom, dog wash, fireplace surround, etc.). Every full bath \
 with tiled shower or tub walls is primary_bath or hall_bath_tub, never small. prep = walk_in_shower or tub_surround when that space has one. sf = the tiled square \
 feet (floor + walls + shower) when it can be measured or estimated from the plans or notes; leave null \
-to use a typical size. Tile labor and the per-SF tile material allowance are priced separately.
+to use a typical size. Each primary bath, hall bath and backsplash gets a flat tile allowance \
+plus its own installation line; a hall bath's installation depends on prep (walk-in shower or tub), \
+so always set prep for full baths. Only small areas are priced per SF.
 - fixtures: list each appliance, plumbing fixture and light fixture named or clearly implied by the \
 scope (a remodeled kitchen implies refrigerator, range or cooktop + oven, dishwasher, microwave, hood; \
 a bath implies toilet, sink(s), faucet(s), shower valve/trim, tub filler if a tub). Use the item names \

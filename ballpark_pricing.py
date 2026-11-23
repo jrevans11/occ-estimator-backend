@@ -203,6 +203,8 @@ T_NAMES = {
 EXTRA_LINES = {
     "tile_materials": {"name": "Tile Materials", "phase": "5300", "cost_type": COST_TYPE_MATERIALS,
                        "unit": "Square Feet", "description": "Tile material allowance."},
+    "tile_install": {"name": "Tile Installation", "phase": "5300", "cost_type": COST_TYPE_SUB,
+                     "unit": "Each", "description": "Tile installation, including setting materials."},
     "engineering": {"name": "Engineering", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
                     "description": "Structural engineering for the work shown on the plans."},
     "survey": {"name": "Lot Survey", "phase": "1000", "cost_type": COST_TYPE_SUB, "unit": "Each",
@@ -220,8 +222,7 @@ PORT_A_JOHN_PER_MONTH = 110
 WEEKS_PER_MONTH = 4.33
 DUMPSTER_UNIT = 500
 WEEKS_PER_DUMPSTER = 2.5          # Tyler: 1 per 2-2.5 weeks
-DUST_PER_WEEK = 100
-DUST_SHARE_OF_WEEKS = 0.6         # Tyler: dust control only while demo/rough is going on
+DUST_CONTROL = 1500               # Jason, Nov 23 2026: $1,500 per job by default
 STORAGE_UNIT = 1650
 TWO_STORAGE_UNITS_OVER_COST = 390625
 NO_STORAGE_UNDER_COST = 160000
@@ -303,11 +304,15 @@ FLOORING = {"hardwood": 10.25, "hardwood_finishing": 3.75, "lvp": 6.50, "lvp_ins
 INT_PAINT_ROOM = 1100
 INT_PAINT_TALL_ROOM = 2000
 PAINT_MATERIALS_UNIT = 450
-# Jason, Nov 20 2026: the per-space lumps are tile LABOR. Tile material is a
-# separate per-SF allowance by the space's tier. Ceramic Tile Installation
-# units are for small spaces only: labor plus setting materials (mortar, backer
-# board), not tile or trim (bullnose, Schluter).
-TILE_LABOR = {"primary_bath": 5500, "hall_bath_tub": 2200, "backsplash": 1800, "small": 1200}
+# Jason, Nov 23 2026 (after Tyler's first guided-intake run): the per-space
+# flat fees are the TILE ALLOWANCE (material) per bath / backsplash, and each
+# space also gets its own Tile Installation line. The per-SF material
+# allowance is now only for small areas (floor-only, laundry, powder, ...),
+# which keep Ceramic Tile Installation units: labor plus setting materials
+# (mortar, backer board), not tile or trim (bullnose, Schluter).
+TILE_ALLOWANCE = {"primary_bath": 5500, "hall_bath_tub": 2200, "backsplash": 1800}
+TILE_INSTALL = {"primary_bath": 7500, "hall_walk_in": 5500, "hall_tub": 4200, "backsplash": 2000}
+TILE_LABOR = dict(TILE_ALLOWANCE, small=1200)   # every kind the read can give
 TILE_MATERIAL_PER_SF = {"Quality": 7.50, "Premium": 17.50, "Luxury": 50}
 TILE_SF_DEFAULT = {"primary_bath": 180, "hall_bath_tub": 110, "backsplash": 30, "small": 50}
 CERAMIC_TILE_UNIT = 1200
@@ -730,9 +735,7 @@ def price_scope(scope, template, tier_prices=None):
     dumpsters = math.ceil(weeks / WEEKS_PER_DUMPSTER)
     b.add("dumpster", dumpsters, DUMPSTER_UNIT,
           note=f"{weeks:g} wks / {WEEKS_PER_DUMPSTER:g} = {dumpsters} (rounded up)")
-    dust_weeks = math.ceil(weeks * DUST_SHARE_OF_WEEKS)
-    b.add("dust", dust_weeks, DUST_PER_WEEK,
-          note=f"{dust_weeks} weeks (60% of {weeks:g}: demo and rough phases only) x ${DUST_PER_WEEK}/wk")
+    b.add("dust", 1, DUST_CONTROL, unit="Each", note=f"${DUST_CONTROL:,} per job (default)")
     if mech.get("full_rewire"):
         b.add("temp_pole", 1, TEMP_POLE, note="full electrical rewire selected")
     _days_line(b, scope, "demo", "demo_days", DEMO_PER_DAY, "days")
@@ -860,10 +863,11 @@ def price_scope(scope, template, tier_prices=None):
         if n:
             b.add(key, n, None)
 
-    # 3900 / 5300 Tile (Jason, Nov 20 2026). Each area: prep line, a labor
-    # lump (primary / hall / backsplash) or Ceramic Tile Installation units
-    # (small spaces), then its own tile material allowance per SF by tier.
+    # 3900 / 5300 Tile (Jason, Nov 23 2026). Each bath / backsplash: prep line,
+    # its flat tile allowance, and its Tile Installation line. Small areas:
+    # Ceramic Tile Installation units and a per-SF material allowance by tier.
     ceramic_units, ceramic_parts = 0, []
+    install_type = (b.template.item("tile_ceramic") or {}).get("cost_type")
     for area in scope.get("tile_areas") or []:
         kind = area.get("kind") or "small"
         if kind not in TILE_LABOR:
@@ -877,10 +881,22 @@ def price_scope(scope, template, tier_prices=None):
         line_key = {"primary_bath": "tile_primary", "hall_bath_tub": "tile_hall",
                     "backsplash": "tile_backsplash"}.get(kind)
         if line_key:
-            b.add(line_key, 1, TILE_LABOR[kind], unit="",
-                  description=f"Tile installation labor for the {label.lower()}. Tile material is a "
-                              f"separate allowance.",
-                  note=f"{label}: tile labor ${TILE_LABOR[kind]:,}")
+            b.add(line_key, 1, TILE_ALLOWANCE[kind], unit="", allowance=True, cost_type=COST_TYPE_MATERIALS,
+                  name=f"{T_NAMES[line_key]} - allowance",
+                  description=f"Tile allowance for the {label.lower()}: tile and trim pieces. "
+                              f"Installation is a separate line.",
+                  note=f"{label}: ${TILE_ALLOWANCE[kind]:,} tile allowance")
+            if kind == "hall_bath_tub":
+                install_kind = "hall_walk_in" if prep == "walk_in_shower" else "hall_tub"
+                what = ("walk-in shower" if prep == "walk_in_shower" else
+                        "tub" if prep == "tub_surround" else "tub (no shower or tub given; priced as a tub)")
+            else:
+                install_kind, what = kind, ""
+            amount = TILE_INSTALL[install_kind]
+            b.add("tile_install", 1, amount, cost_type=install_type, name=f"Tile Installation - {label}",
+                  description=f"Tile installation for the {label.lower()}, including setting materials.",
+                  note=f"{label}{', ' + what if what else ''}: ${amount:,} installation")
+            continue
         if CERAMIC_UNITS[kind]:
             ceramic_units += CERAMIC_UNITS[kind]
             ceramic_parts.append(f"{label} {CERAMIC_UNITS[kind]}")

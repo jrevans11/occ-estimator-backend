@@ -374,13 +374,17 @@ def _space_page(i, room, link, reply, counts):
     tiles = scope.get("tile_areas") or []
     for j in link["tile"]:
         t = tiles[j]
-        what = "Backsplash" if t.get("kind") == "backsplash" else "Tile"
-        qs.append(_question(F(f"tile_areas.{j}.sf", f"{what} area", unit="SF",
-                              help="Floor + walls + shower. Blank = typical size for the space."), reply))
-        qs.append(_question(F(f"tile_areas.{j}.tier", f"{what} tier", "choice", options=TIER_OPTIONS), reply))
-        if rtype in ("primary_bath", "hall_bath"):
+        if t.get("kind") == "small":
+            # Small areas are still priced per SF of material by tier.
+            qs.append(_question(F(f"tile_areas.{j}.sf", "Tile area", unit="SF",
+                                  help="Blank = 50 SF."), reply))
+            qs.append(_question(F(f"tile_areas.{j}.tier", "Tile tier", "choice", options=TIER_OPTIONS), reply))
+        elif rtype in ("primary_bath", "hall_bath"):
+            # Baths: a flat tile allowance plus installation; the shower or tub sets
+            # the hall bath installation ($5,500 walk-in, $4,200 tub).
             qs.append(_question(F(f"tile_areas.{j}.prep", "Shower or tub", "choice", core=True,
-                                  options=PREP_OPTIONS), reply))
+                                  options=PREP_OPTIONS,
+                                  help="Hall bath tile installation: $5,500 walk-in shower, $4,200 tub."), reply))
     counters = scope.get("countertops") or []
     for k in link["counter"]:
         qs.append(_question(F(f"countertops.{k}.sf", "Countertop", core=True, unit="SF"), reply))
