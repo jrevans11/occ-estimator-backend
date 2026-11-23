@@ -4,7 +4,11 @@ Tyler picks a Renovation or Addition job on /intake/ballpark, fills in the
 variables and submits. The Next.js route forwards here with X-Scope-Key.
 
     POST /ballpark          {job, form, dry_run?}  start a run; answers 202 right away
+    POST /ballpark          {job, from_read: true, read_started_at, answers, remove_rooms?, dry_run?}
+                            guided intake: price the saved site-visit read with the
+                            answers applied, no second Claude call (ballpark_read.py)
     POST /ballpark/status   {job}                  the newest run on that job
+    POST /ballpark/read, /ballpark/read/status     guided intake step 1 (ballpark_read.py)
 
 A run (on its own thread, so a closed page doesn't stop it):
   1. Daily Log "[BALLPARK] started" on the job (skipped on a dry run)
@@ -32,6 +36,8 @@ from datetime import date, datetime, timedelta, timezone
 
 import ballpark_inputs as inputs
 import ballpark_pricing as bp
+import ballpark_questions
+import ballpark_read
 import ballpark_scope
 import scope_store
 import site_scope
@@ -81,7 +87,8 @@ def _load(job_id):
 def public(run):
     if not run:
         return None
-    out = {k: run.get(k) for k in ("state", "step", "error", "dry_run", "started_at", "updated_at", "job")}
+    out = {k: run.get(k) for k in ("state", "step", "error", "dry_run", "from_read", "started_at", "updated_at",
+                                   "job")}
     res = run.get("result")
     if res:
         out["result"] = res
@@ -176,6 +183,14 @@ def _bullets(items):
     return "\n".join(f"- {i}" for i in items if i)
 
 
+def _shown(v):
+    if v is None or v == "":
+        return "blank"
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    return str(v)
+
+
 def summary_text(job, result, reply, context):
     s = reply.get("summary") or {}
     rng = result["range"]
@@ -209,6 +224,8 @@ def summary_text(job, result, reply, context):
         if f.get("unit_price"):
             review.append(f"Web-priced: {f.get('brand') or ''} {f.get('item')} ${bp._num(f['unit_price']):,.0f} "
                           f"- {f.get('price_source') or 'no source given'}")
+    for c in reply.get("intake_changes") or []:
+        review.append(f"Set on the guided intake: {c['label']}: {_shown(c['from'])} -> {_shown(c['to'])}")
     review += [f"Open question: {q}" for q in reply.get("open_questions") or []]
     review += [f"Note: {w}" for w in context.get("warnings") or []]
     review.append(f"Confidence: {reply.get('confidence') or 'not stated'}. "
@@ -228,7 +245,9 @@ def summary_text(job, result, reply, context):
 
 # ── The run ─────────────────────────────────────────────────────────────────
 
-def _process(run, form, jobtread_query, org_id):
+def _process(run, form, jobtread_query, org_id, prepared=None):
+    """prepared = (context, reply) from a guided-intake read: the scope is
+    already confirmed, so gathering and the Claude read are skipped."""
     job = run["job"]
     dry = run["dry_run"]
 
@@ -241,11 +260,14 @@ def _process(run, form, jobtread_query, org_id):
         if not dry:
             write_daily_log(jobtread_query, job["id"], f"{STARTED_MARKER} {_now()} - building the Preliminary "
                             "Ballpark budget. If no review to-do appears, the run stopped and should be restarted.")
-        step("reading the site visit")
-        context = inputs.gather(job["id"], jobtread_query, org_id)
         tier_prices = bp.load_tier_prices()
-        step("working out the scope")
-        reply = ballpark_scope.extract(context, form, tier_prices)
+        if prepared:
+            context, reply = prepared
+        else:
+            step("reading the site visit")
+            context = inputs.gather(job["id"], jobtread_query, org_id)
+            step("working out the scope")
+            reply = ballpark_scope.extract(context, form, tier_prices)
         step("pricing")
         template = bp.load_template(jobtread_query)
         result = bp.price_scope(reply["scope"], template, tier_prices)
@@ -253,7 +275,9 @@ def _process(run, form, jobtread_query, org_id):
         run["result"] = {"total_cost": result["total_cost"], "total_price": result["total_price"],
                          "range": result["range"]["text"], "markup": result["markup"], "margin": result["margin"],
                          "phases": len(result["phases"]), "placeholders": len(result["review"]),
-                         "claude_cost_usd": reply.get("cost_usd")}
+                         "claude_cost_usd": 0 if prepared else reply.get("cost_usd")}
+        if prepared:
+            run["result"]["intake_changes"] = reply.get("intake_changes") or []
         if dry:
             run["result"].update({"summary": text, "scope": reply["scope"], "budget": result})
         else:
@@ -308,6 +332,7 @@ def start(payload, jobtread_query, org_id, start_thread=None):
         inputs.check_job_type(job)
     except inputs.InputError as e:
         raise BallparkError(str(e), e.status)
+    prepared = guided_inputs(job, payload) if payload.get("from_read") else None
     if not dry and inputs.budget_group_count(jobtread_query, job["id"]):
         raise BallparkError(f"Job {job.get('number')} already has a budget. The ballpark tool only builds a "
                             "budget on a job with none, so nothing was changed.", 409)
@@ -319,12 +344,34 @@ def start(payload, jobtread_query, org_id, start_thread=None):
         _running.add(job["id"])
     run = {"job": {"id": job["id"], "number": job.get("number"), "name": job.get("name")},
            "state": "running", "step": "starting", "error": None, "dry_run": dry, "started_at": _now()}
+    if prepared:
+        run["from_read"] = True
     _save(run)
-    (start_thread or _start_thread)(_process, run, form, jobtread_query, org_id)
+    (start_thread or _start_thread)(_process, run, form, jobtread_query, org_id, prepared)
     msg = ("Dry run started. Nothing will be written to JobTread; check back here in a few minutes."
            if dry else "Started. The budget will appear on the job with a review to-do for Tyler when it's done "
                        "(usually a few minutes). No need to wait here or submit again.")
     return 202, {"ok": True, "message": msg, "run": public(run)}
+
+
+def guided_inputs(job, payload):
+    """(context, reply) for a guided-intake build: the saved read with the
+    answers applied. Bad answers are refused before anything starts."""
+    try:
+        read = ballpark_read.load_done(job["id"], payload.get("read_started_at"))
+    except ballpark_read.ReadError as e:
+        raise BallparkError(str(e), e.status)
+    answers = payload.get("answers") or {}
+    if not isinstance(answers, dict):
+        raise BallparkError("answers must be an object.")
+    reply = dict(read["reply"])
+    try:
+        scope, changes = ballpark_questions.confirmed_scope(reply, answers, payload.get("remove_rooms") or [])
+    except (ValueError, KeyError) as e:
+        raise BallparkError(f"Couldn't use the answers: {e}")
+    reply["scope"] = scope
+    reply["intake_changes"] = changes
+    return ballpark_read.summary_context(read), reply
 
 
 def _start_thread(fn, *args):
@@ -369,8 +416,12 @@ def handle_post(path, body, headers, jobtread_query, org_id, start_thread=None):
             return start(payload, jobtread_query, org_id, start_thread)
         if path == "/ballpark/status":
             return status(payload, jobtread_query, org_id)
+        if path == "/ballpark/read":
+            return ballpark_read.start(payload, jobtread_query, org_id, start_thread)
+        if path == "/ballpark/read/status":
+            return ballpark_read.status(payload, jobtread_query, org_id)
         raise BallparkError("Not found.", 404)
-    except (BallparkError, site_scope.PreviewError) as e:
+    except (BallparkError, ballpark_read.ReadError, site_scope.PreviewError) as e:
         return e.status, {"ok": False, "error": str(e)}
     except Exception as e:
         print(f"Ballpark request failed: {e}\n{traceback.format_exc()}")
