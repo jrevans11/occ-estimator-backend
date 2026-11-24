@@ -108,7 +108,7 @@ def public(run, include_file=False):
     """What the page sees."""
     out = {"ok": True, "store": scope_store.kind()}
     for k in ("run_id", "status", "job", "visit_date", "inputs", "questions", "answers", "error",
-              "warnings", "created_at", "updated_at", "answered_at"):
+              "warnings", "created_at", "updated_at", "answered_at", "started_by"):
         out[k] = run.get(k)
     usage = run.get("usage") or {}
     out["usage"] = {k: usage.get(k) for k in ("model", "effort", "input_tokens", "output_tokens",
@@ -136,7 +136,8 @@ def _process(run_id, start_thread=None):
     try:
         run = scope_store.get(_run_key(run_id))
         try:
-            result = scope_quickpass.run_quick_pass(run["job"], run["project_id"], run.get("date_asked"))
+            result = scope_quickpass.run_quick_pass(run["job"], run["project_id"], run.get("date_asked"),
+                                                    granola_note_ids=run.get("granola_note_ids"))
             run.update(status="questions", visit_date=result["inputs"]["visit_date"], inputs=result["inputs"],
                        questions=result["questions"], room_file=result["room_file"], usage=result["usage"],
                        warnings=result["warnings"], error=None)
@@ -225,14 +226,25 @@ def start_run(payload, jobtread_query, org_id, start_thread=None):
     if not project_id:
         raise RunError(f"Job {job.get('number')} has no CompanyCam project linked yet.", 404)
 
+    return open_run(job, project_id, date, payload.get("push"), restart=bool(payload.get("restart")),
+                    start_thread=start_thread)
+
+
+def open_run(job, project_id, date, push, restart=False, start_thread=None, extra=None, keep=None):
+    """Start a quick pass on a job unless one is going. Returns (202, run) for
+    a new run, (200, run) for the one already going. extra: more fields for the
+    new run (phase 9: the Granola recordings). keep(latest) True returns the
+    newest run instead of starting one."""
     with _job_lock(job["id"]):
         latest_id = scope_store.get(_latest_key(job["id"]))
         latest = load_run(latest_id) if latest_id else None
         if latest and latest.get("status") == "reading":
             return 200, public(latest)
-        if latest and latest.get("status") == "questions" and not payload.get("restart"):
+        if latest and latest.get("status") == "questions" and not restart:
             return 200, public(latest)
         if latest and (latest.get("build") or {}).get("state") in ("queued", "building"):
+            return 200, public(latest)
+        if latest and keep and keep(latest):
             return 200, public(latest)
         with _running_lock:
             if len(_running) >= MAX_RUNNING:
@@ -248,7 +260,8 @@ def start_run(payload, jobtread_query, org_id, start_thread=None):
             "inputs": None, "questions": [], "answers": None, "error": None, "warnings": [],
             "usage": {"model": scope_quickpass.model()},
         }
-        scope_push.attach(run, payload.get("push"))
+        run.update(extra or {})
+        scope_push.attach(run, push)
         try:
             _save(run)
             scope_store.put(_latest_key(job["id"]), run_id)

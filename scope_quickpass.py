@@ -1,8 +1,9 @@
 """Site Scope Tool - the quick pass (phase 4).
 
 Reads one site visit - Jason's dictated notes from the project's "Site Visit
-Notes" Page, the visit's CompanyCam photos and any video transcript that is
-already ready - and has Claude turn it into:
+Notes" Page, the visit's CompanyCam photos, any video transcript that is
+already ready and the visit's Granola recordings (phase 9, granola_api.py) -
+and has Claude turn it into:
 
   * the structured room file (docs/site-scope/room-file-format.md,
     occ-scope-rooms/1) that the drawings, scope Page and budget work from, and
@@ -31,6 +32,7 @@ import urllib.request
 from datetime import datetime
 
 import companycam_api as cc
+import granola_api
 import site_scope
 
 DEFAULT_MODEL = "claude-opus-5-5"     # Jason's call, Oct 20, 2026 (Render env SCOPE_MODEL overrides)
@@ -52,6 +54,7 @@ MAX_PHOTOS = 40                # a visit is 10-20; past this is a whole-project 
 MAX_VIDEOS = 10
 MAX_SUMMARIES = 3
 MAX_SUMMARY_CHARS = 12000
+MAX_GRANOLA_NOTES = 2          # Granola recordings of one visit (a second one is a restart or a duplicate)
 WALKTHROUGH_SUMMARY_TYPE = "Pages::WalkthroughSummary"
 PHOTO_SIZE = "2000x2000"       # CompanyCam resizes on the fly; Opus reads up to ~1932 px
 INLINE_PHOTO_SIZE = "1600x1600"  # only if Claude can't fetch the links: sent inline, kept smaller
@@ -201,11 +204,53 @@ def _clock(dt, seconds=False):
     return dt.strftime("%I:%M:%S %p" if seconds else "%I:%M %p").lstrip("0")
 
 
-def gather_visit(project_id, visit_date=None):
-    """Notes, photos and ready video transcripts for one visit day.
+def _granola_entry(note):
+    """A Granola note (with transcript) as a visit source, or None if it has no words."""
+    text = granola_api.transcript_text(note)
+    ts = granola_api.note_ts(note)
+    if not text or ts is None:
+        return None
+    return {"id": str(note.get("id")), "title": str(note.get("title") or "").strip() or "Untitled",
+            "at": _local(ts), "text": text}
+
+
+def gather_granola(job, visit_date, note_ids, warnings):
+    """Granola recordings for the visit: the notes the run was started from
+    (note_ids), or - on a Start tapped on the page - that day's notes whose
+    title names the job. [] when Granola isn't set up. Problems go to warnings."""
+    if not granola_api.is_configured():
+        if note_ids:
+            warnings.append("GRANOLA_API_KEY is not set, so the Granola recording couldn't be read.")
+        return []
+    out = []
+    try:
+        if not note_ids:
+            if not job or not visit_date:
+                return []
+            note_ids = [n.get("id") for n in granola_api.notes_for_job_on_day(job, visit_date)]
+        for note_id in [i for i in note_ids if i][:MAX_GRANOLA_NOTES]:
+            try:
+                entry = _granola_entry(granola_api.get_note(note_id, transcript=True))
+            except granola_api.GranolaError as e:
+                warnings.append(f"Could not read the Granola recording {note_id} ({e}).")
+                continue
+            if entry:
+                out.append(entry)
+            else:
+                warnings.append(f"The Granola recording {note_id} has no transcript, so it was skipped.")
+    except granola_api.GranolaError as e:
+        warnings.append(f"Could not look for Granola recordings ({e}).")
+    return sorted(out, key=lambda g: g["at"])
+
+
+def gather_visit(project_id, visit_date=None, job=None, granola_note_ids=None):
+    """Notes, photos, ready video transcripts and Granola recordings for one visit day.
 
     visit_date "YYYY-MM-DD" or None for the day of the newest note, photo or
-    video. Returns a dict; raises QuickPassError when there's nothing to read."""
+    video. job (the run's job) lets a Start tapped on the page find that day's
+    Granola recording by its title; granola_note_ids are the recordings an
+    automatic run was started from. Returns a dict; raises QuickPassError when
+    there's nothing to read."""
     warnings = []
 
     notes = []
@@ -245,10 +290,15 @@ def gather_visit(project_id, visit_date=None):
     except cc.CompanyCamError as e:
         warnings.append(f"Could not list videos ({e}).")
 
+    granola = []
+    if granola_note_ids:
+        # An automatic run names its recordings; they also say which day the visit was.
+        granola = gather_granola(job, None, granola_note_ids, warnings)
+
     if not visit_date:
         # A note counts on the visit it's filed under, not the day it was recorded.
         days = [n["visit_date"] for n in notes] + [x["at"].strftime("%Y-%m-%d")
-                                                   for x in photos + videos + summary_pages]
+                                                   for x in photos + videos + summary_pages + granola]
         if not days:
             raise QuickPassError("There are no notes, photos or videos on this job yet. Record a note "
                                  "or take photos with the CompanyCam camera, then tap Start.")
@@ -289,11 +339,16 @@ def gather_visit(project_id, visit_date=None):
         if text:
             summaries.append({**pg, "text": text[:MAX_SUMMARY_CHARS]})
 
-    if not notes and not photos and not transcripts and not summaries:
+    if granola_note_ids:
+        granola = [g for g in granola if on_day(g["at"])]
+    else:
+        granola = gather_granola(job, visit_date, None, warnings)
+
+    if not notes and not photos and not transcripts and not summaries and not granola:
         raise QuickPassError(f"Nothing from {site_scope._pretty_date(visit_date)} to read yet - no notes, "
-                             "photos or video transcripts.")
+                             "photos, video transcripts or Granola recording.")
     return {"visit_date": visit_date, "notes": notes, "photos": photos, "transcripts": transcripts,
-            "summaries": summaries, "notes_page_id": notes_page_id, "warnings": warnings}
+            "summaries": summaries, "granola": granola, "notes_page_id": notes_page_id, "warnings": warnings}
 
 
 # ── The prompt ───────────────────────────────────────────────────────────────
@@ -309,10 +364,11 @@ def _read_doc(name):
 INSTRUCTIONS = """You are the quick pass of Owners Choice Construction's Site Scope Tool. OCC is a residential repair and remodel contractor in Greenville, SC. Jason Evans (the owner) has just walked a job. He took photos with the CompanyCam camera and dictated notes into his phone. You turn that visit into one structured room file and a short round of follow-up questions he answers on his phone while he is still on site. Nothing you write goes to the client; later steps build the drawings, the scope write-up and the budget from your file and his answers.
 
 WHAT YOU GET
-- Everything from the visit in the order it happened, Greenville local time. Photos are labeled P1, P2...; dictated notes N1, N2...; video transcripts V1, V2...; CompanyCam AI walkthrough summaries C1, C2....
+- Everything from the visit in the order it happened, Greenville local time. Photos are labeled P1, P2...; dictated notes N1, N2...; video transcripts V1, V2...; CompanyCam AI walkthrough summaries C1, C2...; Granola recordings G1, G2....
+- A Granola recording is Jason's AI note taker recording the whole visit while he takes photos, usually with the client or an agent talking too. Speakers are labeled by name or as Speaker A, Speaker B; work out which one is Jason (he describes the work, sizes and quantities). What Jason says counts exactly like a dictated note - its numbers set the file and fall under the number rule below. What the client says goes to client_goals and context; work the client asks for that Jason never agrees to is still a scope item, with "client asked - Jason did not confirm" in detail, and is worth a question if it moves the price. Times in [brackets] are when that part was said: tie photos to what was being said at that time, and where there are no times, tie them by order and by what the photo shows. The whole recording comes as one block at its start time, so photos listed after it were taken during it.
 - A CompanyCam AI walkthrough summary is CompanyCam's own machine summary of a walkthrough Jason recorded. Treat its scope like a note: work it lists belongs in scope_items even if nothing else mentions it. Its numbers are weaker than Jason's - where it disagrees with his notes, videos or answers, theirs win; add a conflict.
 - Jason's habit: photograph a room or area, then dictate it. Photos taken just before (or during) a note usually show what that note describes. Use the times to tie photos to notes and to walls.
-- Notes are speech-to-text. Trade words are sometimes misheard ("Wayne's coat" is wainscot, "jam" is jamb, "p trap" is P-trap, "joist" may be plural). Read those as the trade word. NUMBERS ARE DIFFERENT: never silently change a dictated number. If a number looks misheard or impossible next to the photos (a 20 ft soffit run dictated as 12, a vanity wider than its wall), keep the dictated number, add a flag, and ask about it.
+- Notes, video transcripts and Granola recordings are speech-to-text. Trade words are sometimes misheard ("Wayne's coat" is wainscot, "jam" is jamb, "p trap" is P-trap, "joist" may be plural). Read those as the trade word. NUMBERS ARE DIFFERENT: never silently change a dictated number. If a number looks misheard or impossible next to the photos (a 20 ft soffit run dictated as 12, a vanity wider than its wall), keep the dictated number, add a flag, and ask about it.
 
 HOW TO READ IT
 - Dictation sets the numbers; photos set the layout (which wall an opening is on, door swing, construction type, what is next to what) and fill in heights and sizes that were not said, marked "est".
@@ -371,6 +427,9 @@ def build_content(visit, job):
     for i, c in enumerate(visit.get("summaries") or [], 1):
         c["ref"] = f"C{i}"
         events.append((c["at"], 3, "summary", c))
+    for i, g in enumerate(visit.get("granola") or [], 1):
+        g["ref"] = f"G{i}"
+        events.append((g["at"], -1, "granola", g))   # before photos taken the same second: it covers them
     events.sort(key=lambda e: (e[0], e[1]))
 
     pretty = site_scope._pretty_date(visit["visit_date"])
@@ -379,6 +438,7 @@ def build_content(visit, job):
              f"Site visit on {pretty}: {len(visit['notes'])} dictated note(s), {len(visit['photos'])} photo(s), "
              f"{len(visit['transcripts'])} video transcript(s)"
              + (f", {len(visit['summaries'])} CompanyCam AI walkthrough summary(ies)" if visit.get("summaries") else "")
+             + (f", {len(visit['granola'])} Granola recording(s)" if visit.get("granola") else "")
              + ". Everything follows in the order it happened.")
     if later:
         intro += (f" {later} of the notes were recorded on a later day while looking back at this visit's "
@@ -402,6 +462,10 @@ def build_content(visit, job):
                         "about this visit's photos")
             tag = " (Jason's correction of an earlier note)" if item["corrected"] else ""
             content.append({"type": "text", "text": f"{item['ref']} - dictated note, {span}{tag}:\n{item['text']}"})
+        elif kind == "granola":
+            content.append({"type": "text", "text": f"{item['ref']} - Granola recording \"{item['title']}\", "
+                                                    f"started {_clock(at)} (transcript, speakers as Granola "
+                                                    f"labeled them):\n{item['text']}"})
         elif kind == "summary":
             content.append({"type": "text", "text": f"{item['ref']} - CompanyCam AI walkthrough summary \"{item['title']}\", "
                                                     f"written {_clock(at)}:\n{item['text']}"})
@@ -692,13 +756,14 @@ def ask_for_json(system, content, parse, label, log, refused, retry_hint):
     return obj, usage_sum
 
 
-def run_quick_pass(job, project_id, visit_date=None, log=print):
+def run_quick_pass(job, project_id, visit_date=None, log=print, granola_note_ids=None):
     """Gather, ask Claude, check. Returns a dict with room_file, questions,
     inputs, usage, warnings. Raises QuickPassError / ClaudeError."""
     t0 = time.time()
-    visit = gather_visit(project_id, visit_date)
+    visit = gather_visit(project_id, visit_date, job=job, granola_note_ids=granola_note_ids)
     inputs = {"visit_date": visit["visit_date"], "notes": len(visit["notes"]), "photos": len(visit["photos"]),
-              "video_transcripts": len(visit["transcripts"]), "ai_summaries": len(visit.get("summaries") or [])}
+              "video_transcripts": len(visit["transcripts"]), "ai_summaries": len(visit.get("summaries") or []),
+              "granola": len(visit.get("granola") or [])}
     log(f"Scope quick pass job {job.get('number')}: {inputs}")
 
     obj, usage_sum = ask_for_json(system_blocks(), build_content(visit, job), parse_answer,

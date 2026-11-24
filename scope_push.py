@@ -59,13 +59,39 @@ def clean_subscription(sub):
     return {"endpoint": endpoint, "keys": {"p256dh": p256dh, "auth": auth}}
 
 
+LATEST_KEY = "push:latest"
+
+
 def attach(run, sub):
-    """Keep the phone's subscription on the run. Returns True if one was kept."""
+    """Keep the phone's subscription on the run. Returns True if one was kept.
+    It is also kept as the newest one, for runs that start on their own."""
     clean = clean_subscription(sub)
     if not clean:
         return False
     run["push_sub"] = clean
+    remember(clean)
     return True
+
+
+def remember(sub):
+    """Keep the phone's newest subscription (phase 9: a run started by a
+    Granola recording has no phone of its own). Never raises."""
+    try:
+        import scope_store
+        if (scope_store.get(LATEST_KEY) or {}).get("endpoint") != sub.get("endpoint"):
+            scope_store.put(LATEST_KEY, sub)
+    except Exception as e:
+        print(f"Scope push: could not keep the newest subscription ({e}).")
+
+
+def latest():
+    """The phone subscription seen most recently, or None. Never raises."""
+    try:
+        import scope_store
+        return clean_subscription(scope_store.get(LATEST_KEY))
+    except Exception as e:
+        print(f"Scope push: could not read the newest subscription ({e}).")
+        return None
 
 
 def public(run):
@@ -92,9 +118,30 @@ def _pretty_date(iso):
         return ""
 
 
+GRANOLA_KINDS = {
+    # Phase 9: a Granola recording that couldn't start a run on its own.
+    "granola_unmatched": ("Granola visit needs a job - {title}",
+                          "No job number in the title. Add it to the Granola title, like (00905), and it starts on its own."),
+    "granola_no_job": ("No JobTread job {number} - {title}",
+                       "Check the job number in the Granola title, or pick the job on the scope page and tap Start."),
+    "granola_no_project": ("No CompanyCam project - {place}",
+                           "Link the CompanyCam project to the job in JobTread, then tap Start on the scope page."),
+    "granola_missed": ("Granola visit not read - {place}",
+                       "It waited too long for a restart to pick it up. Tap Start on the scope page."),
+    "granola_not_started": ("Granola visit not read - {place}", "{error}"),
+}
+
+
 def message(run, kind):
-    """(title, body) for one alert kind: questions, failed, built, build_problem."""
+    """(title, body) for one alert kind: questions, failed, built, build_problem,
+    or one of GRANOLA_KINDS."""
     place = _place(run)
+    if kind in GRANOLA_KINDS:
+        values = {"title": run.get("granola_title") or "untitled note", "place": place,
+                  "number": (run.get("job") or {}).get("number") or run.get("job_number") or "",
+                  "error": run.get("error") or "Open the scope page and tap Start."}
+        title, body = GRANOLA_KINDS[kind]
+        return _short(title.format(**values)), _short(body.format(**values))
     if kind == "questions":
         n = len(run.get("questions") or [])
         day = _pretty_date(run.get("visit_date"))
@@ -160,7 +207,8 @@ def notify(run, kind=None, log=print, post=None):
         title, body = message(run, kind)
         job_id = (run.get("job") or {}).get("id") or ""
         payload = {"subscription": sub, "title": title, "body": body,
-                   "url": f"/intake/scope?job={job_id}", "tag": f"scope-{run.get('run_id')}"}
+                   "url": f"/intake/scope?job={job_id}" if job_id else "/intake/scope",
+                   "tag": f"scope-{run.get('run_id')}"}
         result = {"kind": kind, "at": int(time.time()), "ok": False, "error": None}
         try:
             status, data = (post or _post)(payload)
