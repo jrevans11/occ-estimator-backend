@@ -214,20 +214,15 @@ def _granola_entry(note):
             "at": _local(ts), "text": text}
 
 
-def gather_granola(job, visit_date, note_ids, warnings):
-    """Granola recordings for the visit: the notes the run was started from
-    (note_ids), or - on a Start tapped on the page - that day's notes whose
-    title names the job. [] when Granola isn't set up. Problems go to warnings."""
-    if not granola_api.is_configured():
-        if note_ids:
-            warnings.append("GRANOLA_API_KEY is not set, so the Granola recording couldn't be read.")
+def gather_granola(job, visit_date, warnings):
+    """Granola recordings for the visit: that day's notes whose title names the
+    job (job number, or house number + street). [] when Granola isn't set up
+    (no GRANOLA_API_KEY). Problems go to warnings."""
+    if not granola_api.is_configured() or not job or not visit_date:
         return []
     out = []
     try:
-        if not note_ids:
-            if not job or not visit_date:
-                return []
-            note_ids = [n.get("id") for n in granola_api.notes_for_job_on_day(job, visit_date)]
+        note_ids = [n.get("id") for n in granola_api.notes_for_job_on_day(job, visit_date)]
         for note_id in [i for i in note_ids if i][:MAX_GRANOLA_NOTES]:
             try:
                 entry = _granola_entry(granola_api.get_note(note_id, transcript=True))
@@ -243,14 +238,12 @@ def gather_granola(job, visit_date, note_ids, warnings):
     return sorted(out, key=lambda g: g["at"])
 
 
-def gather_visit(project_id, visit_date=None, job=None, granola_note_ids=None):
+def gather_visit(project_id, visit_date=None, job=None):
     """Notes, photos, ready video transcripts and Granola recordings for one visit day.
 
     visit_date "YYYY-MM-DD" or None for the day of the newest note, photo or
-    video. job (the run's job) lets a Start tapped on the page find that day's
-    Granola recording by its title; granola_note_ids are the recordings an
-    automatic run was started from. Returns a dict; raises QuickPassError when
-    there's nothing to read."""
+    video. job (the run's job) finds that day's Granola recordings by their
+    title. Returns a dict; raises QuickPassError when there's nothing to read."""
     warnings = []
 
     notes = []
@@ -290,15 +283,10 @@ def gather_visit(project_id, visit_date=None, job=None, granola_note_ids=None):
     except cc.CompanyCamError as e:
         warnings.append(f"Could not list videos ({e}).")
 
-    granola = []
-    if granola_note_ids:
-        # An automatic run names its recordings; they also say which day the visit was.
-        granola = gather_granola(job, None, granola_note_ids, warnings)
-
     if not visit_date:
         # A note counts on the visit it's filed under, not the day it was recorded.
         days = [n["visit_date"] for n in notes] + [x["at"].strftime("%Y-%m-%d")
-                                                   for x in photos + videos + summary_pages + granola]
+                                                   for x in photos + videos + summary_pages]
         if not days:
             raise QuickPassError("There are no notes, photos or videos on this job yet. Record a note "
                                  "or take photos with the CompanyCam camera, then tap Start.")
@@ -339,10 +327,7 @@ def gather_visit(project_id, visit_date=None, job=None, granola_note_ids=None):
         if text:
             summaries.append({**pg, "text": text[:MAX_SUMMARY_CHARS]})
 
-    if granola_note_ids:
-        granola = [g for g in granola if on_day(g["at"])]
-    else:
-        granola = gather_granola(job, visit_date, None, warnings)
+    granola = gather_granola(job, visit_date, warnings)
 
     if not notes and not photos and not transcripts and not summaries and not granola:
         raise QuickPassError(f"Nothing from {site_scope._pretty_date(visit_date)} to read yet - no notes, "
@@ -756,11 +741,11 @@ def ask_for_json(system, content, parse, label, log, refused, retry_hint):
     return obj, usage_sum
 
 
-def run_quick_pass(job, project_id, visit_date=None, log=print, granola_note_ids=None):
+def run_quick_pass(job, project_id, visit_date=None, log=print):
     """Gather, ask Claude, check. Returns a dict with room_file, questions,
     inputs, usage, warnings. Raises QuickPassError / ClaudeError."""
     t0 = time.time()
-    visit = gather_visit(project_id, visit_date, job=job, granola_note_ids=granola_note_ids)
+    visit = gather_visit(project_id, visit_date, job=job)
     inputs = {"visit_date": visit["visit_date"], "notes": len(visit["notes"]), "photos": len(visit["photos"]),
               "video_transcripts": len(visit["transcripts"]), "ai_summaries": len(visit.get("summaries") or []),
               "granola": len(visit.get("granola") or [])}

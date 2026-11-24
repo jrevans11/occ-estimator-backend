@@ -3,8 +3,9 @@
 Jason records site visits with Granola (AI note taker) while he takes photos
 with the CompanyCam camera. This module reads those recordings through
 Granola's public API and works out which job a recording belongs to. It has no
-Site Scope state of its own - scope_granola (the webhook and auto start) and
-scope_quickpass (the G1, G2... sources) use it.
+Site Scope state of its own - scope_quickpass uses it when Jason taps Start
+on the scope page (the G1, G2... sources). Nothing starts on its own
+(Jason, Nov 24, 2026: manual only).
 
 Render env var: GRANOLA_API_KEY (a personal API key from Granola, Settings ->
 API; starts with grn_). With no key the tool works as before, without Granola.
@@ -225,7 +226,6 @@ def transcript_text(note, max_chars=MAX_TRANSCRIPT_CHARS):
 
 _PAREN_NUMBER = re.compile(r"\(\s*(\d{4,6})\s*\)")
 _BARE_NUMBER = re.compile(r"(?<![\d\-.])(0\d{4})(?![\d\-])")   # OCC job numbers are 0xxxx; zip codes aren't
-_STREET_START = re.compile(r"^\s*\d{1,6}\s+[A-Za-z]")
 _STREET_WORDS_SKIP = {
     "st", "street", "dr", "drive", "rd", "road", "ln", "lane", "ct", "court", "way", "ave", "avenue", "blvd",
     "cir", "circle", "pl", "place", "ter", "terrace", "trl", "trail", "pkwy", "parkway", "hwy", "highway",
@@ -242,16 +242,6 @@ def job_number_in(text):
         return m.group(1).zfill(5)
     m = _BARE_NUMBER.search(text)
     return m.group(1) if m else None
-
-
-def note_job_number(note):
-    return job_number_in((note or {}).get("title")) or job_number_in(event_title(note))
-
-
-def looks_like_visit(title):
-    """A title that starts with a street number ("316 Stewart. St.") is a site
-    visit even without a job number; meeting names aren't."""
-    return bool(_STREET_START.match(str(title or "")))
 
 
 def _words(text):

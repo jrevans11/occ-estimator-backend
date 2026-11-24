@@ -40,7 +40,6 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import companycam_api as cc
-import scope_granola
 import scope_quickpass
 import scope_runs
 import scope_transcribe
@@ -444,7 +443,7 @@ def fix_note(payload, jobtread_query, org_id):
 def _guard(fn):
     try:
         return fn()
-    except (site_scope.PreviewError, NoteError, scope_granola.GranolaHookError) as e:
+    except (site_scope.PreviewError, NoteError) as e:
         return e.status, {"ok": False, "error": str(e)}
     except cc.CompanyCamError as e:
         return 502, {"ok": False, "error": str(e)}
@@ -455,13 +454,8 @@ def _guard(fn):
 
 def handle_post(path, body, headers, jobtread_query, org_id, start_thread=None):
     """POST /scope/notes and /scope/notes/fix. Returns (status, body dict)."""
-    if path == "/scope/granola":
-        # Phase 9: Granola's webhook is signed with its own secret, not X-Scope-Key.
-        return _guard(lambda: scope_granola.handle_webhook(body, headers, jobtread_query, org_id, start_thread))
-
     def run():
         site_scope.check_api_key(headers.get("X-Scope-Key"))
-        scope_granola.resume_pending(start_thread)   # never raises
         try:
             payload = json.loads(body or "{}")
         except ValueError:
@@ -474,8 +468,6 @@ def handle_post(path, body, headers, jobtread_query, org_id, start_thread=None):
             return 200, fix_note(payload, jobtread_query, org_id)
         if path == "/scope/notes/visit":
             return 200, refile_note(payload, jobtread_query, org_id)
-        if path == "/scope/granola/test":
-            return scope_granola.handle_test(payload, jobtread_query, org_id, start_thread)
         if path.startswith("/scope/runs"):
             # Phase 4 runs (scope_runs.py) share this route so app.py needs no change.
             return scope_runs.handle_post(path, payload, jobtread_query, org_id, start_thread)

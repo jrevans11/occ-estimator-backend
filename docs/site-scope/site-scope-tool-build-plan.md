@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phase 9 (Granola recordings + automatic start) built Nov 24 - see "Phase 9 build (Nov 24, 2026)"; not yet tested live. Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) plus visit classification gates so revisits, jobs in progress and non-visit meetings never start the new-visit build - see "Next phases (planned Nov 5, 2026)" at the end. Bigger picture: `docs/occ-brain/occ-brain-architecture.md`.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phase 9 (Granola recordings) built Nov 24 as manual only - Start on the scope page reads that day's Granola recordings for the job; see "Phase 9 build (Nov 24, 2026)"; not yet tested live. Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) plus visit classification gates so revisits, jobs in progress and non-visit meetings never start the new-visit build - see "Next phases (planned Nov 5, 2026)" at the end. Bigger picture: `docs/occ-brain/occ-brain-architecture.md`.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -135,8 +135,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | `SCOPE_BACKEND_URL` | Vercel | Phase 3 | `https://occ-estimator.onrender.com` |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Vercel (sales-lead-tool-new) | Phase 7 | Web push keys, generated with the `web-push` package (no account). Private one marked Sensitive. Optional `VAPID_SUBJECT` (https link or mailto:), default `NEXT_PUBLIC_APP_URL`. Changing the keys means each phone taps "Turn on alerts" again. iPhone: Home Screen app + allow notifications once |
 | `SCOPE_PUSH_URL` (optional) | Render | Phase 7 | Where Render sends alerts. Default `https://sales-lead-tool-new.vercel.app/api/scope/push` |
-| `GRANOLA_API_KEY` | Render | Phase 9 | Granola -> Settings -> API -> new personal key (starts `grn_`). Without it the tool works as before, with no Granola |
-| `GRANOLA_WEBHOOK_SECRET` | Render | Phase 9 | The signing secret Granola shows when the webhook is added (starts `whsec_`). Without it `/scope/granola` answers 503 and nothing starts on its own |
+| `GRANOLA_API_KEY` | Render | Phase 9 | Granola -> Settings -> API -> new personal key (starts `grn_`). Without it the tool works as before, with no Granola. No webhook secret is needed (manual only, Nov 24) |
 | RingCentral SMS | - | Only if push fails | Not checked yet whether OCC's number can send |
 | `ANTHROPIC_API_KEY`, `JOBTREAD_API_KEY`, `JOBTREAD_ORG_ID` | Render | - | Already set |
 
@@ -415,44 +414,27 @@ Override: a word in the calendar title ("Revisit", "Check-in", "Progress"), or s
 - **Still to check:** recording a CompanyCam *video* while Granola runs (both want the mic; Granola may pause); phone calls mid-visit; transcript quality outdoors and in crawlspaces; Granola's Apple Watch app (records on the watch, so the phone's camera and calls can't interrupt it).
 
 ### Phase 9 build (Nov 24, 2026)
-Built on branch `site-scope-granola`. Not tested live yet. New files `granola_api.py` (reads Granola) and `scope_granola.py` (webhook + automatic start); small changes to `scope_quickpass.py`, `scope_runs.py`, `scope_push.py`, `scope_notes.py`, `scope_build.py`. `app.py` unchanged (`/scope/*` already routes to `scope_notes`). The closing-repair estimator and follow-ups are untouched. Tests: `tests/test_scope_granola.py`.
+Built on branch `site-scope-granola` (PR #57). Not tested live yet. New file `granola_api.py` (reads Granola); small changes to `scope_quickpass.py` and `scope_build.py`. `app.py`, `scope_runs.py`, `scope_push.py` and `scope_notes.py` unchanged. The closing-repair estimator and follow-ups are untouched. Tests: `tests/test_scope_granola.py`.
 
-**Jason's decisions (Nov 24):**
-- **Unanswered questions: wait for me.** An automatic run stops at questions and pushes them, the same as a run started on the page. Nothing builds without Jason. (The Nov 5 "Answer cutoff" proposal is not built.)
-- **Revisits and jobs that already have a budget: run it anyway.** Every Granola visit that matches a job gets a new run. The Gate 2 revisit / job-in-progress modes are not built; the build still writes only under its own new parent group, so nothing existing is edited.
-- **When to start: when the photos stop.** After Granola finishes the note, the server counts the job's CompanyCam photos for that day once a minute and starts when the count hasn't changed for 10 minutes (gives up waiting after an hour and starts anyway).
+**Jason's decision (Nov 24): manual only.** Jason finishes the visit, opens the scope page, picks the job and taps Start. The run reads that day's CompanyCam photos, videos and notes plus that day's Granola recordings for the job. Nothing starts on its own. A first version that started runs automatically from a Granola webhook (photo wait, phone alerts) was built and then dropped the same day: teammates' Granola notes and photos could have started or stretched runs Jason didn't ask for. So the Nov 5 "Phase 9 - Granola capture + automatic trigger" above is half built: the Granola capture is in, the automatic trigger, photo wait, nightly sweep and answer cutoff are not.
 
-**How it works**
-1. Granola sends `note.generated` (or `note.edited` / `note.access_granted`) to `POST /scope/granola` on the Render service. The request is checked with the webhook signing secret (Standard Webhooks: `webhook-id`, `webhook-timestamp`, `webhook-signature`, HMAC-SHA256, 5-minute window). The server answers right away; the rest runs in a background thread.
-2. The note is read with `GET /v1/notes/{id}?include=transcript` (paged from `/transcript` when Granola answers 413).
-3. **Which job:** the job number in the note title or its calendar event title - `(00905)` in parentheses, or a bare 5-digit number starting with 0 (zip codes and phone numbers don't count). occ-visit-prep already puts the job number on the calendar title. Then the job's CompanyCam project from `job.companycamId`.
-   - Title starts with a street number but has no job number -> one push: "Granola visit needs a job". Adding `(00905)` to the Granola title sends `note.edited` and it starts on its own.
-   - Job number not in JobTread, or job with no CompanyCam project -> one push saying so.
-   - Anything else (meetings, calls) -> ignored, no push.
-4. Photo wait (above), then the normal quick pass with the transcript as source **G1** ("Granola recording", placed by the note's start time before the photos taken after it). Speakers stay as Granola labeled them; the quick pass works out who is Jason and who is the client from what they say.
-5. Questions push to the phone as usual. The run records `started_by: granola`.
-
-**Safety rails built**
-- **Once per note.** Each note's status is saved (`granola:note:<id>` in the store). A repeat webhook for a note already started, waiting or ignored does nothing. A note that failed to match gets another look on `note.edited`.
-- **Doesn't fight Jason.** If Jason tapped Start on the page after the recording finished, that run already reads the recording (a page Start finds the day's Granola notes for the job by job number or house number + street), so no second run starts. A run started before the recording finished is replaced, the same as tapping Start again.
-- **Busy server:** if two scope runs are already going, it tries again every 2 minutes, 5 times, then pushes "Granola visit not read".
-- **Restart during the photo wait:** waits are saved; the next webhook or scope page request picks them up. After 24 hours it gives up and pushes "Granola visit not read - tap Start".
-- **Alerts go to the last phone that turned on alerts** (`push:latest`, saved whenever the scope page sends its subscription).
-
-**Check a note without starting anything:** `POST /scope/granola/test` with the scope key and `{"note_id": "not_..."}` returns the job match, transcript length and the first 600 characters. Add `"start": true` to run it through the automatic path.
+**How a Start reads Granola**
+1. The run works out the visit day as before (the picked date, or the newest photo / video / note day).
+2. `granola_api.notes_for_job_on_day` lists Granola notes from that Greenville-local day (`GET /v1/notes`, a day either side for the time zone, then checked) and keeps the ones whose note title or calendar event title names the job:
+   - the job number - `(00905)` in parentheses, or a bare 5-digit number starting with 0 (zip codes and phone numbers don't count). occ-visit-prep already puts it on the calendar title; or
+   - the house number plus a street-name word from the job address ("316 Stewart" for 316 Stewart St).
+   Meetings ("Repair Meeting") match neither and are left out.
+3. Each match (up to `MAX_GRANOLA_NOTES`) is read with `GET /v1/notes/{id}?include=transcript`, paged from `/transcript` when Granola answers 413. Transcripts are cut at 80,000 characters.
+4. Each recording becomes a source **G1, G2...** ("Granola recording", with its title and owner), placed by start time among the photos. Speakers stay as Granola labeled them with a time mark at most once a minute; the quick pass works out who is Jason and who is the client from what they say.
+5. The run's `inputs.granola` counts the recordings and the scope page doc lists "N Granola recording(s)". A Granola problem goes to the run's warnings; the run carries on with the photos.
 
 **Jason's setup (once)**
-1. Granola -> Settings -> API: create a personal API key. Put it in Render as `GRANOLA_API_KEY`.
-2. Granola -> Settings -> Connectors -> Webhooks: add the Render service URL + `/scope/granola` (same base as `SCOPE_BACKEND_URL`) for `note.generated`, `note.edited` and `note.access_granted`. Put the signing secret it shows in Render as `GRANOLA_WEBHOOK_SECRET`.
-3. Open the scope page on the phone and tap "Turn on alerts" once (so the server knows where to send Granola alerts).
-4. Keep the job number in the visit's calendar title (occ-visit-prep does this) or the Granola title.
+1. Granola -> Settings -> API: create a personal API key. Put it in Render as `GRANOLA_API_KEY`. Without it the tool works as before.
+2. Keep the job number in the visit's calendar title (occ-visit-prep does this) or the Granola title, or start the Granola title with the address.
 
-**Open risks / not built**
-- Anyone on the Granola workspace whose note title has a job number also starts a run (no filter by note owner yet).
-- No job matching by address alone - a title with only an address gets the "needs a job" push.
-- The photo count isn't filtered by photographer; a teammate shooting on the same project that day keeps the wait going (up to the 1-hour limit).
-- A restart during the wait is only picked up on the next webhook or page visit (no nightly sweep yet).
-- Webhook payload fields were taken from Granola's docs; the first live note confirms them (Render log line "Granola webhook ...").
+**Open items**
+- A teammate's Granola recording from the same day whose title names the job is included too (each one is labeled with its owner). Can be limited to Jason's own recordings if that turns out to be a problem.
+- A visit with a Granola recording but no photos or videos doesn't set the visit day on its own - pick the date on the page.
 - Still unchecked from Nov 5: video recording while Granola runs, phone calls mid-visit, outdoor/crawlspace transcript quality.
 
 ### Phase 10 - Trade tags
