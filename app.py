@@ -31,6 +31,9 @@ import ballpark
 # estimate_closing_job() and estimate_general_job() (restored Oct 26 2026 —
 # it had been dark since the Aug 19 2026 app.py rebuild).
 import feedback_loop
+# PM pilot (Nov 30 2026): nightly pull of Lexi's and Megan's Granola notes
+# onto their jobs as internal Daily Logs. See granola_pm_notes.py.
+import granola_pm_notes
 
 # ── Environment ───────────────────────────────────────────────────────────────
 ANTHROPIC_KEY    = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -4246,6 +4249,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send_scope_json(*scope_notes.handle_test_request(params, self.headers, jobtread_query, JOBTREAD_ORG))
         elif path.startswith(scope_uploads.FILES_PATH):
             self._handle_scope_file(path)
+        elif path in ("/pm-notes/run", "/pm-notes/status"):
+            # PM pilot Granola pull. /run answers 202 and works on its own
+            # background thread; /status shows counts only, never note content.
+            params = urllib.parse.parse_qs(self.path.partition("?")[2])
+            if path == "/pm-notes/run":
+                result = granola_pm_notes.handle_run_request(params, jobtread_query, JOBTREAD_ORG)
+            else:
+                result = granola_pm_notes.handle_status_request(params)
+            self._send_scope_json(*result)
         else:
             self.send_response(200)
             self.end_headers()
