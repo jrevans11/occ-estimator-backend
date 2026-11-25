@@ -111,6 +111,8 @@ Because the raw material stays in its own system, nothing is lost by building th
 4. **Memory extraction** with the unconfirmed/confirmed step and access tiers.
 5. **Scorecards and pattern analysis** once there's months of data behind them.
 
+**Built (Nov 25, 2026): PM pilot Granola pull.** Lexi's and Megan's Granola notes are pulled nightly and filed on their jobs as internal `[PM-NOTE]` Daily Logs, unmatched notes going to Jason as "needs your call" to-dos. Feeds the Friday weekly update. See `pm-granola-pull.md`. Jason, Nov 25: a single Google Drive folder as the Brain's home, organizing and categorizing everything, comes later; it can backfill from Granola and these Daily Logs.
+
 ## Open questions
 - **Where the brain's own facts live.** Options: on the JobTread record they're about (internal fields/notes - where the team already works), a small database, files in this repo, or Claude Project docs. Leaning: job-specific facts on the JobTread record; company-wide knowledge (SOPs, pricing lessons, sub notes) in one store - not decided.
 - Granola retention on the Business plan, and after the trial.
