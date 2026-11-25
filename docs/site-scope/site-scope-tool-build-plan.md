@@ -1,6 +1,6 @@
 # OCC Site Scope Tool - Build Plan
 
-Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) plus visit classification gates so revisits, jobs in progress and non-visit meetings never start the new-visit build - see "Next phases (planned Nov 5, 2026)" at the end. Bigger picture: `docs/occ-brain/occ-brain-architecture.md`.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
+Planning notes from Oct 18-19, 2026. Status: **phases 1-4 of 8 built and verified live (Oct 19-20); page fixes and the "Which visit?" picker built Oct 20 (phone test not confirmed yet). Phase 5 (CompanyCam side of the build) built and verified live Oct 20 on job 00489. Phases 6 (JobTread budget) and 7 (phone alerts) built and verified live Oct 20 on job 00489. The catalog problem from that test is fixed (PR #23). Vanity plumbing stays a plumber line (decided Oct 20). Next: phase 8 (accuracy runs). Phase 9 (Granola recordings) built Nov 24 as manual only - Start on the scope page reads that day's Granola recordings for the job; see "Phase 9 build (Nov 24, 2026)"; not yet tested live. Phases 9-14 planned Nov 5 (Granola capture, fully automatic trigger, trade tags, sub bid / material request drafts, bid history, Calendly, shared budget standards) plus visit classification gates so revisits, jobs in progress and non-visit meetings never start the new-visit build - see "Next phases (planned Nov 5, 2026)" at the end. Bigger picture: `docs/occ-brain/occ-brain-architecture.md`.** Companion docs in this folder: `site-visit-writeup-process.md` (what the tool does, step by step), `floor-plan-drawing-rules.md` (drawing rules) and `room-file-format.md` (the structured room file the drawings and later phases work from). `prototype_drawings.py` is the throwaway script that drew the Oct 19 test drawings - a geometry reference only (it renders through a headless browser, which is too heavy for Render; see "Where the code lives").
 
 **This repo copy is the source of truth.** When a build session changes a decision, update this file in the same pull request. (Older copies exist in Jason's claude.ai project "Lidar scaning app" and will go stale.)
 
@@ -135,6 +135,7 @@ Each phase is one pull request Jason can test on its own before the next starts.
 | `SCOPE_BACKEND_URL` | Vercel | Phase 3 | `https://occ-estimator.onrender.com` |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Vercel (sales-lead-tool-new) | Phase 7 | Web push keys, generated with the `web-push` package (no account). Private one marked Sensitive. Optional `VAPID_SUBJECT` (https link or mailto:), default `NEXT_PUBLIC_APP_URL`. Changing the keys means each phone taps "Turn on alerts" again. iPhone: Home Screen app + allow notifications once |
 | `SCOPE_PUSH_URL` (optional) | Render | Phase 7 | Where Render sends alerts. Default `https://sales-lead-tool-new.vercel.app/api/scope/push` |
+| `GRANOLA_API_KEY` | Render | Phase 9 | Granola -> Settings -> API -> new personal key (starts `grn_`). Without it the tool works as before, with no Granola. No webhook secret is needed (manual only, Nov 24) |
 | RingCentral SMS | - | Only if push fails | Not checked yet whether OCC's number can send |
 | `ANTHROPIC_API_KEY`, `JOBTREAD_API_KEY`, `JOBTREAD_ORG_ID` | Render | - | Already set |
 
@@ -411,6 +412,30 @@ Override: a word in the calendar title ("Revisit", "Check-in", "Progress"), or s
 - **Answer cutoff** (see Proposed) so a run never sits waiting on Jason.
 - **Nov 5 test (Granola + CompanyCam, Jason's office, "Test Project (delete)" 117581245):** Granola note 10:23-~10:26 AM; 16 photos 10:25:01-10:25:58 AM, all by Jason, all on that one project. **Granola kept recording the whole time CompanyCam was open** (same as the Oct 21 Voice Memos test). Jason named items in the order he shot them, and all 16 photos matched what was said once the photos were looked at (one pair swapped order: he said "window, file cabinet" but shot the cabinet first). Granola fixes the problem that dropped the Voice Memos walkthrough: the transcript comes out through the API with no manual Share step.
 - **Still to check:** recording a CompanyCam *video* while Granola runs (both want the mic; Granola may pause); phone calls mid-visit; transcript quality outdoors and in crawlspaces; Granola's Apple Watch app (records on the watch, so the phone's camera and calls can't interrupt it).
+
+### Phase 9 build (Nov 24, 2026)
+Built on branch `site-scope-granola` (PR #57). Not tested live yet. New file `granola_api.py` (reads Granola); small changes to `scope_quickpass.py` and `scope_build.py`. `app.py`, `scope_runs.py`, `scope_push.py` and `scope_notes.py` unchanged. The closing-repair estimator and follow-ups are untouched. Tests: `tests/test_scope_granola.py`.
+
+**Jason's decision (Nov 24): manual only.** Jason finishes the visit, opens the scope page, picks the job and taps Start. The run reads that day's CompanyCam photos, videos and notes plus that day's Granola recordings for the job. Nothing starts on its own. A first version that started runs automatically from a Granola webhook (photo wait, phone alerts) was built and then dropped the same day: teammates' Granola notes and photos could have started or stretched runs Jason didn't ask for. So the Nov 5 "Phase 9 - Granola capture + automatic trigger" above is half built: the Granola capture is in, the automatic trigger, photo wait, nightly sweep and answer cutoff are not.
+
+**How a Start reads Granola**
+1. The run works out the visit day as before (the picked date, or the newest photo / video / note day).
+2. `granola_api.notes_for_job_on_day` lists Granola notes from that Greenville-local day (`GET /v1/notes`, a day either side for the time zone, then checked) and keeps the ones whose note title or calendar event title names the job:
+   - the job number - `(00905)` in parentheses, or a bare 5-digit number starting with 0 (zip codes and phone numbers don't count). occ-visit-prep already puts it on the calendar title; or
+   - the house number plus a street-name word from the job address ("316 Stewart" for 316 Stewart St).
+   Meetings ("Repair Meeting") match neither and are left out.
+3. Each match (up to `MAX_GRANOLA_NOTES`) is read with `GET /v1/notes/{id}?include=transcript`, paged from `/transcript` when Granola answers 413. Transcripts are cut at 80,000 characters.
+4. Each recording becomes a source **G1, G2...** ("Granola recording", with its title and owner), placed by start time among the photos. Speakers stay as Granola labeled them with a time mark at most once a minute; the quick pass works out who is Jason and who is the client from what they say.
+5. The run's `inputs.granola` counts the recordings and the scope page doc lists "N Granola recording(s)". A Granola problem goes to the run's warnings; the run carries on with the photos.
+
+**Jason's setup (once)**
+1. Granola -> Settings -> API: create a personal API key. Put it in Render as `GRANOLA_API_KEY`. Without it the tool works as before.
+2. Keep the job number in the visit's calendar title (occ-visit-prep does this) or the Granola title, or start the Granola title with the address.
+
+**Open items**
+- A teammate's Granola recording from the same day whose title names the job is included too (each one is labeled with its owner). Can be limited to Jason's own recordings if that turns out to be a problem.
+- A visit with a Granola recording but no photos or videos doesn't set the visit day on its own - pick the date on the page.
+- Still unchecked from Nov 5: video recording while Granola runs, phone calls mid-visit, outdoor/crawlspace transcript quality.
 
 ### Phase 10 - Trade tags
 - CompanyCam had 10 tags on Nov 5: Before and After, Brick, Electrical, Finished, New, Paint, Pre-Drywall Documentation, Punch List, Selections, Start.
